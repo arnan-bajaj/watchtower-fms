@@ -1,0 +1,63 @@
+# CLAUDE.md: Scrimmage FMS (FRC 2026 REBUILT)
+
+Custom field management system for a one-day offseason FRC scrimmage (12 teams, quals 9:30 AM to lunch,
+then alliance selection and a 4-alliance double-elimination playoff). Runs on one MacBook on the event WiFi.
+
+## Architecture (keep these separate)
+- `fms/` FastAPI server + SQLite. Owns the match timeline, scoring, fouls, schedule, rankings, bracket, TBA.
+- `vision/` Separate process. Hub cameras -> counter plugin (YOLO model) -> POSTs `(timestamp, hub, n)` to the FMS.
+  The FMS never imports vision code or the model. Vision never contains scoring rules.
+- Phone pages (`fms/static/`): `/ref` (fouls), `/emcee` (auto result + hub light cues), `/control`
+  (scorekeeper on the MacBook), `/display` (field TV / OBS overlay). Vanilla JS, no build step, no CDN
+  (the venue may have no internet). Live state over one websocket `/ws`.
+
+## Invariants: do not break
+- All scoring math lives in `fms/game.py` as pure functions. Every rule number comes from `config/event.yaml`
+  -> `game:`; never hardcode point values. `score_match` asserts two independent totals agree.
+- `python -m pytest -q` must pass after every change. Tests use hand-computed expected values; add a
+  hand-computed test for any scoring/timeline change. Zero tolerance for arithmetic errors.
+- Fuel is stored as raw timestamped events and never deleted by scoring. Which period a ball counts toward is
+  decided at score time from the timeline, so the start-click `offset` can be corrected after the match.
+- Shift scoring follows the LOCKED `first_inactive` (what the hub lights actually showed), not a recount of auto.
+  Alliance with MORE auto fuel has its hub INACTIVE in Shift 1; tie = coin flip.
+- Manual review overrides are stored as per-period `adjust` deltas on top of vision; vision data stays intact.
+- Committed matches are read-only until reopened. Playoff matches cannot commit while tied (scorekeeper picks).
+- Every TBA write goes through the SQLite outbox (`fms/tba.py`); never call TBA directly from a request handler.
+
+## Game timeline (defaults; verify against the 2026 manual)
+Auto 20 s -> 3 s gap -> Transition 10 s -> Shifts 1-4 at 25 s each (hubs alternate) -> Endgame 30 s.
+Teleop = 140 s. Fuel landing within `score_grace_s` (3 s) after a hub deactivates still counts.
+Unverified: teleop Level 1 climb (10 vs 15 in different sources), RP thresholds, foul values.
+
+## Run
+```bash
+source .venv/bin/activate
+./run.sh ../config/vision.mock.yaml     # FMS + fake fuel (no model/cameras)
+./run.sh                                # FMS + real cameras per config/vision.yaml
+python -m pytest -q
+```
+Pages at `http://<mac-ip>:8000` (`ipconfig getifaddr en0`); `localhost` only works on the Mac itself.
+TBA secrets come from env vars via `tba_secrets.sh` (gitignored). Keep `tba.enabled: false` while rehearsing,
+or practice matches get pushed to the real event. Wipe practice data with `rm data/fms.sqlite3*`.
+
+## Vision
+- Counter plugins: `zone` (default; short nearest-neighbor tracks inside the hub ROI, built because ByteTrack
+  fragmented badly on wide shots), `linecross`, `mock`, or custom `"module:Class"` with
+  `process(frame, t) -> int` (see `vision/counters/base.py`).
+- Model weights go in `vision/models/` (gitignored). Restart only the vision process to swap models.
+- Vision records raw hub video + per-frame timestamps per match; `vision/rescore.py` recounts a match offline
+  and replaces that hub's events in the FMS on the same clock.
+- macOS: OpenCV GUI calls must stay on the main thread (preview is done there).
+
+## Event constraints
+- Everyone (refs, emcee, scorekeeper) is on the venue WiFi; no hotspot. Some networks isolate clients;
+  test phone -> Mac reachability at the venue. The Mac's IP changes per network.
+- With 12 teams and 6-team matches, some back-to-back matches are unavoidable; the schedule optimizer minimizes them.
+
+## Not implemented yet
+Yellow/red cards and DQs, playoff backup robots, FRC's exact ranking/playoff tiebreakers,
+TBA `score_breakdown` (off by default; TBA validates per-season keys).
+
+## Working style for this repo
+Direct answers, uncomfortable truths first. Prove changes with tests or a mock run before calling them done.
+Small commits; don't refactor across `fms/` and `vision/` in one change.
