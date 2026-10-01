@@ -1,11 +1,45 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/static/style.css"><title>FMS</title></head>
-<body><main class="wrap" style="max-width:520px">
-<div class="panel"><h2>Pick your station</h2>
-<p><a href="/ref"><button style="width:100%">Referee</button></a></p>
-<p><a href="/emcee"><button style="width:100%">Emcee / game announcer</button></a></p>
-<p><a href="/display"><button style="width:100%">Field display / stream overlay</button></a></p>
-<p><a href="/control"><button class="primary" style="width:100%">Scorekeeper</button></a></p>
-<p class="muted small">On a phone: open your page, then Share → Add to Home Screen.</p>
-</div></main></body></html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#161a1f">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/style.css">
+<title>Watchtower FMS</title>
+<style>
+  .hero { display: flex; align-items: center; gap: .8rem; margin: 1.5rem 0 1.2rem; }
+  .hero img { width: 48px; height: 48px; border-radius: 12px; background: var(--ink); }
+  .hero h1 { font-size: 1.35rem; }
+  .stations { display: grid; gap: .6rem; }
+  .station { display: flex; align-items: center; gap: .9rem; padding: 1rem 1.1rem; border-radius: var(--r-lg);
+    background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--ink);
+    text-decoration: none; transition: border-color .12s, transform .06s; }
+  .station:hover { border-color: var(--ink-2); }
+  .station:active { transform: scale(.99); }
+  .station .ic { flex: none; width: 2.6rem; height: 2.6rem; border-radius: 10px; display: grid; place-items: center;
+    font-size: 1.25rem; font-weight: 800; }
+  .station b { display: block; font-size: 1.05rem; }
+  .station span.d { color: var(--muted); font-size: .85rem; }
+  .station::after { content: "›"; margin-left: auto; font-size: 1.6rem; color: var(--line-strong); }
+  .station.main { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .station.main span.d { color: #b9bec5; }
+</style>
+</head><body>
+<main class="wrap" style="max-width:520px">
+  <div class="hero"><img src="/static/icon.svg" alt=""><div><h1 id="ev">Watchtower FMS</h1><div class="muted small">Pick your station</div></div></div>
+  <div class="stations">
+    <a class="station" href="/ref"><span class="ic" style="background:var(--red-soft);color:var(--red)">!</span>
+      <span><b>Referee</b><span class="d">Log minor and major fouls</span></span></a>
+    <a class="station" href="/emcee"><span class="ic" style="background:var(--fuel-soft);color:#8a6d00">◉</span>
+      <span><b>Emcee</b><span class="d">Auto result and hub light cues</span></span></a>
+    <a class="station" href="/display"><span class="ic" style="background:var(--blue-soft);color:var(--blue)">▢</span>
+      <span><b>Field display</b><span class="d">Audience screen and stream overlay</span></span></a>
+    <a class="station main" href="/control"><span class="ic" style="background:rgba(255,255,255,.12)">≡</span>
+      <span><b>Scorekeeper</b><span class="d">Run matches, review scores, playoffs</span></span></a>
+  </div>
+  <p class="hint" style="text-align:center;margin-top:1.2rem">On a phone: open your page, then Share → Add to Home Screen.</p>
+</main>
+<script>
+fetch("/api/state").then((r) => r.json()).then((s) => { document.getElementById("ev").textContent = s.event.name; }).catch(() => {});
+</script>
+</body></html>

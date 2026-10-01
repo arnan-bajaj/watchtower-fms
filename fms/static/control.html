@@ -1,22 +1,52 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#161a1f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest/control.json">
+<link rel="apple-touch-icon" href="/static/icon.svg">
 <link rel="stylesheet" href="/static/style.css">
 <title>FMS Control</title>
 <style>
-  #bstart { font-size: 1.3rem; padding: .9rem 2rem; }
-  .al-red { border-left: 6px solid var(--red); padding-left: .7rem; }
-  .al-blue { border-left: 6px solid var(--blue); padding-left: .7rem; }
+  /* scoreboard */
+  .matchbar { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+  #msel { flex: 1 1 16rem; min-width: 0; font-weight: 600; }
+  .board { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: .75rem; margin: 1rem 0; }
+  .board .side { border-radius: 14px; padding: .9rem 1rem; min-height: 7.5rem; display: flex; flex-direction: column;
+    justify-content: space-between; gap: .5rem; border: 1px solid transparent; }
+  .board .side.red { background: var(--red-soft); border-color: var(--red-line); color: var(--red); }
+  .board .side.blue { background: var(--blue-soft); border-color: var(--blue-line); color: var(--blue); text-align: right; }
+  .board .teams { font-size: .95rem; overflow-wrap: anywhere; }
+  .board .score { font-size: 3.8rem; }
+  .board .center { text-align: center; align-self: center; padding: 0 .75rem; min-width: 9rem; }
+  .actions { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: .6rem; }
+  #bstart { font-size: 1.15rem; min-height: 56px; }
+  .offgrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .5rem; align-items: center; max-width: 34rem; }
+  #offv { text-align: center; font-size: 1.25rem; }
+  .offgrid button { padding: .4rem .3rem; white-space: nowrap; }
+  @media (max-width: 720px) {
+    .board { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .6rem; }
+    .board .center { grid-column: 1 / -1; order: -1; }
+    .board .score { font-size: 2.8rem; }
+    .board .side { min-height: 6rem; padding: .75rem; }
+    .actions { grid-template-columns: 1fr 1fr; }
+    #bstart { grid-column: 1 / -1; }
+  }
   td input[type=number] { width: 4.6rem; }
-  textarea { width: 100%; min-height: 8rem; font-family: ui-monospace, Menlo, monospace; border: 1.5px solid var(--line); border-radius: var(--r-sm); padding: .5rem; }
+  .review-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+  @media (max-width: 720px) { .review-grid { grid-template-columns: minmax(0, 1fr); } }
+  .row > input:not([type=number]):not([type=checkbox]):not([type=password]) { flex: 1 1 12rem; min-width: 0; }
   tr.cur td { background: var(--fuel-soft); }
-  tr.click { cursor: pointer; } tr.click:hover td { background: var(--fuel-soft); }
-  .pickgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: .5rem; }
-  .pickgrid button { padding: .8rem .5rem; font-size: 1.05rem; }
-  .pickgrid button small { display: block; font-weight: 500; color: var(--muted); font-size: .75rem; }
-  .danger { border-color: var(--warn); color: var(--warn); }
-  .kv td:first-child { color: var(--muted); width: 45%; }
+  tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel-2); } tr.click.cur:hover td { background: var(--fuel-soft); }
+  .pickgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr)); gap: .5rem; }
+  .pickgrid button { padding: .7rem .5rem; font-size: 1.15rem; min-height: 64px; }
+  .pickgrid button small { display: block; font-weight: 500; color: var(--muted); font-size: .75rem; margin-top: .1rem; }
+  #alliform select { width: 100%; min-width: 0; padding-right: .3rem; }
+  #alliform .scroll table { min-width: 0; table-layout: fixed; }
+  #alliform th:first-child, #alliform td:first-child { width: 3rem; }
+  .bar #curkey { opacity: .7; font-weight: 600; }
 </style>
 </head><body>
 <div class="bar">
@@ -32,27 +62,28 @@
   <!-- MATCH -->
   <section data-tab="match">
     <div class="panel">
-      <div class="row" style="justify-content:space-between">
-        <div class="row"><select id="msel"></select><span id="mstatus" class="pill">–</span><span id="msched" class="muted small"></span></div>
-        <div class="row"><button id="bteleop" class="ghost">Teleop started</button><button id="breset" class="ghost">Reset match</button></div>
+      <div class="matchbar">
+        <select id="msel" aria-label="Match"></select>
+        <div class="row"><span id="mstatus" class="pill">–</span><span id="msched" class="muted small"></span></div>
       </div>
-      <div class="grid2" style="margin:1rem 0">
-        <div class="al-red"><div class="teams tred" id="rteams"></div><div class="score num tred" id="rscore">0</div></div>
-        <div class="al-blue"><div class="teams tblue" id="bteams"></div><div class="score num tblue" id="bscore">0</div></div>
+      <div class="board">
+        <div class="side red"><div class="teams" id="rteams"></div><div class="score" id="rscore">0</div></div>
+        <div class="center"><div class="clock" id="clk">–:––</div><div class="phase" id="ph">–</div></div>
+        <div class="side blue"><div class="teams" id="bteams"></div><div class="score" id="bscore">0</div></div>
       </div>
-      <div class="row" style="justify-content:space-between">
+      <div class="actions">
         <button id="bstart" class="primary">Start match</button>
-        <div style="text-align:right"><div class="clock num" id="clk">–:––</div><div class="phase" id="ph">–</div></div>
+        <button id="bteleop" class="ghost">Teleop started</button><button id="breset" class="ghost">Reset match</button>
       </div>
     </div>
     <div class="panel">
       <h2>Start-click correction</h2>
-      <div class="row">
-        <button class="ghost" data-off="-1">−1 s</button><button class="ghost" data-off="-0.5">−0.5 s</button>
-        <b class="num" id="offv" style="min-width:5rem;text-align:center">0.0 s</b>
-        <button class="ghost" data-off="0.5">+0.5 s</button><button class="ghost" data-off="1">+1 s</button>
+      <div class="offgrid">
+        <button class="ghost" data-off="-1">−1 s</button><button class="ghost" data-off="-0.5">−0.5</button>
+        <b class="num" id="offv">0.0 s</b>
+        <button class="ghost" data-off="0.5">+0.5</button><button class="ghost" data-off="1">+1 s</button>
       </div>
-      <div class="muted small" style="margin-top:.4rem">Clicked late? Go negative. Every fuel event is kept with its timestamp, so the score re-buckets instantly. Watch the stream replay against the clock to set this.</div>
+      <div class="hint">Clicked late? Go negative. Every fuel event is kept with its timestamp, so the score re-buckets instantly. Watch the stream replay against the clock to set this.</div>
     </div>
     <div class="panel" id="autobox"></div>
     <div class="panel" id="review"></div>
@@ -62,25 +93,25 @@
   <section data-tab="sched" hidden>
     <div class="panel">
       <h2>Generate the qualification schedule</h2>
-      <div class="row">
-        <label>Matches per team <input type="number" id="mpt" min="1" max="20"></label>
-        <label>First match <input id="sstart" style="width:5.5rem"></label>
-        <label>Cycle (min) <input type="number" id="scycle" step="0.5" min="3"></label>
-        <label>Seed <input id="sseed" placeholder="random" style="width:7rem"></label>
+      <div class="form">
+        <label class="field">Matches per team <input type="number" id="mpt" min="1" max="20"></label>
+        <label class="field">First match <input id="sstart" inputmode="numeric"></label>
+        <label class="field">Cycle (min) <input type="number" id="scycle" step="0.5" min="3"></label>
+        <label class="field">Seed <input id="sseed" placeholder="random"></label>
         <button class="primary" id="bgen">Generate</button>
       </div>
-      <div class="muted small" id="mpthint" style="margin-top:.4rem"></div>
+      <div class="hint" id="mpthint"></div>
       <div id="spreview" style="margin-top:1rem"></div>
     </div>
     <div class="panel">
       <h2>Or import a schedule</h2>
-      <div class="muted small">One match per line: <code>match,red1,red2,red3,blue1,blue2,blue3[,HH:MM]</code>. Mark a surrogate with <code>*</code>.</div>
-      <textarea id="csv"></textarea>
-      <button id="bimp">Preview import</button>
+      <div class="muted small" style="margin-bottom:.6rem">One match per line: <code>match,red1,red2,red3,blue1,blue2,blue3[,HH:MM]</code>. Mark a surrogate with <code>*</code>.</div>
+      <textarea id="csv" spellcheck="false" autocapitalize="off"></textarea>
+      <button id="bimp" style="margin-top:.6rem">Preview import</button>
     </div>
     <div class="panel">
-      <div class="row" style="justify-content:space-between"><h2>All matches</h2>
-        <div class="row"><button id="btbasched">Send schedule to TBA</button><a href="/api/export.csv" download="fms-results.csv"><button class="ghost">Download results CSV</button></a></div></div>
+      <div class="panel-head"><h2>All matches</h2>
+        <div class="row"><button id="btbasched" class="small">Send schedule to TBA</button><a href="/api/export.csv" download="fms-results.csv"><button class="ghost small">Download CSV</button></a></div></div>
       <div class="scroll" id="alltable"></div>
     </div>
   </section>
@@ -88,15 +119,15 @@
   <!-- RESULTS -->
   <section data-tab="results" hidden>
     <div class="panel"><h2>Played matches</h2>
-      <div class="muted small">Click a match to see its full breakdown. Viewing doesn't change the current match or the field display.</div>
-      <div class="scroll" id="restable"></div></div>
+      <div class="muted small" style="margin-bottom:.75rem">Click a match to see its full breakdown. Viewing doesn't change the current match or the field display.</div>
+      <div id="restable"></div></div>
     <div class="panel" id="resdetail" hidden></div>
   </section>
 
   <!-- RANKINGS -->
   <section data-tab="rank" hidden>
-    <div class="panel"><div class="row" style="justify-content:space-between"><h2>Qualification rankings</h2><button id="brank">Push rankings to TBA</button></div>
-      <div class="muted small">Sort: ranking score (avg RP), then avg match score, avg tower, avg fuel. Recomputed and queued for TBA on every committed qual.</div>
+    <div class="panel"><div class="panel-head"><h2>Qualification rankings</h2><button id="brank" class="small">Push rankings to TBA</button></div>
+      <div class="muted small" style="margin-bottom:.75rem">Sort: ranking score (avg RP), then avg match score, avg tower, avg fuel. Recomputed and queued for TBA on every committed qual.</div>
       <div class="scroll" id="ranktable"></div></div>
   </section>
 
@@ -244,10 +275,10 @@ function renderReview(s) {
     : `<tr><td class="muted">No fouls</td></tr>`;
   const playoff = cur.comp_level !== "qm";
   box.innerHTML = `
-    <div class="row" style="justify-content:space-between"><h2>Score review · ${cur.key}</h2><span class="pill">${cur.status}</span></div>
-    <div class="grid2">
-      <div><table><tr><th>Period</th><th class="r">Red vision</th><th>Red final</th><th class="r">Blue vision</th><th>Blue final</th></tr>${fuelRows}
-        <tr><td class="muted small">Inactive-hub fuel seen</td><td class="r num muted">${sc.red.uncounted_fuel}</td><td></td><td class="r num muted">${sc.blue.uncounted_fuel}</td><td></td></tr></table>
+    <div class="panel-head"><h2>Score review · ${cur.key}</h2><span class="pill">${cur.status}</span></div>
+    <div class="grid2 review-grid">
+      <div><div class="scroll"><table><tr><th>Period</th><th class="r">Red vision</th><th>Red final</th><th class="r">Blue vision</th><th>Blue final</th></tr>${fuelRows}
+        <tr><td class="muted small">Inactive-hub fuel seen</td><td class="r num muted">${sc.red.uncounted_fuel}</td><td></td><td class="r num muted">${sc.blue.uncounted_fuel}</td><td></td></tr></table></div>
         <div class="muted small" style="margin-top:.3rem">Type the real count in "final" to override vision for that period. Vision data is never deleted.</div></div>
       <div><table><tr><th></th><th class="r tred">Red</th><th class="r tblue">Blue</th></tr>
         ${sumRow("Fuel", "total_fuel")}${sumRow("Auto points", "auto_points")}${sumRow("Teleop points", "teleop_points")}
@@ -366,11 +397,12 @@ function renderAll(s) {
 let resKey = null, resSig = "";
 function renderResults(s) {
   const played = s.matches.filter((m) => m.status === "committed" || m.status === "review");
-  $("#restable").innerHTML = played.length ? `<table><tr><th>Match</th><th>Red</th><th>Blue</th><th class="r">Score</th><th>Winner</th><th>Status</th></tr>
+  $("#restable").innerHTML = played.length ? `<div class="scroll"><table><tr><th>Match</th><th class="r">Score</th><th>Winner</th><th>Red</th><th>Blue</th><th>Status</th></tr>
     ${played.map((m) => `<tr class="click ${m.key === resKey ? "cur" : ""}" data-res="${m.key}"><td><b>${m.key}</b></td>
+      <td class="r num"><b>${m.red_score != null ? `<span class="tred">${m.red_score}</span>–<span class="tblue">${m.blue_score}</span>` : ""}</b></td>
+      <td class="t${m.winner || ""}">${m.winner || ""}</td>
       <td class="tred">${m.red.join(" ")}${m.red_alliance ? ` (A${m.red_alliance})` : ""}</td><td class="tblue">${m.blue.join(" ")}${m.blue_alliance ? ` (A${m.blue_alliance})` : ""}</td>
-      <td class="r num">${m.red_score != null ? `<span class="tred">${m.red_score}</span>–<span class="tblue">${m.blue_score}</span>` : ""}</td>
-      <td class="t${m.winner || ""}">${m.winner || ""}</td><td><span class="pill">${m.status}</span></td></tr>`).join("")}</table>`
+      <td><span class="pill">${m.status}</span></td></tr>`).join("")}</table></div>`
     : `<div class="muted">No matches played yet.</div>`;
   $("#restable").querySelectorAll("[data-res]").forEach((tr) => tr.onclick = () => { resKey = tr.dataset.res; resSig = ""; renderResults(S()); });
   const m = resKey && s.matches.find((x) => x.key === resKey);
@@ -429,14 +461,14 @@ function renderAlli(s, force) {
   if (!alliRendered || force) {
     const opts = (sel) => `<option value="">–</option>` + s.rankings.map((r) => `<option value="${r.team}" ${sel === r.team ? "selected" : ""}>${r.rank}. ${r.team}</option>`).join("");
     const al = s.alliances || [[], [], [], []];
-    $("#alliform").innerHTML = `<table><tr><th></th><th>Captain</th><th>Pick 1</th><th>Pick 2</th></tr>
-      ${[0, 1, 2, 3].map((i) => `<tr><td><b>A${i + 1}</b></td>${[0, 1, 2].map((j) => `<td><select data-al="${i}" data-pk="${j}">${opts((al[i] || [])[j])}</select></td>`).join("")}</tr>`).join("")}</table>`;
+    $("#alliform").innerHTML = `<div class="scroll"><table><tr><th></th><th>Captain</th><th>Pick 1</th><th>Pick 2</th></tr>
+      ${[0, 1, 2, 3].map((i) => `<tr><td><b>A${i + 1}</b></td>${[0, 1, 2].map((j) => `<td><select data-al="${i}" data-pk="${j}">${opts((al[i] || [])[j])}</select></td>`).join("")}</tr>`).join("")}</table></div>`;
     alliRendered = true;
   }
   const po = s.matches.filter((m) => m.comp_level !== "qm");
-  $("#bracket").innerHTML = (po.length ? `<table><tr><th>Match</th><th>Red</th><th>Blue</th><th class="r">Score</th><th>Status</th></tr>
+  $("#bracket").innerHTML = (po.length ? `<div class="scroll"><table><tr><th>Match</th><th>Red</th><th>Blue</th><th class="r">Score</th><th>Status</th></tr>
     ${po.map((m) => `<tr><td>${m.key}</td><td class="tred">A${m.red_alliance}</td><td class="tblue">A${m.blue_alliance}</td>
-      <td class="r num">${m.red_score != null ? m.red_score + "–" + m.blue_score : ""}</td><td><span class="pill">${m.status}</span></td></tr>`).join("")}</table>`
+      <td class="r num">${m.red_score != null ? m.red_score + "–" + m.blue_score : ""}</td><td><span class="pill">${m.status}</span></td></tr>`).join("")}</table></div>`
     : `<div class="muted">Save alliances to create the first two matches. Later matches appear as results come in.</div>`)
     + (s.champion ? `<h2 style="margin-top:1rem">Winners: Alliance ${s.champion}</h2>` : "");
 }
@@ -456,7 +488,7 @@ function renderLiveSel(s) {
   if (sig === liveSelSig) return;
   liveSelSig = sig;
   const onDisplay = s.display === "selection";
-  const dispBtn = `<button class="ghost" id="bdisp">${onDisplay ? "Field display: showing selection. Switch to match" : "Show selection on field display"}</button>`;
+  const dispBtn = `<button class="ghost small" id="bdisp">${onDisplay ? "Field display: showing selection. Switch to match" : "Show selection on field display"}</button>`;
   if (!sel) {
     const left = s.matches.filter((m) => m.comp_level === "qm" && m.status !== "committed").length;
     box.innerHTML = `<h2>Live alliance selection</h2>
@@ -472,9 +504,9 @@ function renderLiveSel(s) {
   }
   const rank = (t) => sel.order.indexOf(t) + 1;
   const capOf = (t) => sel.alliances.findIndex((a) => a[0] === t);
-  const altable = `<table><tr><th></th><th>Captain</th><th>Pick 1</th><th>Pick 2</th></tr>
+  const altable = `<div class="scroll"><table><tr><th></th><th>Captain</th><th>Pick 1</th><th>Pick 2</th></tr>
     ${sel.alliances.map((a, i) => `<tr class="${sel.picking === i + 1 ? "cur" : ""}"><td><b>A${i + 1}</b></td>
-      ${[0, 1, 2].map((j) => `<td>${a[j] ? `<b>${a[j]}</b> <span class="muted small">#${rank(a[j])}</span>` : ""}</td>`).join("")}</tr>`).join("")}</table>`;
+      ${[0, 1, 2].map((j) => `<td>${a[j] ? `<b>${a[j]}</b> <span class="muted small">#${rank(a[j])}</span>` : ""}</td>`).join("")}</tr>`).join("")}</table></div>`;
   const last = sel.history[sel.history.length - 1];
   let body;
   if (!sel.done) {
@@ -486,7 +518,7 @@ function renderLiveSel(s) {
     body = `<div style="margin:.6rem 0">${sel.saved ? `<span class="pill ok">Saved. Bracket built and alliances queued for TBA.</span>`
       : `<button class="primary" id="bselfinish">Save alliances and build bracket</button>`}</div>`;
   }
-  box.innerHTML = `<div class="row" style="justify-content:space-between"><h2>Live alliance selection</h2>${dispBtn}</div>
+  box.innerHTML = `<div class="panel-head"><h2>Live alliance selection</h2>${dispBtn}</div>
     ${altable}${body}
     <div class="row" style="margin-top:.8rem"><button class="ghost" id="bselundo" ${sel.history.length && !po ? "" : "disabled"}>Undo last pick</button>
       <button class="ghost danger" id="bselcancel" ${po ? "disabled" : ""}>Cancel selection</button></div>
