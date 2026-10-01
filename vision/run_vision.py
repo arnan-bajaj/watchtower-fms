@@ -9,8 +9,9 @@ recorded so the match can be re-counted later with a better model (rescore.py).
 
 Restarting this process mid-match loses only the seconds it was down.
 
-Optionally (`bioarena:` in the config) every count is also sent straight to a bioarena
-field over UDP, so bioarena can decide the auto winner and light the hubs (bioarena.py).
+Optionally every count is also sent straight to field systems over UDP (`feeds:` in the
+config, or --feed HOST:PORT), so e.g. bioarena can decide the auto winner and light the
+hubs (count_feed.py).
 """
 from __future__ import annotations
 
@@ -25,16 +26,16 @@ import numpy as np
 import requests
 
 import vconfig
-from bioarena import BioarenaFeed
+from count_feed import CountFeed, targets
 from counters import load_counter
 
 STOP = threading.Event()
 
 
 class Sender(threading.Thread):
-    def __init__(self, url, key, period=0.25, feed=None):
+    def __init__(self, url, key, period=0.25, feeds=()):
         super().__init__(daemon=True)
-        self.feed = feed
+        self.feeds = list(feeds)
         self.url, self.key, self.period = url.rstrip("/"), key, period
         self.buf = {"red": [], "blue": []}
         self.status = {}
@@ -52,8 +53,8 @@ class Sender(threading.Thread):
             with self.lock:
                 batch = {h: v[:] for h, v in self.buf.items()}
                 status = dict(self.status)
-            if self.feed:
-                status["bioarena"] = self.feed.status()
+            if self.feeds:
+                status["feeds"] = [f.status() for f in self.feeds]
             try:
                 r = requests.post(f"{self.url}/api/vision/events", timeout=2,
                                   headers={"X-Vision-Key": self.key},
@@ -157,8 +158,8 @@ class HubWorker(threading.Thread):
                 t = time.time()
             n = counter.process(frame, t)
             if n:
-                if self.sender.feed:  # first: this one is on bioarena's auto deadline
-                    self.sender.feed.add(self.hub, n, t)
+                for f in self.sender.feeds:  # first: these are on the field's auto deadline
+                    f.add(self.hub, n, t)
                 self.sender.add(self.hub, t, n)
             if self.recorder:
                 self.recorder.update(self.sender.record, frame, t, fps_nominal)
@@ -178,15 +179,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="../config/vision.yaml")
     ap.add_argument("--preview", action="store_true")
+    ap.add_argument("--feed", action="append", metavar="HOST:PORT",
+                    help="also stream live counts to this field system (repeatable; adds to config feeds:)")
     args = ap.parse_args()
     cfg = vconfig.load(args.config)
-    feed = None
-    if cfg.get("bioarena"):
-        b = cfg["bioarena"]
-        feed = BioarenaFeed(b["host"], b.get("port", 8411), b.get("bind", ""))
-        feed.start()
-        print(f"bioarena feed -> {feed.dest[0]}:{feed.dest[1]} session {feed.session}")
-    sender = Sender(cfg["fms_url"], cfg["vision_key"], feed=feed)
+    feeds = [CountFeed.from_target(t) for t in targets(cfg, args.feed)]
+    for f in feeds:
+        f.start()
+        print(f"count feed {f.name_} -> {f.dest[0]}:{f.dest[1]} session {f.session}")
+    sender = Sender(cfg["fms_url"], cfg["vision_key"], feeds=feeds)
     sender.start()
     defaults = cfg.get("defaults", {})
     workers = []
