@@ -1,0 +1,7 @@
+fms_url: http://127.0.0.1:8000
+vision_key: "change-me-too"
+record_dir: ""
+defaults: {counter: mock, rate_per_s: 3, fps: 30}
+hubs:
+  red:  {source: none}
+  blue: {source: none}

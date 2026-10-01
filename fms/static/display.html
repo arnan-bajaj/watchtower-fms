@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+<title>FMS Display</title>
+<style>
+  body { background: var(--ink); color: #fff; overflow: hidden; }
+  .stage { height: 100vh; display: grid; grid-template-rows: auto 1fr auto; padding: 2vh 3vw; gap: 2vh; }
+  .top { display: flex; justify-content: space-between; align-items: baseline; font-size: 3vh; }
+  .mid { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 3vw; }
+  .al { border-radius: 2vh; padding: 3vh 2vw; text-align: center; }
+  .al.red { background: var(--red); } .al.blue { background: var(--blue); }
+  .al .s { font-size: 18vh; font-weight: 800; line-height: 1; }
+  .al .t { font-size: 3.6vh; font-weight: 650; margin-top: 1vh; }
+  .al .h { font-size: 2.6vh; margin-top: 1.5vh; padding: .6vh 1vw; border-radius: 99px; display: inline-block; background: rgba(0,0,0,.25); }
+  .al .h.on { background: var(--fuel); color: var(--ink); font-weight: 800; }
+  .c { text-align: center; } .c .clock { font-size: 14vh; } .c .phase { color: #c9ccc4; font-size: 3vh; }
+  .bd { display: grid; grid-template-columns: 1fr 1fr; gap: 3vw; font-size: 2.6vh; }
+  .bd table td { border-color: rgba(255,255,255,.15); } .bd td.r { font-weight: 700; }
+  .win { font-size: 5vh; font-weight: 800; text-align: center; }
+</style>
+</head><body>
+<div class="stage">
+  <div class="top"><b id="ev"></b><span id="mk"></span></div>
+  <div class="mid">
+    <div class="al red"><div class="s num" id="rs">0</div><div class="t" id="rt"></div><div class="h" id="rh"></div></div>
+    <div class="c"><div class="clock num" id="clk">–:––</div><div class="phase" id="ph"></div></div>
+    <div class="al blue"><div class="s num" id="bs">0</div><div class="t" id="bt"></div><div class="h" id="bh"></div></div>
+  </div>
+  <div id="foot"></div>
+</div>
+<script src="/static/common.js"></script>
+<script>
+const { $ } = FMS;
+FMS.connect();
+const rows = [["Auto", "auto_points"], ["Fuel", "fuel_points"], ["Tower", "tower_points"], ["Penalty", "foul_points"]];
+FMS.on((s) => {
+  const cur = s.current;
+  $("#ev").textContent = s.event.name;
+  $("#mk").textContent = cur ? cur.key.toUpperCase() : "";
+  $("#rt").textContent = cur ? cur.red.join("  ") : "";
+  $("#bt").textContent = cur ? cur.blue.join("  ") : "";
+  const sc = cur && cur.score;
+  $("#rs").textContent = sc ? sc.red.total : 0;
+  $("#bs").textContent = sc ? sc.blue.total : 0;
+  if (cur && cur.status === "committed" && sc) {
+    const w = sc.winner === "tie" ? "Tie" : (sc.winner === "red" ? "Red" : "Blue") + " wins";
+    const col = (a) => `<table>${rows.map(([l, k]) => `<tr><td>${l}</td><td class="r num">${sc[a][k]}</td></tr>`).join("")}
+      ${cur.comp_level === "qm" ? `<tr><td>Ranking points</td><td class="r num">${sc[a].rp}</td></tr>` : ""}</table>`;
+    $("#foot").innerHTML = `<div class="win">${w}</div><div class="bd">${col("red")}${col("blue")}</div>`;
+  } else {
+    $("#foot").innerHTML = cur && cur.status !== "scheduled" ? `<div class="c phase">Scores are provisional until reviewed</div>` : "";
+  }
+});
+everyFrame(() => {
+  const cur = FMS.state && FMS.state.current, p = FMS.phase(cur);
+  $("#clk").textContent = FMS.mmss(p.clock);
+  $("#ph").textContent = p.label;
+  const live = p.active && !["pre", "post", "pause"].includes(p.name);
+  for (const a of ["red", "blue"]) {
+    const el = $(a === "red" ? "#rh" : "#bh");
+    el.classList.toggle("on", !!(live && p.active[a]));
+    el.textContent = live ? (p.active[a] ? "Hub active" : "Hub inactive") : "";
+  }
+});
+</script>
+</body></html>

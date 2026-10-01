@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+<title>FMS Control</title>
+<style>
+  #bstart { font-size: 1.3rem; padding: .9rem 2rem; }
+  .al-red { border-left: 6px solid var(--red); padding-left: .7rem; }
+  .al-blue { border-left: 6px solid var(--blue); padding-left: .7rem; }
+  td input[type=number] { width: 4.6rem; }
+  textarea { width: 100%; min-height: 8rem; font-family: ui-monospace, Menlo, monospace; border: 1.5px solid var(--line); border-radius: var(--r-sm); padding: .5rem; }
+  tr.cur td { background: var(--fuel-soft); }
+  .kv td:first-child { color: var(--muted); width: 45%; }
+</style>
+</head><body>
+<div class="bar">
+  <span><span class="conn"></span> <b id="evname">FMS</b> <span id="curkey" class="small"></span></span>
+  <span class="row small"><span id="vpill" class="pill">vision</span><span id="tpill" class="pill">TBA</span></span>
+</div>
+<main class="wrap" id="app" hidden>
+  <div class="tabs" id="tabs">
+    <button data-t="match" class="sel">Match</button><button data-t="sched">Schedule</button>
+    <button data-t="rank">Rankings</button><button data-t="alli">Alliances &amp; playoffs</button><button data-t="setup">Setup</button>
+  </div>
+
+  <!-- MATCH -->
+  <section data-tab="match">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <div class="row"><select id="msel"></select><span id="mstatus" class="pill">–</span><span id="msched" class="muted small"></span></div>
+        <div class="row"><button id="bteleop" class="ghost">Teleop started</button><button id="breset" class="ghost">Reset match</button></div>
+      </div>
+      <div class="grid2" style="margin:1rem 0">
+        <div class="al-red"><div class="teams tred" id="rteams"></div><div class="score num tred" id="rscore">0</div></div>
+        <div class="al-blue"><div class="teams tblue" id="bteams"></div><div class="score num tblue" id="bscore">0</div></div>
+      </div>
+      <div class="row" style="justify-content:space-between">
+        <button id="bstart" class="primary">Start match</button>
+        <div style="text-align:right"><div class="clock num" id="clk">–:––</div><div class="phase" id="ph">–</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Start-click correction</h2>
+      <div class="row">
+        <button class="ghost" data-off="-1">−1 s</button><button class="ghost" data-off="-0.5">−0.5 s</button>
+        <b class="num" id="offv" style="min-width:5rem;text-align:center">0.0 s</b>
+        <button class="ghost" data-off="0.5">+0.5 s</button><button class="ghost" data-off="1">+1 s</button>
+      </div>
+      <div class="muted small" style="margin-top:.4rem">Clicked late? Go negative. Every fuel event is kept with its timestamp, so the score re-buckets instantly. Watch the stream replay against the clock to set this.</div>
+    </div>
+    <div class="panel" id="autobox"></div>
+    <div class="panel" id="review"></div>
+  </section>
+
+  <!-- SCHEDULE -->
+  <section data-tab="sched" hidden>
+    <div class="panel">
+      <h2>Generate the qualification schedule</h2>
+      <div class="row">
+        <label>Matches per team <input type="number" id="mpt" min="1" max="20"></label>
+        <label>First match <input id="sstart" style="width:5.5rem"></label>
+        <label>Cycle (min) <input type="number" id="scycle" step="0.5" min="3"></label>
+        <label>Seed <input id="sseed" placeholder="random" style="width:7rem"></label>
+        <button class="primary" id="bgen">Generate</button>
+      </div>
+      <div class="muted small" id="mpthint" style="margin-top:.4rem"></div>
+      <div id="spreview" style="margin-top:1rem"></div>
+    </div>
+    <div class="panel">
+      <h2>Or import a schedule</h2>
+      <div class="muted small">One match per line: <code>match,red1,red2,red3,blue1,blue2,blue3[,HH:MM]</code>. Mark a surrogate with <code>*</code>.</div>
+      <textarea id="csv"></textarea>
+      <button id="bimp">Preview import</button>
+    </div>
+    <div class="panel">
+      <div class="row" style="justify-content:space-between"><h2>All matches</h2>
+        <div class="row"><button id="btbasched">Send schedule to TBA</button><a href="/api/export.csv" download="fms-results.csv"><button class="ghost">Download results CSV</button></a></div></div>
+      <div class="scroll" id="alltable"></div>
+    </div>
+  </section>
+
+  <!-- RANKINGS -->
+  <section data-tab="rank" hidden>
+    <div class="panel"><div class="row" style="justify-content:space-between"><h2>Qualification rankings</h2><button id="brank">Push rankings to TBA</button></div>
+      <div class="muted small">Sort: ranking score (avg RP), then avg match score, avg tower, avg fuel. Recomputed and queued for TBA on every committed qual.</div>
+      <div class="scroll" id="ranktable"></div></div>
+  </section>
+
+  <!-- ALLIANCES -->
+  <section data-tab="alli" hidden>
+    <div class="panel"><h2>Alliance selection</h2><div id="alliform"></div>
+      <button class="primary" id="balli" style="margin-top:.8rem">Save alliances and build bracket</button></div>
+    <div class="panel"><h2>Double-elimination bracket</h2><div id="bracket"></div></div>
+  </section>
+
+  <!-- SETUP -->
+  <section data-tab="setup" hidden>
+    <div class="grid2">
+      <div class="panel"><h2>Phone pages</h2><table class="kv" id="urls"></table>
+        <div class="muted small" style="margin-top:.5rem">Open on the phone, then Share → Add to Home Screen.</div></div>
+      <div class="panel"><h2>Vision</h2><table class="kv" id="vtable"></table></div>
+      <div class="panel"><h2>The Blue Alliance</h2><table class="kv" id="ttable"></table>
+        <div class="row" style="margin-top:.6rem"><button id="bpushall">Push everything</button><button class="ghost" id="bretry">Retry failed</button></div></div>
+      <div class="panel"><h2>Match videos</h2>
+        <div class="muted small">Match videos are links into your YouTube livestream at the right timestamp. Click the button the moment the stream goes live.</div>
+        <div class="row" style="margin-top:.6rem"><input id="vod" placeholder="YouTube video ID of the livestream"><button id="bvod">Save</button></div>
+        <div class="row" style="margin-top:.6rem"><button id="blive">Stream went live now</button><span class="muted small" id="livets"></span></div>
+        <div class="row" style="margin-top:.6rem"><input id="wurl" placeholder="Webcast URL for TBA event page"><button id="bwurl">Send to TBA</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/common.js"></script>
+<script>
+const { $, esc } = FMS;
+const S = () => FMS.state;
+const api = async (p, b) => { try { return await FMS.api(p, b); } catch (e) { FMS.toast(e.message, true); throw e; } };
+let preview = null, reviewPending = false, lastReviewSig = "";
+
+FMS.gate("control").then(() => { $("#app").hidden = false; FMS.connect(); });
+
+// ---- tabs
+$("#tabs").onclick = (e) => {
+  const t = e.target.dataset.t; if (!t) return;
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("sel", b.dataset.t === t));
+  document.querySelectorAll("section[data-tab]").forEach((s) => s.hidden = s.dataset.tab !== t);
+  if (t === "alli" && S()) renderAlli(S(), true);
+};
+
+// ---- match controls
+const curKey = () => S() && S().current && S().current.key;
+$("#msel").onchange = (e) => api("/api/match/select", { key: e.target.value });
+$("#bstart").onclick = () => api("/api/match/start", { key: curKey() });
+$("#bteleop").onclick = () => api("/api/match/teleop", { key: curKey() });
+$("#breset").onclick = () => {
+  if (!confirm(`Reset ${curKey()}? Timing, adjustments and climbs are cleared.`)) return;
+  const clear = confirm("Also delete the fouls logged for this match? (OK = delete, Cancel = keep)");
+  api("/api/match/reset", { key: curKey(), clear_fouls: clear });
+};
+document.querySelectorAll("[data-off]").forEach((b) => b.onclick = () => {
+  const cur = S().current; if (!cur) return;
+  api("/api/match/offset", { key: cur.key, offset: Math.round(((cur.offset || 0) + parseFloat(b.dataset.off)) * 10) / 10 });
+});
+
+function renderMatch(s) {
+  const cur = s.current;
+  const open = s.matches.filter((m) => m.status !== "committed" || (cur && m.key === cur.key));
+  $("#msel").innerHTML = open.map((m) => `<option value="${m.key}" ${cur && m.key === cur.key ? "selected" : ""}>${m.key} · ${m.red.join(" ")} v ${m.blue.join(" ")}</option>`).join("");
+  $("#curkey").textContent = cur ? cur.key : "";
+  if (!cur) return;
+  $("#mstatus").textContent = cur.status;
+  $("#msched").textContent = cur.scheduled ? "scheduled " + cur.scheduled : "";
+  const sur = new Set(cur.surrogates || []);
+  const tl = (ts) => ts.map((t) => t + (sur.has(t) ? "*" : "")).join(" · ");
+  $("#rteams").textContent = tl(cur.red) + (cur.red_alliance ? `  (A${cur.red_alliance})` : "");
+  $("#bteams").textContent = tl(cur.blue) + (cur.blue_alliance ? `  (A${cur.blue_alliance})` : "");
+  $("#rscore").textContent = cur.score ? cur.score.red.total : 0;
+  $("#bscore").textContent = cur.score ? cur.score.blue.total : 0;
+  $("#bstart").disabled = cur.status !== "scheduled";
+  $("#bteleop").disabled = cur.status !== "running";
+  $("#breset").disabled = cur.status === "committed" || cur.status === "scheduled";
+  $("#offv").textContent = (cur.offset || 0).toFixed(1) + " s";
+  renderAuto(s);
+  const sig = JSON.stringify([cur.key, cur.status, cur.score, cur.climbs, cur.fouls, cur.video, cur.winner_override, cur.suggested_video]);
+  const ae = document.activeElement;
+  if ($("#review").contains(ae) && ae.matches("input,select")) { reviewPending = true; return; }
+  if (sig !== lastReviewSig) { lastReviewSig = sig; renderReview(s); }
+}
+$("#review").addEventListener("focusout", () => setTimeout(() => {
+  if (reviewPending && S()) { reviewPending = false; lastReviewSig = ""; renderMatch(S()); }
+}, 50));
+
+function renderAuto(s) {
+  const cur = s.current, g = s.game, box = $("#autobox");
+  if (!cur.first_inactive) { box.innerHTML = `<h2>Auto result</h2><div class="muted">Decided ${g.score_grace_s}s after auto ends. Emcee sees it at the same time.</div>`; return; }
+  const ra = cur.score.red.auto_fuel, ba = cur.score.blue.auto_fuel;
+  const close = Math.abs(ra - ba) <= g.close_auto_margin;
+  box.innerHTML = `<h2>Auto result</h2>
+    <div class="row"><span class="num">Auto fuel <b class="tred">${ra}</b> – <b class="tblue">${ba}</b></span>
+      <span>Hub off first: <b class="t${cur.first_inactive}">${cur.first_inactive}</b>${cur.fi_coin ? " (tie, coin flip)" : ""}</span>
+      <span class="pill ${cur.fi_locked ? "ok" : "bad"}">${cur.fi_locked ? "locked" : "not locked"}</span></div>
+    ${close ? `<div class="warnbox" style="margin-top:.6rem">Within ${g.close_auto_margin} fuel. Vision error could flip this; confirm with the head ref.</div>` : ""}
+    <div class="row" style="margin-top:.6rem"><button class="red" data-fi="red">Red off first · lock</button><button class="blue" data-fi="blue">Blue off first · lock</button></div>
+    <div class="muted small" style="margin-top:.4rem">Shift scoring follows whatever the hub lights actually showed. Lock the call that was used on the field.</div>`;
+  box.querySelectorAll("[data-fi]").forEach((b) => b.onclick = () => api("/api/match/first_inactive", { key: cur.key, alliance: b.dataset.fi, lock: true }));
+}
+
+function renderReview(s) {
+  const cur = s.current, g = s.game, box = $("#review");
+  if (!cur || !cur.score) { box.innerHTML = `<h2>Score review</h2><div class="muted">Start the match to see live counts.</div>`; return; }
+  const sc = cur.score, names = cur.periods.map((p) => p.name);
+  const locked = cur.status === "committed";
+  const dis = locked ? "disabled" : "";
+  const inp = (a, p) => `<input type="number" min="0" data-id="f-${a}-${p}" data-a="${a}" data-p="${p}" value="${sc[a].fuel[p]}" ${dis}>`;
+  const fuelRows = names.map((p) => `<tr><td>${FMS.LABEL[p]}</td>
+      <td class="r num muted">${sc.red.vision_fuel[p]}</td><td>${inp("red", p)}</td>
+      <td class="r num muted">${sc.blue.vision_fuel[p]}</td><td>${inp("blue", p)}</td></tr>`).join("");
+  const climbs = (a) => cur[a].map((t, i) => {
+    const r = ((cur.climbs || {})[a] || [])[i] || { auto_l1: false, level: 0 };
+    return `<tr><td class="t${a}"><b>${t}</b></td>
+      <td><label><input type="checkbox" data-id="c-${a}-${i}-a" data-ca="${a}" data-ci="${i}" data-auto ${r.auto_l1 ? "checked" : ""} ${dis}> L1 in auto</label></td>
+      <td><select data-id="c-${a}-${i}-l" data-ca="${a}" data-ci="${i}" ${dis}>${[0, 1, 2, 3].map((l) => `<option value="${l}" ${r.level === l ? "selected" : ""}>${l ? "Level " + l : "No climb"}</option>`).join("")}</select></td></tr>`;
+  }).join("");
+  const sumRow = (label, k) => `<tr><td>${label}</td><td class="r num">${sc.red[k]}</td><td class="r num">${sc.blue[k]}</td></tr>`;
+  const bonus = (a) => ["energized", "supercharged", "traversal"].filter((k) => sc[a][k]).join(", ") || "–";
+  const t0 = cur.periods[0].start;
+  const fouls = cur.fouls.length ? cur.fouls.map((f) => `<tr><td class="t${f.committed_by}">${f.committed_by} ${f.kind}</td><td>${f.team || ""}</td>
+      <td class="muted small">${FMS.mmss(f.t - t0)} · ${esc(f.ref)}</td><td>${locked ? "" : `<button class="ghost small" data-fdel="${f.id}">Remove</button>`}</td></tr>`).join("")
+    : `<tr><td class="muted">No fouls</td></tr>`;
+  const playoff = cur.comp_level !== "qm";
+  box.innerHTML = `
+    <div class="row" style="justify-content:space-between"><h2>Score review · ${cur.key}</h2><span class="pill">${cur.status}</span></div>
+    <div class="grid2">
+      <div><table><tr><th>Period</th><th class="r">Red vision</th><th>Red final</th><th class="r">Blue vision</th><th>Blue final</th></tr>${fuelRows}
+        <tr><td class="muted small">Inactive-hub fuel seen</td><td class="r num muted">${sc.red.uncounted_fuel}</td><td></td><td class="r num muted">${sc.blue.uncounted_fuel}</td><td></td></tr></table>
+        <div class="muted small" style="margin-top:.3rem">Type the real count in "final" to override vision for that period. Vision data is never deleted.</div></div>
+      <div><table><tr><th></th><th class="r tred">Red</th><th class="r tblue">Blue</th></tr>
+        ${sumRow("Fuel", "total_fuel")}${sumRow("Auto points", "auto_points")}${sumRow("Teleop points", "teleop_points")}
+        ${sumRow("Tower points", "tower_points")}${sumRow("Penalty points drawn", "foul_points")}
+        <tr><td><b>Total</b></td><td class="r num"><b>${sc.red.total}</b></td><td class="r num"><b>${sc.blue.total}</b></td></tr>
+        ${playoff ? "" : `<tr><td>Bonus RP</td><td class="r small">${bonus("red")}</td><td class="r small">${bonus("blue")}</td></tr>${sumRow("Ranking points", "rp")}`}
+        </table>
+        <div style="margin-top:.6rem">Winner: <b class="t${sc.winner}">${sc.winner}</b>
+        ${playoff ? `<select id="wo" data-id="wo" ${dis}><option value="">by score</option><option value="red" ${cur.winner_override === "red" ? "selected" : ""}>Red advances</option><option value="blue" ${cur.winner_override === "blue" ? "selected" : ""}>Blue advances</option></select>` : ""}</div>
+        ${playoff && sc.tied_on_points && !cur.winner_override ? `<div class="warnbox" style="margin-top:.5rem">Playoff tie. Pick who advances (apply your tiebreaker) or reset and replay.</div>` : ""}
+      </div>
+    </div>
+    <div class="grid2" style="margin-top:1rem">
+      <div><h2>Tower</h2><table>${climbs("red")}${climbs("blue")}</table></div>
+      <div><h2>Fouls</h2><table>${fouls}</table>
+        ${locked ? "" : `<div class="row" style="margin-top:.5rem"><button class="red small" data-fadd="red:minor">Red minor</button><button class="red small" data-fadd="red:major">Red major</button><button class="blue small" data-fadd="blue:minor">Blue minor</button><button class="blue small" data-fadd="blue:major">Blue major</button></div>`}</div>
+    </div>
+    <div class="row" style="margin-top:1rem">
+      <input id="vid" data-id="vid" placeholder="${esc(cur.suggested_video || "YouTube ID (optional)")}" value="${esc(cur.video || "")}" style="flex:1;min-width:14rem">
+      <button class="ghost" id="bvid">Save video</button>
+    </div>
+    <div class="row" style="margin-top:1rem;justify-content:flex-end">
+      ${locked ? `<button id="breopen">Reopen for edits</button>` : `<button class="primary" id="bcommit" ${cur.status !== "review" ? "disabled" : ""}>Commit and send to TBA</button>`}
+    </div>`;
+  const focusId = box.dataset.focus;
+  if (focusId) { const el = box.querySelector(`[data-id="${focusId}"]`); if (el) el.focus(); box.dataset.focus = ""; }
+  box.querySelectorAll("input[data-p]").forEach((el) => el.onchange = () => {
+    box.dataset.focus = nextFocus(el);
+    api("/api/match/adjust", { key: cur.key, alliance: el.dataset.a, period: el.dataset.p, total: parseInt(el.value || "0", 10) });
+  });
+  box.querySelectorAll("[data-ca]").forEach((el) => el.onchange = () => {
+    const body = { key: cur.key, alliance: el.dataset.ca, idx: +el.dataset.ci };
+    if (el.hasAttribute("data-auto")) body.auto_l1 = el.checked; else body.level = +el.value;
+    api("/api/match/climb", body);
+  });
+  box.querySelectorAll("[data-fdel]").forEach((b) => b.onclick = () => api(`/api/fouls/${b.dataset.fdel}`, { delete: true }));
+  box.querySelectorAll("[data-fadd]").forEach((b) => b.onclick = () => {
+    const [a, k] = b.dataset.fadd.split(":");
+    api("/api/fouls", { key: cur.key, committed_by: a, kind: k, ref: "scorekeeper" });
+  });
+  const wo = $("#wo"); if (wo) wo.onchange = () => api("/api/match/winner", { key: cur.key, winner: wo.value || null });
+  $("#bvid").onclick = () => api("/api/match/video", { key: cur.key, youtube: $("#vid").value });
+  const bc = $("#bcommit"); if (bc) bc.onclick = async () => {
+    const j = await api("/api/match/commit", { key: cur.key });
+    FMS.toast(`${cur.key} committed${j.next ? ". Next: " + j.next : ""}`);
+  };
+  const br = $("#breopen"); if (br) br.onclick = () => api("/api/match/reopen", { key: cur.key });
+}
+function nextFocus(el) {
+  const all = [...$("#review").querySelectorAll("input[data-p]")];
+  const i = all.indexOf(el);
+  return all[i + 1] ? all[i + 1].dataset.id : "";
+}
+
+// ---- schedule
+function hhmm(t) { const [h, m] = t.split(":").map(Number); return h * 60 + m; }
+function suggestMpt(s) {
+  const e = s.event, n = e.teams.length;
+  const start = $("#sstart").value || "09:30", cyc = parseFloat($("#scycle").value) || 8;
+  const slots = Math.floor((hhmm(e.lunch) - hhmm(start)) / cyc);
+  const mpt = Math.max(1, Math.floor(slots * 6 / n));
+  $("#mpthint").textContent = `${n} teams. ${slots} match slots fit between ${start} and lunch (${e.lunch}) at ${cyc} min → up to ${mpt} matches per team.`;
+  return mpt;
+}
+["#sstart", "#scycle"].forEach((id) => $(id).addEventListener("input", () => S() && suggestMpt(S())));
+$("#bgen").onclick = async () => {
+  $("#bgen").disabled = true; $("#bgen").textContent = "Generating…";
+  try {
+    preview = await api("/api/schedule/preview", { matches_per_team: +$("#mpt").value, start: $("#sstart").value,
+                                                   cycle_min: +$("#scycle").value, seed: $("#sseed").value || null });
+    renderPreview();
+  } finally { $("#bgen").disabled = false; $("#bgen").textContent = "Generate"; }
+};
+$("#bimp").onclick = async () => { preview = await api("/api/schedule/import", { csv: $("#csv").value }); renderPreview(); };
+function renderPreview() {
+  const p = preview, st = p.stats;
+  $("#spreview").innerHTML = `
+    ${st ? `<div class="row small"><span class="pill">${p.matches.length} matches</span>
+      <span class="pill ${st.back_to_back ? "bad" : "ok"}">${st.back_to_back} back-to-back</span>
+      <span class="pill">max partner repeat ${st.max_partner_repeat}</span><span class="pill">max opponent repeat ${st.max_opp_repeat}</span></div>` : ""}
+    ${p.unknown_teams && p.unknown_teams.length ? `<div class="warnbox">Teams not in config: ${p.unknown_teams.join(", ")}</div>` : ""}
+    <div class="${p.fits_before_lunch ? "" : "warnbox"}" style="margin:.5rem 0">Quals end at <b>${p.quals_end}</b>${p.fits_before_lunch ? "" : " — past lunch"}</div>
+    <div class="scroll"><table><tr><th>#</th><th>Time</th><th>Red</th><th>Blue</th></tr>
+    ${p.matches.map((m, i) => `<tr><td>${i + 1}</td><td>${m.scheduled}</td><td class="tred">${m.red.map((t) => t + (m.surrogates.includes(t) ? "*" : "")).join(" ")}</td><td class="tblue">${m.blue.map((t) => t + (m.surrogates.includes(t) ? "*" : "")).join(" ")}</td></tr>`).join("")}
+    </table></div>
+    <button class="primary" id="bsave" style="margin-top:.8rem">Save this schedule</button>`;
+  $("#bsave").onclick = async () => {
+    if (!confirm("Replace the qualification schedule?")) return;
+    await api("/api/schedule/save", { matches: preview.matches });
+    FMS.toast("Schedule saved. Send it to TBA when ready.");
+  };
+}
+$("#btbasched").onclick = async () => { const j = await api("/api/tba/schedule"); FMS.toast(`Queued ${j.queued} matches for TBA`); };
+function renderAll(s) {
+  const cur = s.current;
+  $("#alltable").innerHTML = `<table><tr><th>Match</th><th>Time</th><th>Red</th><th>Blue</th><th class="r">Score</th><th>Status</th><th></th></tr>
+    ${s.matches.map((m) => `<tr class="${cur && m.key === cur.key ? "cur" : ""}"><td>${m.key}</td><td>${m.scheduled || ""}</td>
+      <td class="tred">${m.red.join(" ")}</td><td class="tblue">${m.blue.join(" ")}</td>
+      <td class="r num">${m.red_score != null ? `<span class="tred">${m.red_score}</span>–<span class="tblue">${m.blue_score}</span>` : ""}</td>
+      <td><span class="pill">${m.status}</span></td><td><button class="ghost small" data-sel="${m.key}">Open</button></td></tr>`).join("")}</table>`;
+  $("#alltable").querySelectorAll("[data-sel]").forEach((b) => b.onclick = async () => {
+    await api("/api/match/select", { key: b.dataset.sel });
+    $("#tabs").querySelector('[data-t="match"]').click();
+  });
+}
+
+// ---- rankings
+$("#brank").onclick = async () => { await api("/api/tba/rankings"); FMS.toast("Rankings queued for TBA"); };
+function renderRank(s) {
+  $("#ranktable").innerHTML = `<table><tr><th>Rank</th><th>Team</th><th class="r">RS</th><th class="r">W-L-T</th><th class="r">Played</th><th class="r">RP</th><th class="r">Avg match</th><th class="r">Avg tower</th><th class="r">Avg fuel</th></tr>
+    ${s.rankings.map((r) => `<tr><td>${r.rank}</td><td><b>${r.team}</b></td><td class="r num">${r.rs.toFixed(2)}</td><td class="r num">${r.wins}-${r.losses}-${r.ties}</td>
+      <td class="r num">${r.played}</td><td class="r num">${r.rp}</td><td class="r num">${r.avg_score.toFixed(1)}</td><td class="r num">${r.avg_tower.toFixed(1)}</td><td class="r num">${r.avg_fuel.toFixed(1)}</td></tr>`).join("")}</table>`;
+}
+
+// ---- alliances
+let alliRendered = false;
+function renderAlli(s, force) {
+  if (!alliRendered || force) {
+    const opts = (sel) => `<option value="">–</option>` + s.rankings.map((r) => `<option value="${r.team}" ${sel === r.team ? "selected" : ""}>${r.rank}. ${r.team}</option>`).join("");
+    const al = s.alliances || [[], [], [], []];
+    $("#alliform").innerHTML = `<table><tr><th></th><th>Captain</th><th>Pick 1</th><th>Pick 2</th></tr>
+      ${[0, 1, 2, 3].map((i) => `<tr><td><b>A${i + 1}</b></td>${[0, 1, 2].map((j) => `<td><select data-al="${i}" data-pk="${j}">${opts((al[i] || [])[j])}</select></td>`).join("")}</tr>`).join("")}</table>`;
+    alliRendered = true;
+  }
+  const po = s.matches.filter((m) => m.comp_level !== "qm");
+  $("#bracket").innerHTML = (po.length ? `<table><tr><th>Match</th><th>Red</th><th>Blue</th><th class="r">Score</th><th>Status</th></tr>
+    ${po.map((m) => `<tr><td>${m.key}</td><td class="tred">A${m.red_alliance}</td><td class="tblue">A${m.blue_alliance}</td>
+      <td class="r num">${m.red_score != null ? m.red_score + "–" + m.blue_score : ""}</td><td><span class="pill">${m.status}</span></td></tr>`).join("")}</table>`
+    : `<div class="muted">Save alliances to create the first two matches. Later matches appear as results come in.</div>`)
+    + (s.champion ? `<h2 style="margin-top:1rem">Winners: Alliance ${s.champion}</h2>` : "");
+}
+$("#balli").onclick = async () => {
+  const al = [[], [], [], []];
+  document.querySelectorAll("[data-al]").forEach((el) => { if (el.value) al[+el.dataset.al][+el.dataset.pk] = +el.value; });
+  await api("/api/alliances", { alliances: al.map((a) => a.filter(Boolean)) });
+  FMS.toast("Alliances saved; sf1m1 and sf2m1 created");
+};
+
+// ---- setup
+$("#bpushall").onclick = async () => { await api("/api/tba/push_all"); FMS.toast("Queued everything for TBA"); };
+$("#bretry").onclick = () => api("/api/tba/retry");
+$("#bvod").onclick = () => api("/api/webcast", { vod_id: $("#vod").value });
+$("#blive").onclick = () => api("/api/webcast", { stream_start_now: true });
+$("#bwurl").onclick = () => api("/api/webcast", { url: $("#wurl").value });
+function renderSetup(s) {
+  const base = location.host;
+  $("#urls").innerHTML = ["ref", "emcee", "display", "control"].map((p) => `<tr><td>${p}</td><td><a href="/${p}">http://${base}/${p}</a></td></tr>`).join("");
+  const v = s.vision;
+  $("#vtable").innerHTML = ["red", "blue"].map((h) => {
+    const x = v[h];
+    return `<tr><td>${h} hub</td><td>${!x ? `<span class="pill bad">never connected</span>` :
+      x.age > 3 ? `<span class="pill bad">silent ${x.age}s</span>` :
+      `<span class="pill ${x.error ? "bad" : "ok"}">${x.error ? esc(x.error) : x.fps + " fps"}</span> ${esc(x.counter || "")}`}</td></tr>`;
+  }).join("");
+  const t = s.tba;
+  $("#ttable").innerHTML = `<tr><td>Event key</td><td>${esc(t.key || "not set")}</td></tr>
+    <tr><td>Sending</td><td>${t.configured ? `<span class="pill ok">on</span>` : `<span class="pill bad">off (config)</span>`}</td></tr>
+    <tr><td>Pending / sent / failed</td><td class="num">${t.pending || 0} / ${t.sent || 0} / ${t.dead || 0}</td></tr>
+    ${t.last_error ? `<tr><td>Last error</td><td class="small">${esc(t.last_error.last_error)}</td></tr>` : ""}`;
+  if (document.activeElement !== $("#vod")) $("#vod").value = s.webcast.vod_id || "";
+  $("#livets").textContent = s.webcast.stream_start ? "live since " + new Date(s.webcast.stream_start * 1000).toLocaleTimeString() : "";
+}
+
+function renderPills(s) {
+  const v = Object.values(s.vision);
+  const ok = v.length && v.every((x) => x.age <= 3 && !x.error);
+  $("#vpill").className = "pill " + (ok ? "ok" : "bad");
+  $("#vpill").textContent = ok ? "vision ok" : "vision down";
+  const t = s.tba;
+  $("#tpill").className = "pill " + (!t.configured ? "" : (t.pending || t.dead) ? "bad" : "ok");
+  $("#tpill").textContent = !t.configured ? "TBA off" : `TBA ${t.pending || 0} queued${t.dead ? ", " + t.dead + " failed" : ""}`;
+}
+
+let first = true;
+FMS.on((s) => {
+  $("#evname").textContent = s.event.name;
+  if (first) {
+    $("#sstart").value = s.event.qual_start; $("#scycle").value = s.event.cycle_min; first = false;
+    $("#mpt").value = suggestMpt(s);
+  }
+  renderPills(s); renderMatch(s); renderAll(s); renderRank(s); renderAlli(s); renderSetup(s);
+});
+everyFrame(() => {
+  const cur = S() && S().current, p = FMS.phase(cur);
+  $("#clk").textContent = FMS.mmss(p.clock);
+  $("#ph").textContent = p.label + (p.remaining != null && p.name !== "post" ? ` · ${FMS.mmss(p.remaining)}` : "");
+});
+</script>
+</body></html>
