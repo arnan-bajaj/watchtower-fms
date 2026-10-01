@@ -127,3 +127,47 @@ def rankings(teams, qual_matches):
     for i, r in enumerate(out, 1):
         r["rank"] = i
     return out
+
+
+# ---------------------------------------------------------------- live alliance selection
+def selection(order, picks, n_alliances=4, size=3):
+    """Replay a live alliance selection from the frozen rank `order` and the `picks` made so far.
+
+    Round 1 picks A1..An, round 2 An..A1 (serpentine). In round 1 a lower captain who hasn't
+    picked yet may be invited; lower alliances move up and the best unselected team becomes the
+    new last captain. Declines aren't modelled. Raises ValueError on an illegal pick."""
+    if len(order) < n_alliances * size:
+        raise ValueError(f"Need at least {n_alliances * size} teams for {n_alliances} alliances of {size}")
+    al = [[t] for t in order[:n_alliances]]
+    turns = n_alliances * (size - 1)
+    history = []
+    for i, t in enumerate(picks):
+        if i >= turns:
+            raise ValueError("Alliance selection is already complete")
+        p = _picker(i, n_alliances)
+        if t not in _available(al, order, p):
+            raise ValueError(f"Team {t} can't be picked now")
+        cap = next((j for j, a in enumerate(al) if a == [t]), None)
+        if cap is not None:  # a lower captain accepted
+            al.pop(cap)
+            on = {x for a in al for x in a} | {t}
+            al.append([next(x for x in order if x not in on)])
+        al[p].append(t)
+        history.append({"alliance": p + 1, "team": t, "round": i // n_alliances + 1})
+    done = len(picks) == turns
+    p = None if done else _picker(len(picks), n_alliances)
+    return {"alliances": al, "done": done, "history": history,
+            "picking": None if done else p + 1,
+            "round": None if done else len(picks) // n_alliances + 1,
+            "available": [] if done else _available(al, order, p)}
+
+
+def _picker(i, n):
+    rnd, pos = divmod(i, n)
+    return pos if rnd % 2 == 0 else n - 1 - pos
+
+
+def _available(al, order, picker):
+    on = {x for a in al for x in a}
+    lower_caps = {a[0] for a in al[picker + 1:] if len(a) == 1}
+    return [t for t in order if t not in on or t in lower_caps]

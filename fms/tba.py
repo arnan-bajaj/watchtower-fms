@@ -36,10 +36,10 @@ class TBA:
     def path(self, suffix):
         return f"/api/trusted/v1/event/{self.key}/{suffix}"
 
-    def enqueue(self, suffix, payload, dedupe=None):
+    def enqueue(self, suffix, payload, dedupe=None, raw=False):
         if not self.key:
             return False
-        body = json.dumps(payload, separators=(",", ":"))
+        body = payload if raw else json.dumps(payload, separators=(",", ":"))
         self.store.outbox_add(self.path(suffix), body, dedupe or suffix)
         self._wake.set()
         return True
@@ -95,6 +95,18 @@ class TBA:
     def alliances(self, alliances):
         return self.enqueue("alliance_selections/update",
                             [[fk(t) for t in a] for a in alliances], dedupe="alliances")
+
+    def clear_rankings(self):
+        return self.enqueue("rankings/update", {"breakdowns": [], "rankings": []}, dedupe="rankings")
+
+    def delete_matches(self, partial_keys):
+        """Takes matches down from TBA. A later update for the same key re-creates it."""
+        return self.enqueue("matches/delete", list(partial_keys),
+                            dedupe="delete:" + ",".join(sorted(partial_keys)))
+
+    def delete_all_matches(self):
+        # TBA requires the bare event key (not JSON) as the body to confirm a delete-all
+        return self.enqueue("matches/delete_all", self.key, dedupe="delete_all", raw=True)
 
     def video(self, partial_key, youtube):
         return self.enqueue("match_videos/add", {partial_key: youtube}, dedupe="video:" + partial_key)

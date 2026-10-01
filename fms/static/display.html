@@ -6,6 +6,7 @@
 <title>FMS Display</title>
 <style>
   body { background: var(--ink); color: #fff; overflow: hidden; }
+  [hidden] { display: none !important; }
   .stage { height: 100vh; display: grid; grid-template-rows: auto 1fr auto; padding: 2vh 3vw; gap: 2vh; }
   .top { display: flex; justify-content: space-between; align-items: baseline; font-size: 3vh; }
   .mid { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 3vw; }
@@ -19,9 +20,32 @@
   .bd { display: grid; grid-template-columns: 1fr 1fr; gap: 3vw; font-size: 2.6vh; }
   .bd table td { border-color: rgba(255,255,255,.15); } .bd td.r { font-weight: 700; }
   .win { font-size: 5vh; font-weight: 800; text-align: center; }
+  /* alliance selection */
+  .sel { height: 100vh; display: grid; grid-template-rows: auto auto 1fr auto; padding: 2vh 3vw; gap: 2.5vh; }
+  .sel .head { font-size: 6vh; font-weight: 800; text-align: center; }
+  .sel .now { font-size: 4vh; text-align: center; color: #c9ccc4; min-height: 5vh; }
+  .sel .now b { color: var(--fuel); }
+  .als { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2vw; align-content: start; }
+  .alc { border: .4vh solid rgba(255,255,255,.2); border-radius: 2vh; padding: 2.5vh 1vw; text-align: center; }
+  .alc.picking { border-color: var(--fuel); box-shadow: 0 0 4vh rgba(242,194,0,.45); }
+  .alc .n { font-size: 3vh; color: #c9ccc4; font-weight: 650; }
+  .alc .tm { font-size: 6vh; font-weight: 800; line-height: 1.25; }
+  .alc .tm.cap { color: var(--fuel); }
+  .alc .tm.empty { color: rgba(255,255,255,.18); }
+  .alc .tm.fresh { animation: pop .8s ease-out; }
+  @keyframes pop { from { transform: scale(1.4); color: var(--fuel); } to { transform: scale(1); } }
+  .avail { text-align: center; font-size: 3vh; color: #c9ccc4; }
+  .avail span { display: inline-block; margin: .6vh .5vw; padding: .5vh 1vw; border-radius: 99px; background: rgba(255,255,255,.1); color: #fff; font-weight: 700; }
+  .avail span small { color: #c9ccc4; font-weight: 500; margin-right: .4vw; }
 </style>
 </head><body>
-<div class="stage">
+<div class="sel" id="selstage" hidden>
+  <div class="head" id="selhead">Alliance Selection</div>
+  <div class="now" id="selnow"></div>
+  <div class="als" id="selals"></div>
+  <div class="avail" id="selavail"></div>
+</div>
+<div class="stage" id="matchstage">
   <div class="top"><b id="ev"></b><span id="mk"></span></div>
   <div class="mid">
     <div class="al red"><div class="s num" id="rs">0</div><div class="t" id="rt"></div><div class="h" id="rh"></div></div>
@@ -35,7 +59,27 @@
 const { $ } = FMS;
 FMS.connect();
 const rows = [["Auto", "auto_points"], ["Fuel", "fuel_points"], ["Tower", "tower_points"], ["Penalty", "foul_points"]];
+let lastPicks = -1;
+function renderSel(s) {
+  const sel = s.selection, rank = (t) => sel.order.indexOf(t) + 1;
+  const n = sel.history.length, fresh = n > lastPicks && lastPicks >= 0 ? sel.history[n - 1].team : null;
+  lastPicks = n;
+  $("#selhead").textContent = s.event.name + " · Alliance Selection";
+  const last = sel.history[n - 1];
+  $("#selnow").innerHTML = sel.done ? "<b>Alliances are set</b>"
+    : `Round ${sel.round} · <b>Alliance ${sel.picking}</b> captain ${sel.alliances[sel.picking - 1][0]} is picking`
+      + (last ? ` &nbsp;·&nbsp; last pick: A${last.alliance} took ${last.team}` : "");
+  $("#selals").innerHTML = sel.alliances.map((a, i) => `<div class="alc ${sel.picking === i + 1 ? "picking" : ""}">
+      <div class="n">Alliance ${i + 1}</div>
+      ${[0, 1, 2].map((j) => a[j] ? `<div class="tm num ${j === 0 ? "cap" : ""} ${a[j] === fresh ? "fresh" : ""}">${a[j]}</div>`
+        : `<div class="tm empty">–</div>`).join("")}</div>`).join("");
+  $("#selavail").innerHTML = sel.done ? "" : `Available &nbsp;` + sel.available.map((t) => `<span><small>#${rank(t)}</small>${t}</span>`).join("");
+}
 FMS.on((s) => {
+  const showSel = s.display === "selection" && s.selection;
+  $("#selstage").hidden = !showSel;
+  $("#matchstage").hidden = !!showSel;
+  if (showSel) renderSel(s); else lastPicks = -1;
   const cur = s.current;
   $("#ev").textContent = s.event.name;
   $("#mk").textContent = cur ? cur.key.toUpperCase() : "";

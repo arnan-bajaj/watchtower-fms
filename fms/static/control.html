@@ -11,6 +11,11 @@
   td input[type=number] { width: 4.6rem; }
   textarea { width: 100%; min-height: 8rem; font-family: ui-monospace, Menlo, monospace; border: 1.5px solid var(--line); border-radius: var(--r-sm); padding: .5rem; }
   tr.cur td { background: var(--fuel-soft); }
+  tr.click { cursor: pointer; } tr.click:hover td { background: var(--fuel-soft); }
+  .pickgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: .5rem; }
+  .pickgrid button { padding: .8rem .5rem; font-size: 1.05rem; }
+  .pickgrid button small { display: block; font-weight: 500; color: var(--muted); font-size: .75rem; }
+  .danger { border-color: var(--warn); color: var(--warn); }
   .kv td:first-child { color: var(--muted); width: 45%; }
 </style>
 </head><body>
@@ -21,7 +26,7 @@
 <main class="wrap" id="app" hidden>
   <div class="tabs" id="tabs">
     <button data-t="match" class="sel">Match</button><button data-t="sched">Schedule</button>
-    <button data-t="rank">Rankings</button><button data-t="alli">Alliances &amp; playoffs</button><button data-t="setup">Setup</button>
+    <button data-t="results">Results</button><button data-t="rank">Rankings</button><button data-t="alli">Alliances &amp; playoffs</button><button data-t="setup">Setup</button>
   </div>
 
   <!-- MATCH -->
@@ -80,6 +85,14 @@
     </div>
   </section>
 
+  <!-- RESULTS -->
+  <section data-tab="results" hidden>
+    <div class="panel"><h2>Played matches</h2>
+      <div class="muted small">Click a match to see its full breakdown. Viewing doesn't change the current match or the field display.</div>
+      <div class="scroll" id="restable"></div></div>
+    <div class="panel" id="resdetail" hidden></div>
+  </section>
+
   <!-- RANKINGS -->
   <section data-tab="rank" hidden>
     <div class="panel"><div class="row" style="justify-content:space-between"><h2>Qualification rankings</h2><button id="brank">Push rankings to TBA</button></div>
@@ -89,7 +102,10 @@
 
   <!-- ALLIANCES -->
   <section data-tab="alli" hidden>
-    <div class="panel"><h2>Alliance selection</h2><div id="alliform"></div>
+    <div class="panel" id="livesel"></div>
+    <div class="panel"><h2>Manual alliance entry</h2>
+      <div class="muted small" style="margin-bottom:.5rem">Use this to type alliances in directly or fix them after live selection. Locked once the first playoff match starts.</div>
+      <div id="alliform"></div>
       <button class="primary" id="balli" style="margin-top:.8rem">Save alliances and build bracket</button></div>
     <div class="panel"><h2>Double-elimination bracket</h2><div id="bracket"></div></div>
   </section>
@@ -101,13 +117,24 @@
         <div class="muted small" style="margin-top:.5rem">Open on the phone, then Share → Add to Home Screen.</div></div>
       <div class="panel"><h2>Vision</h2><table class="kv" id="vtable"></table></div>
       <div class="panel"><h2>The Blue Alliance</h2><table class="kv" id="ttable"></table>
-        <div class="row" style="margin-top:.6rem"><button id="bpushall">Push everything</button><button class="ghost" id="bretry">Retry failed</button></div></div>
+        <div class="row" style="margin-top:.6rem"><button id="bpushall">Push everything</button><button class="ghost" id="bretry">Retry failed</button></div>
+        <div class="row" style="margin-top:.6rem"><button class="ghost danger" id="btbadelall">Take all matches and rankings off TBA</button></div>
+        <div class="muted small" style="margin-top:.3rem">Removes the schedule and every result from the TBA event page. Nothing here is deleted. <b>Send schedule to TBA</b> puts it back. To remove one match, use the TBA column in Schedule → All matches.</div></div>
       <div class="panel"><h2>Match videos</h2>
         <div class="muted small">Match videos are links into your YouTube livestream at the right timestamp. Click the button the moment the stream goes live.</div>
         <div class="row" style="margin-top:.6rem"><input id="vod" placeholder="YouTube video ID of the livestream"><button id="bvod">Save</button></div>
         <div class="row" style="margin-top:.6rem"><button id="blive">Stream went live now</button><span class="muted small" id="livets"></span></div>
         <div class="row" style="margin-top:.6rem"><input id="wurl" placeholder="Webcast URL for TBA event page"><button id="bwurl">Send to TBA</button></div>
       </div>
+    </div>
+    <div class="panel"><h2>Wipe data</h2>
+      <div class="muted small">A backup of the database is saved to <code>data/backups/</code> first. Anything already sent to TBA stays on TBA. Wiping deletes it here only.</div>
+      <div class="row" style="margin-top:.6rem">
+        <input id="wpin" type="password" inputmode="numeric" placeholder="Scorekeeper PIN" autocomplete="off" style="width:10rem">
+        <button class="ghost danger" data-wipe="playoffs">Wipe playoffs</button>
+        <button class="danger" data-wipe="all">Wipe everything</button>
+      </div>
+      <div class="muted small" style="margin-top:.4rem"><b>Wipe playoffs</b> removes alliances, alliance selection and playoff matches, and keeps quals. <b>Wipe everything</b> removes the schedule, all results, fuel, fouls, the TBA queue and settings. Logins stay.</div>
     </div>
   </section>
 </main>
@@ -116,7 +143,7 @@
 <script>
 const { $, esc } = FMS;
 const S = () => FMS.state;
-const api = async (p, b) => { try { return await FMS.api(p, b); } catch (e) { FMS.toast(e.message, true); throw e; } };
+const api = async (p, b, m) => { try { return await FMS.api(p, b, m); } catch (e) { FMS.toast(e.message, true); throw e; } };
 let preview = null, reviewPending = false, lastReviewSig = "";
 
 FMS.gate("control").then(() => { $("#app").hidden = false; FMS.connect(); });
@@ -149,7 +176,13 @@ function renderMatch(s) {
   const open = s.matches.filter((m) => m.status !== "committed" || (cur && m.key === cur.key));
   $("#msel").innerHTML = open.map((m) => `<option value="${m.key}" ${cur && m.key === cur.key ? "selected" : ""}>${m.key} · ${m.red.join(" ")} v ${m.blue.join(" ")}</option>`).join("");
   $("#curkey").textContent = cur ? cur.key : "";
-  if (!cur) return;
+  if (!cur) {
+    ["#rteams", "#bteams", "#msched"].forEach((id) => $(id).textContent = "");
+    $("#rscore").textContent = $("#bscore").textContent = 0; $("#mstatus").textContent = "–";
+    $("#bstart").disabled = $("#bteleop").disabled = $("#breset").disabled = true;
+    $("#autobox").innerHTML = ""; $("#review").innerHTML = `<h2>Score review</h2><div class="muted">No match selected. Save a schedule first.</div>`;
+    lastReviewSig = ""; return;
+  }
   $("#mstatus").textContent = cur.status;
   $("#msched").textContent = cur.scheduled ? "scheduled " + cur.scheduled : "";
   const sur = new Set(cur.surrogates || []);
@@ -314,11 +347,72 @@ function renderAll(s) {
     ${s.matches.map((m) => `<tr class="${cur && m.key === cur.key ? "cur" : ""}"><td>${m.key}</td><td>${m.scheduled || ""}</td>
       <td class="tred">${m.red.join(" ")}</td><td class="tblue">${m.blue.join(" ")}</td>
       <td class="r num">${m.red_score != null ? `<span class="tred">${m.red_score}</span>–<span class="tblue">${m.blue_score}</span>` : ""}</td>
-      <td><span class="pill">${m.status}</span></td><td><button class="ghost small" data-sel="${m.key}">Open</button></td></tr>`).join("")}</table>`;
+      <td><span class="pill">${m.status}</span></td><td><button class="ghost small" data-sel="${m.key}">Open</button>
+      <button class="ghost small danger" data-tbadel="${m.key}" title="Remove this match from the TBA event page">Off TBA</button></td></tr>`).join("")}</table>`;
+  $("#alltable").querySelectorAll("[data-tbadel]").forEach((b) => b.onclick = async () => {
+    const k = b.dataset.tbadel, m = s.matches.find((x) => x.key === k);
+    if (!confirm(`Remove ${k} from TBA? Rankings on TBA are re-sent without it.` +
+      (m.status === "committed" ? `\n\n${k} is still committed here, so it still counts in rankings and goes back to TBA if pushed again. Reopen and Reset it first if the result shouldn't exist.` : ""))) return;
+    await api("/api/tba/delete_match", { key: k });
+    FMS.toast(`${k} queued for removal from TBA` + (S().tba.configured ? "" : " (sends once TBA is enabled)"));
+  });
   $("#alltable").querySelectorAll("[data-sel]").forEach((b) => b.onclick = async () => {
     await api("/api/match/select", { key: b.dataset.sel });
     $("#tabs").querySelector('[data-t="match"]').click();
   });
+}
+
+// ---- results (read-only viewer; never changes the current match)
+let resKey = null, resSig = "";
+function renderResults(s) {
+  const played = s.matches.filter((m) => m.status === "committed" || m.status === "review");
+  $("#restable").innerHTML = played.length ? `<table><tr><th>Match</th><th>Red</th><th>Blue</th><th class="r">Score</th><th>Winner</th><th>Status</th></tr>
+    ${played.map((m) => `<tr class="click ${m.key === resKey ? "cur" : ""}" data-res="${m.key}"><td><b>${m.key}</b></td>
+      <td class="tred">${m.red.join(" ")}${m.red_alliance ? ` (A${m.red_alliance})` : ""}</td><td class="tblue">${m.blue.join(" ")}${m.blue_alliance ? ` (A${m.blue_alliance})` : ""}</td>
+      <td class="r num">${m.red_score != null ? `<span class="tred">${m.red_score}</span>–<span class="tblue">${m.blue_score}</span>` : ""}</td>
+      <td class="t${m.winner || ""}">${m.winner || ""}</td><td><span class="pill">${m.status}</span></td></tr>`).join("")}</table>`
+    : `<div class="muted">No matches played yet.</div>`;
+  $("#restable").querySelectorAll("[data-res]").forEach((tr) => tr.onclick = () => { resKey = tr.dataset.res; resSig = ""; renderResults(S()); });
+  const m = resKey && s.matches.find((x) => x.key === resKey);
+  const sig = m ? JSON.stringify([m.status, m.red_score, m.blue_score, m.video]) : "";
+  if (m && sig !== resSig) { resSig = sig; loadResult(m.key); }
+}
+async function loadResult(key) {
+  const d = await api(`/api/match/${key}`, undefined, "GET");
+  if (key !== resKey) return;
+  const box = $("#resdetail"), sc = d.score;
+  box.hidden = false;
+  if (!sc) { box.innerHTML = `<h2>${d.key}</h2><div class="muted">No score.</div>`; return; }
+  const names = d.periods.map((p) => p.name), playoff = d.comp_level !== "qm";
+  const row = (l, k) => `<tr><td>${l}</td><td class="r num">${sc.red[k]}</td><td class="r num">${sc.blue[k]}</td></tr>`;
+  const fuel = names.map((p) => `<tr><td>${FMS.LABEL[p]}</td><td class="r num">${sc.red.fuel[p]}${sc.red.fuel[p] !== sc.red.vision_fuel[p] ? ` <span class="muted small">(vision ${sc.red.vision_fuel[p]})</span>` : ""}</td>
+    <td class="r num">${sc.blue.fuel[p]}${sc.blue.fuel[p] !== sc.blue.vision_fuel[p] ? ` <span class="muted small">(vision ${sc.blue.vision_fuel[p]})</span>` : ""}</td></tr>`).join("");
+  const climbs = ["red", "blue"].map((a) => d[a].map((t, i) => {
+    const r = ((d.climbs || {})[a] || [])[i] || { auto_l1: false, level: 0 };
+    return `<tr><td class="t${a}"><b>${t}</b></td><td>${r.auto_l1 ? "L1 in auto" : ""}</td><td>${r.level ? "Level " + r.level : "No climb"}</td></tr>`;
+  }).join("")).join("");
+  const t0 = d.periods[0].start;
+  const fouls = d.fouls.length ? d.fouls.map((f) => `<tr><td class="t${f.committed_by}">${f.committed_by} ${f.kind}</td><td>${f.team || ""}</td><td class="muted small">${FMS.mmss(f.t - t0)} · ${esc(f.ref)}</td></tr>`).join("")
+    : `<tr><td class="muted">No fouls</td></tr>`;
+  const bonus = (a) => ["energized", "supercharged", "traversal"].filter((k) => sc[a][k]).join(", ") || "–";
+  box.innerHTML = `<div class="row" style="justify-content:space-between"><h2>${d.key} · <span class="tred">${sc.red.total}</span>–<span class="tblue">${sc.blue.total}</span> · winner <span class="t${sc.winner}">${sc.winner}</span></h2>
+      <div class="row"><span class="pill">${d.status}</span><button class="ghost small" id="resopen">Open in Match tab</button></div></div>
+    <div class="grid2">
+      <div><table><tr><th>Fuel</th><th class="r tred">Red</th><th class="r tblue">Blue</th></tr>${fuel}</table>
+        <h2 style="margin-top:1rem">Tower</h2><table>${climbs}</table></div>
+      <div><table><tr><th></th><th class="r tred">Red</th><th class="r tblue">Blue</th></tr>
+        ${row("Fuel", "total_fuel")}${row("Auto points", "auto_points")}${row("Teleop points", "teleop_points")}
+        ${row("Tower points", "tower_points")}${row("Penalty points drawn", "foul_points")}
+        <tr><td><b>Total</b></td><td class="r num"><b>${sc.red.total}</b></td><td class="r num"><b>${sc.blue.total}</b></td></tr>
+        ${playoff ? "" : `<tr><td>Bonus RP</td><td class="r small">${bonus("red")}</td><td class="r small">${bonus("blue")}</td></tr>${row("Ranking points", "rp")}`}</table>
+        <div class="muted small" style="margin-top:.4rem">Hub off first: ${d.first_inactive || "–"}${d.fi_coin ? " (coin flip)" : ""} · start offset ${(d.offset || 0).toFixed(1)} s${d.winner_override ? " · winner picked by scorekeeper" : ""}</div>
+        <h2 style="margin-top:1rem">Fouls</h2><table>${fouls}</table>
+        ${d.video ? `<div style="margin-top:.6rem">Video: <a href="https://youtu.be/${esc(d.video)}" target="_blank" rel="noopener">${esc(d.video)}</a></div>` : ""}</div>
+    </div>`;
+  $("#resopen").onclick = async () => {
+    await api("/api/match/select", { key: d.key });
+    $("#tabs").querySelector('[data-t="match"]').click();
+  };
 }
 
 // ---- rankings
@@ -353,12 +447,84 @@ $("#balli").onclick = async () => {
   FMS.toast("Alliances saved; sf1m1 and sf2m1 created");
 };
 
+// ---- live alliance selection
+let liveSelSig = "";
+function renderLiveSel(s) {
+  const sel = s.selection, box = $("#livesel");
+  const po = s.matches.some((m) => m.comp_level !== "qm" && m.status !== "scheduled");
+  const sig = JSON.stringify([sel, s.display, po, !!s.alliances, s.matches.map((m) => m.status)]);
+  if (sig === liveSelSig) return;
+  liveSelSig = sig;
+  const onDisplay = s.display === "selection";
+  const dispBtn = `<button class="ghost" id="bdisp">${onDisplay ? "Field display: showing selection. Switch to match" : "Show selection on field display"}</button>`;
+  if (!sel) {
+    const left = s.matches.filter((m) => m.comp_level === "qm" && m.status !== "committed").length;
+    box.innerHTML = `<h2>Live alliance selection</h2>
+      <div class="muted small">Captains are the top 4 in the current rankings, which are frozen when you start. Round 1 picks go A1→A4, round 2 goes A4→A1. A captain who hasn't picked yet can be invited by a higher alliance, and the next-ranked team becomes a captain. The field display follows along.</div>
+      ${left ? `<div class="warnbox" style="margin-top:.6rem">${left} qualification match${left > 1 ? "es are" : " is"} not committed yet.</div>` : ""}
+      <div class="row" style="margin-top:.8rem"><button class="primary" id="bselstart" ${po ? "disabled" : ""}>Start alliance selection</button></div>`;
+    $("#bselstart").onclick = async () => {
+      if (left && !confirm(`${left} qual match(es) aren't committed. Rankings will be frozen as they are now. Start anyway?`)) return;
+      if (s.alliances && !confirm("Alliances are already saved. Start a new selection? (They're replaced only when you save the new result.)")) return;
+      await api("/api/selection/start");
+    };
+    return;
+  }
+  const rank = (t) => sel.order.indexOf(t) + 1;
+  const capOf = (t) => sel.alliances.findIndex((a) => a[0] === t);
+  const altable = `<table><tr><th></th><th>Captain</th><th>Pick 1</th><th>Pick 2</th></tr>
+    ${sel.alliances.map((a, i) => `<tr class="${sel.picking === i + 1 ? "cur" : ""}"><td><b>A${i + 1}</b></td>
+      ${[0, 1, 2].map((j) => `<td>${a[j] ? `<b>${a[j]}</b> <span class="muted small">#${rank(a[j])}</span>` : ""}</td>`).join("")}</tr>`).join("")}</table>`;
+  const last = sel.history[sel.history.length - 1];
+  let body;
+  if (!sel.done) {
+    body = `<div class="row" style="justify-content:space-between;margin:.6rem 0"><h2 style="margin:0">Round ${sel.round} · Alliance ${sel.picking} (${sel.alliances[sel.picking - 1][0]}) is picking</h2>
+        ${last ? `<span class="muted small">Last: A${last.alliance} picked ${last.team}</span>` : ""}</div>
+      <div class="pickgrid">${sel.available.map((t) => { const c = capOf(t);
+        return `<button data-pick="${t}">${t}<small>#${rank(t)}${c >= 0 ? ` · A${c + 1} captain` : ""}</small></button>`; }).join("")}</div>`;
+  } else {
+    body = `<div style="margin:.6rem 0">${sel.saved ? `<span class="pill ok">Saved. Bracket built and alliances queued for TBA.</span>`
+      : `<button class="primary" id="bselfinish">Save alliances and build bracket</button>`}</div>`;
+  }
+  box.innerHTML = `<div class="row" style="justify-content:space-between"><h2>Live alliance selection</h2>${dispBtn}</div>
+    ${altable}${body}
+    <div class="row" style="margin-top:.8rem"><button class="ghost" id="bselundo" ${sel.history.length && !po ? "" : "disabled"}>Undo last pick</button>
+      <button class="ghost danger" id="bselcancel" ${po ? "disabled" : ""}>Cancel selection</button></div>
+    <div class="muted small" style="margin-top:.4rem">Declines aren't tracked. If a team declines, just wait for the next pick. Cancel clears this selection only. Saved alliances stay until you save new ones.</div>`;
+  box.querySelectorAll("[data-pick]").forEach((b) => b.onclick = async () => {
+    const t = +b.dataset.pick, c = capOf(t);
+    if (c >= 0 && !confirm(`${t} is the Alliance ${c + 1} captain. Did they accept? Lower alliances move up.`)) return;
+    await api("/api/selection/pick", { team: t });
+  });
+  const bf = $("#bselfinish"); if (bf) bf.onclick = async () => { await api("/api/selection/finish"); FMS.toast("Alliances saved; sf1m1 and sf2m1 created"); alliRendered = false; };
+  $("#bselundo").onclick = () => api("/api/selection/undo");
+  $("#bselcancel").onclick = () => confirm("Cancel the live selection?") && api("/api/selection/cancel");
+  $("#bdisp").onclick = () => api("/api/display", { mode: onDisplay ? "match" : "selection" });
+}
+
 // ---- setup
 $("#bpushall").onclick = async () => { await api("/api/tba/push_all"); FMS.toast("Queued everything for TBA"); };
 $("#bretry").onclick = () => api("/api/tba/retry");
+$("#btbadelall").onclick = async () => {
+  if (!confirm("Take ALL matches and rankings off the TBA event page? Local data is kept.")) return;
+  await api("/api/tba/delete_all");
+  FMS.toast("Queued: delete all matches + clear rankings on TBA" + (S().tba.configured ? "" : " (sends once TBA is enabled)"));
+};
 $("#bvod").onclick = () => api("/api/webcast", { vod_id: $("#vod").value });
 $("#blive").onclick = () => api("/api/webcast", { stream_start_now: true });
 $("#bwurl").onclick = () => api("/api/webcast", { url: $("#wurl").value });
+document.querySelectorAll("[data-wipe]").forEach((b) => b.onclick = async () => {
+  const scope = b.dataset.wipe, pin = $("#wpin").value;
+  if (!pin) return FMS.toast("Enter the scorekeeper PIN first", true);
+  const what = scope === "all" ? "EVERYTHING (schedule, results, fuel, fouls, TBA queue)" : "alliances, alliance selection and all playoff matches";
+  if (!confirm(`Wipe ${what}? A backup is saved first.`)) return;
+  if (scope === "all" && prompt('Type WIPE to confirm') !== "WIPE") return;
+  const j = await api("/api/admin/wipe", { scope, pin });
+  $("#wpin").value = ""; resKey = null; $("#resdetail").hidden = true;
+  if (scope === "all") preview = null;
+  alliRendered = false;
+  FMS.toast("Wiped. Backup: " + j.backup);
+});
 function renderSetup(s) {
   const base = location.host;
   $("#urls").innerHTML = ["ref", "emcee", "display", "control"].map((p) => `<tr><td>${p}</td><td><a href="/${p}">http://${base}/${p}</a></td></tr>`).join("");
@@ -395,7 +561,7 @@ FMS.on((s) => {
     $("#sstart").value = s.event.qual_start; $("#scycle").value = s.event.cycle_min; first = false;
     $("#mpt").value = suggestMpt(s);
   }
-  renderPills(s); renderMatch(s); renderAll(s); renderRank(s); renderAlli(s); renderSetup(s);
+  renderPills(s); renderMatch(s); renderAll(s); renderResults(s); renderRank(s); renderAlli(s); renderLiveSel(s); renderSetup(s);
 });
 everyFrame(() => {
   const cur = S() && S().current, p = FMS.phase(cur);

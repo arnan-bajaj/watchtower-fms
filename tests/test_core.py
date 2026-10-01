@@ -2,6 +2,7 @@
 from collections import Counter
 
 from fms import bracket, game, schedule
+from fms.tba import TBA
 from fms.config import DEFAULTS
 
 G = DEFAULTS["game"]
@@ -138,3 +139,79 @@ def test_rankings():
     assert rk[1]["rp"] == 4 and rk[1]["wins"] == 1 and rk[1]["played"] == 1
     assert rk[3]["played"] == 0          # surrogate doesn't count
     assert rk[4]["losses"] == 1 and rk[4]["rank"] > rk[2]["rank"]
+
+
+def test_selection_straight():
+    order = list(range(1, 13))
+    s = bracket.selection(order, [])
+    assert s["alliances"] == [[1], [2], [3], [4]] and s["picking"] == 1 and s["round"] == 1
+    assert s["available"] == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    # round 1 A1..A4, round 2 A4..A1
+    s = bracket.selection(order, [5, 6, 7, 8, 9, 10, 11, 12])
+    assert s["done"] and s["picking"] is None and s["available"] == []
+    assert s["alliances"] == [[1, 5, 12], [2, 6, 11], [3, 7, 10], [4, 8, 9]]
+    assert [h["alliance"] for h in s["history"]] == [1, 2, 3, 4, 4, 3, 2, 1]
+    assert bracket.selection(order, [5, 6, 7, 8])["picking"] == 4  # A4 picks twice in a row
+
+
+def test_selection_captain_accepts():
+    order = list(range(1, 13))
+    s = bracket.selection(order, [2])      # A1 invites A2's captain
+    assert s["alliances"] == [[1, 2], [3], [4], [5]] and s["picking"] == 2
+    assert s["available"] == [4, 5, 6, 7, 8, 9, 10, 11, 12]
+    s = bracket.selection(order, [2, 5])   # new A2 (3) invites the new A4 captain (5)
+    assert s["alliances"] == [[1, 2], [3, 5], [4], [6]]
+    s = bracket.selection(order, [2, 5, 7, 8, 9, 10, 11, 12])
+    assert s["alliances"] == [[1, 2, 12], [3, 5, 11], [4, 7, 10], [6, 8, 9]]
+    for bad in ([1], [2, 2], [5, 6, 7, 8, 3], [5, 6, 7, 8, 9, 10, 11, 12, 1]):
+        try:
+            bracket.selection(order, bad)
+            assert False, bad
+        except ValueError:
+            pass
+    try:
+        bracket.selection(order[:11], [])
+        assert False
+    except ValueError:
+        pass
+
+
+class _Outbox:
+    def __init__(self):
+        self.rows = []
+
+    def outbox_add(self, path, body, dedupe):
+        self.rows.append((path, body, dedupe))
+
+
+def test_tba_takedown_payloads():
+    import hashlib
+    cfg = {"event": {"tba_event_key": "2026catstd"},
+           "tba": {"enabled": True, "auth_id": "id", "auth_secret": "sec", "base_url": "https://x"}}
+    ob = _Outbox()
+    t = TBA(cfg, ob)
+    t.delete_matches(["qm1"])
+    t.delete_all_matches()
+    t.clear_rankings()
+    assert ob.rows == [
+        ("/api/trusted/v1/event/2026catstd/matches/delete", '["qm1"]', "delete:qm1"),
+        ("/api/trusted/v1/event/2026catstd/matches/delete_all", "2026catstd", "delete_all"),
+        ("/api/trusted/v1/event/2026catstd/rankings/update", '{"breakdowns":[],"rankings":[]}', "rankings"),
+    ]
+    sent = {}
+
+    class R:
+        status_code = 200
+
+    import fms.tba as tm
+    orig = tm.requests.post
+    tm.requests.post = lambda url, data, timeout, headers: sent.update(url=url, data=data, h=headers) or R()
+    try:
+        path, body, _ = ob.rows[1]
+        assert t._send({"path": path, "body": body}) == (True, "", False)
+    finally:
+        tm.requests.post = orig
+    assert sent["url"] == "https://x/api/trusted/v1/event/2026catstd/matches/delete_all"
+    assert sent["data"] == b"2026catstd"
+    assert sent["h"]["X-TBA-Auth-Sig"] == hashlib.md5(
+        b"sec/api/trusted/v1/event/2026catstd/matches/delete_all2026catstd").hexdigest()
