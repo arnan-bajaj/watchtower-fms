@@ -6,30 +6,43 @@
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" href="/manifest/ref.json">
 <link rel="apple-touch-icon" href="/static/icon.svg">
+<meta name="theme-color" content="#161a1f">
 <link rel="stylesheet" href="/static/style.css">
 <title>FMS Ref</title>
 <style>
-  .fouls { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
-  .side { border-radius: var(--r-lg); padding: .75rem; }
-  .side.red { background: var(--red-soft); } .side.blue { background: var(--blue-soft); }
-  .side h3 { margin-bottom: .5rem; }
-  .fbtn { width: 100%; min-height: 5.2rem; margin-bottom: .6rem; font-size: 1.15rem; line-height: 1.2; }
-  .fbtn small { display: block; font-weight: 500; opacity: .85; font-size: .8rem; }
-  .tag { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .4rem; }
-  .tag button { flex: 1; min-height: 2.8rem; }
-  li { margin-bottom: .4rem; }
-  ul { padding-left: 1.1rem; margin: 0; }
+  .bar #clk { font-size: 1.15rem; font-weight: 800; }
+  .bar #me { opacity: .75; max-width: 30vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status { display: flex; justify-content: space-between; align-items: center; gap: .6rem; }
+  .status .phase { font-size: 1.05rem; color: var(--ink); }
+  .fouls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .75rem; }
+  .side { border-radius: var(--r-lg); padding: .8rem; border: 1px solid transparent; }
+  .side.red { background: var(--red-soft); border-color: var(--red-line); }
+  .side.blue { background: var(--blue-soft); border-color: var(--blue-line); }
+  .side h3 { font-size: 1.05rem; }
+  .side .teams { font-size: .8rem; margin: .15rem 0 .7rem; opacity: .8; min-height: 1.1em; }
+  .side.red .teams { color: var(--red); } .side.blue .teams { color: var(--blue); }
+  .fbtn { display: block; width: 100%; min-height: 6.5rem; margin-bottom: .6rem; font-size: 1.35rem; font-weight: 800;
+    line-height: 1.15; border-radius: var(--r-md); box-shadow: 0 2px 0 rgba(0, 0, 0, .18); }
+  .fbtn:last-child { margin-bottom: 0; }
+  .fbtn small { display: block; font-weight: 600; opacity: .85; font-size: .8rem; margin-top: .2rem; }
+  .fbtn:disabled { opacity: .3; box-shadow: none; }
+  .tag { display: grid; grid-template-columns: repeat(auto-fit, minmax(5rem, 1fr)); gap: .5rem; margin-top: .7rem; }
+  #tagbox { border-color: var(--fuel); box-shadow: 0 0 0 3px var(--fuel-soft); }
+  #list { list-style: none; padding: 0; margin: 0; }
+  #list li { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; padding: .6rem 0; border-bottom: 1px solid var(--line); }
+  #list li:last-child { border-bottom: 0; }
+  #list li button { margin-left: auto; }
 </style>
 </head><body>
 <div class="bar"><span><span class="conn"></span> <b id="mk">–</b></span><span class="num" id="clk">–:––</span><span id="me" class="small"></span></div>
 <main class="wrap" id="app" hidden>
-  <div class="panel row" style="justify-content:space-between"><span id="ph" class="phase">–</span><span id="st" class="pill">–</span></div>
+  <div class="panel status"><span id="ph" class="phase">–</span><span id="st" class="pill">–</span></div>
   <div class="fouls">
-    <div class="side red"><h3 class="tred">Red fouled</h3><div class="teams small" id="rt"></div>
+    <div class="side red"><h3 class="tred">Red fouled</h3><div class="teams" id="rt"></div>
       <button class="fbtn red" data-a="red" data-k="minor">Minor<small>+<span class="pmin"></span> to Blue</small></button>
       <button class="fbtn red" data-a="red" data-k="major">Major<small>+<span class="pmaj"></span> to Blue</small></button>
     </div>
-    <div class="side blue"><h3 class="tblue">Blue fouled</h3><div class="teams small" id="bt"></div>
+    <div class="side blue"><h3 class="tblue">Blue fouled</h3><div class="teams" id="bt"></div>
       <button class="fbtn blue" data-a="blue" data-k="minor">Minor<small>+<span class="pmin"></span> to Red</small></button>
       <button class="fbtn blue" data-a="blue" data-k="major">Major<small>+<span class="pmaj"></span> to Red</small></button>
     </div>
@@ -62,7 +75,7 @@ function showTag() {
   const box = $("#tagbox");
   if (!lastFoul) { box.hidden = true; return; }
   box.hidden = false;
-  box.innerHTML = `<div>Tag a team on that ${esc(lastFoul.a)} ${esc(lastFoul.k)}? (optional)</div>
+  box.innerHTML = `<div><b class="t${esc(lastFoul.a)}">${esc(lastFoul.a)} ${esc(lastFoul.k)}</b> logged. Tag a team? <span class="muted small">(optional)</span></div>
     <div class="tag">${lastFoul.teams.map((t) => `<button data-t="${t}">${t}</button>`).join("")}
     <button class="ghost" data-t="">Skip</button></div>`;
   box.querySelectorAll("button").forEach((b) => b.onclick = async () => {

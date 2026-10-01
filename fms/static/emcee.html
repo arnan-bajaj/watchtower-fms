@@ -6,14 +6,24 @@
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" href="/manifest/emcee.json">
 <link rel="apple-touch-icon" href="/static/icon.svg">
+<meta name="theme-color" content="#161a1f">
 <link rel="stylesheet" href="/static/style.css">
 <title>FMS Emcee</title>
 <style>
-  .big { text-align: center; }
-  .next { font-size: 1.15rem; font-weight: 650; text-align: center; margin-top: .8rem; min-height: 1.5em; }
-  .next.soon { color: var(--warn); }
-  .auto h3 { font-size: 1.4rem; margin-bottom: .3rem; }
-  .lock { width: 100%; min-height: 3.6rem; font-size: 1.15rem; margin-top: .7rem; }
+  .big { text-align: center; padding: 1.3rem 1rem; }
+  .big .clock { font-size: 4.2rem; }
+  .big .phase { font-size: 1.05rem; margin-top: .3rem; }
+  .hub { padding: 1.4rem .8rem; }
+  .hub .state { font-size: 2.6rem; }
+  .next { font-size: 1.05rem; font-weight: 700; text-align: center; margin: .75rem 0; padding: .7rem .9rem;
+    border-radius: var(--r-md); background: var(--panel); border: 1px solid var(--line); }
+  .next:empty { display: none; }
+  .next.soon { color: #fff; background: var(--warn); border-color: var(--warn); }
+  .auto h3 { font-size: 1.35rem; margin-bottom: .4rem; }
+  .lock { width: 100%; min-height: 3.8rem; font-size: 1.15rem; margin-top: .8rem; }
+  .scoreline { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .55rem 0; }
+  .scoreline + .scoreline { border-top: 1px solid var(--line); }
+  .scoreline .teams { font-size: .95rem; }
 </style>
 </head><body>
 <div class="bar"><span><span class="conn"></span> <b id="mk">–</b></span><span id="st" class="pill">–</span></div>
@@ -25,11 +35,11 @@
   </div>
   <div class="next" id="nx"></div>
   <div class="panel auto" id="auto" style="margin-top:1rem"></div>
-  <div class="panel"><div class="row" style="justify-content:space-between">
-    <span class="teams tred" id="rt"></span><span class="score num tred" id="rs">0</span></div>
-    <div class="row" style="justify-content:space-between">
-    <span class="teams tblue" id="bt"></span><span class="score num tblue" id="bs">0</span></div>
-    <div class="muted small">Live score is provisional until the scorekeeper commits it.</div></div>
+  <div class="panel"><div class="scoreline">
+    <span class="teams tred" id="rt">Red</span><span class="score num tred" id="rs">0</span></div>
+    <div class="scoreline">
+    <span class="teams tblue" id="bt">Blue</span><span class="score num tblue" id="bs">0</span></div>
+    <div class="hint">Live score is provisional until the scorekeeper commits it.</div></div>
 </main>
 <script src="/static/common.js"></script>
 <script>
@@ -43,8 +53,8 @@ FMS.on((s) => {
   const cur = s.current, g = s.game;
   $("#mk").textContent = cur ? cur.key : "–";
   $("#st").textContent = cur ? cur.status : "–";
-  $("#rt").textContent = cur ? cur.red.join(" · ") : "";
-  $("#bt").textContent = cur ? cur.blue.join(" · ") : "";
+  $("#rt").textContent = cur ? cur.red.join(" · ") : "Red";
+  $("#bt").textContent = cur ? cur.blue.join(" · ") : "Blue";
   $("#rs").textContent = cur && cur.score ? cur.score.red.total : 0;
   $("#bs").textContent = cur && cur.score ? cur.score.blue.total : 0;
   const box = $("#auto");
