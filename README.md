@@ -502,12 +502,11 @@ count is sent over UDP the moment the camera confirms it, plus a 10 Hz heartbeat
 ```yaml
 feeds:
   - name: bioarena
-    host: 10.0.100.5
+    host: 192.168.1.50    # bioarena's IP on the network you share
     port: 8411
-    bind: 10.0.100.21     # optional source address
 ```
 
-or, without editing config, `python run_vision.py --feed 10.0.100.5:8411` (repeatable).
+or, without editing config, `python run_vision.py --feed 192.168.1.50:8411` (repeatable).
 
 **Watchtower follows the field's call.** The field's replies (match state and which hub is lit)
 are relayed to the FMS. As soon as a shift shows one hub dark, the FMS sets and locks the auto
@@ -515,10 +514,14 @@ result to match what the lights showed, even if its own count disagreed (logged 
 The scorekeeper can still override it afterwards. `/control` shows a **field** pill (hover for
 each feed's state).
 
-**Networking.** bioarena only accepts the counter from one configured address on the field
-management network (`10.0.100.0/24`, wired). The laptop running vision needs a wired link to the
-field switch with that static address, while phones still reach it on the venue WiFi. Set the
-same address in bioarena → Settings → Hub FUEL Counter, and set the auto-winner mode to Counted.
+**Networking.** Any network works as long as the vision laptop can reach the field's IP
+(often the venue WiFi; check with `ping`). bioarena only accepts counts from **one** configured
+source address, so in bioarena → Settings → Hub FUEL Counter enter the vision laptop's IP *on
+that network* (`ipconfig getifaddr en0` for WiFi), and set the auto-winner mode to Counted.
+`host` in `feeds:` is bioarena's IP on that same network. The Mac's IP changes per network and
+can change if its DHCP lease does, so re-check both before matches (a DHCP reservation helps).
+If the WiFi isolates clients, phones and the feed both fail; test it at the venue. WiFi adds a
+few ms usually, with occasional spikes; bioarena's `OFFLINE` badge and latency figure show it.
 
 **Latency.** A ball that reaches the field after its deadline doesn't affect the auto call. The
 `zone` counter counts on the `min_hits`-th frame inside the ROI, so keep `min_hits` low (2) and

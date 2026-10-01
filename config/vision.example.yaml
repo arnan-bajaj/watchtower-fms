@@ -7,13 +7,14 @@ record_dir: recordings           # raw hub video per match (for rescoring + trai
 # Optional: live count feeds to field systems that decide the auto winner and light the hubs
 # themselves (e.g. bioarena in "Counted" mode). Each gets every count over UDP the moment it
 # happens. Add as many as you like, or pass `--feed HOST:PORT` to run_vision.py instead.
-# The receiver usually only accepts one source address, so the Mac needs a link on that
-# network with that address (bioarena: wired to the field switch, Settings -> Hub FUEL Counter).
+# Any network the Mac shares with the field works (e.g. venue WiFi). The receiver usually accepts
+# only one source address: enter this Mac's IP on that network in the field's settings
+# (bioarena: Settings -> Hub FUEL Counter). It changes per network, so re-check it at each venue.
 # feeds:
 #   - name: bioarena
-#     host: 10.0.100.5
+#     host: 192.168.1.50         # the field's IP on that network
 #     port: 8411                 # default 8411
-#     bind: 10.0.100.21          # optional: source address, if the Mac has several on that subnet
+#     bind: 192.168.1.23         # optional: force the source address if the Mac has several links
 #     heartbeat_s: 0.1           # optional
 
 defaults:                        # applied to both hubs unless overridden
