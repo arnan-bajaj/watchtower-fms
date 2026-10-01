@@ -1,13 +1,51 @@
-# Watchtower FMS: scrimmage field management with vision scoring
+# Watchtower FMS: offseason field management with vision scoring
 
-A field management system for a one-day FRC offseason scrimmage, built for the 2026 game **REBUILT**. It runs on one laptop on the venue WiFi. Two hub cameras count fuel automatically. Refs log fouls from their phones. The emcee's phone tells them which hub lights to switch. Scores, rankings, alliances, playoff results and match videos go to The Blue Alliance.
+A free, open-source field management system for **FRC offseason events and scrimmages** playing the 2026 game **REBUILT**. It runs on one laptop on the venue WiFi:
 
-It doesn't control robots. It's the scoring, timing and event-management layer around the field.
+- **Two hub cameras count fuel automatically** with a YOLO model you supply (no weights ship with this repo), or the scorekeeper types counts per period with no cameras at all.
+- **Refs log fouls from their phones**, and the **emcee's phone says which hub lights to switch** and when.
+- **The scorekeeper** runs matches, reviews and corrects scores, and runs **live alliance selection** that shows on the field display.
+- **Quals schedule generator**, **rankings**, and a **4-alliance double-elimination playoff** with best-of-3 finals.
+- **The Blue Alliance**: schedule, scores, rankings, alliances and match videos are pushed automatically, and queue up while the venue is offline.
+- **Field display / OBS overlay** for the audience and the stream.
+
+It doesn't control robots or talk to driver stations. It's the scoring, timing and event-management layer around a field you run by hand.
+
+Built for the 10th Street Showdown (October 2026) and shared so other teams can run their own offseason events with it.
+
+| Scorekeeper | Ref phone | Emcee phone |
+|---|---|---|
+| ![Scorekeeper match screen](docs/screenshots/control.png) | ![Ref foul buttons](docs/screenshots/ref.png) | ![Emcee hub-light cues](docs/screenshots/emcee.png) |
+
+| Field display | Live alliance selection |
+|---|---|
+| ![Field display scoreboard](docs/screenshots/display.png) | ![Alliance selection on the field display](docs/screenshots/selection.png) |
+
+---
+
+## Quick start (no cameras, about 5 minutes)
+
+```bash
+git clone https://github.com/<owner>/watchtower-fms.git && cd watchtower-fms
+python3 -m venv .venv && source .venv/bin/activate      # Windows: see Setup
+pip install -r requirements.txt
+python -m fms.init                     # creates config/event.yaml with random PINs (printed once)
+```
+
+Edit `config/event.yaml`: set `event.name`, `event.date` and `event.teams` (your team numbers). Then:
+
+```bash
+pip install -r vision/requirements.txt     # only needed for real cameras; skip for a first look
+./run.sh ../config/vision.mock.yaml        # FMS + fake fuel; or: python -m fms.server
+```
+
+Open `http://localhost:8000` on the laptop, or `http://<laptop-ip>:8000` on a phone on the same WiFi. Pick **Scorekeeper**, log in with the control PIN, generate a schedule, and play a match. Everything below is detail.
 
 ---
 
 ## Contents
 
+1. [Quick start](#quick-start-no-cameras-about-5-minutes)
 1. [Architecture](#architecture)
 2. [Repo layout](#repo-layout)
 3. [Setup: macOS, Windows, Linux](#setup)
@@ -26,6 +64,7 @@ It doesn't control robots. It's the scoring, timing and event-management layer a
 16. [Event-day checklist](#event-day-checklist)
 17. [Troubleshooting](#troubleshooting)
 18. [Limitations and things to verify](#limitations-and-things-to-verify)
+19. [Contributing, license, credits](#contributing-license-credits)
 
 ---
 
@@ -63,21 +102,27 @@ fms/
   bracket.py       4-alliance double elimination + rankings
   tba.py           TBA trusted API client with persistent outbox
   store.py         SQLite persistence
-  config.py        config loader + defaults
+  config.py        config loader, defaults, PIN checks
+  init.py          first-run setup: python -m fms.init
   static/          control / ref / emcee / display pages (vanilla JS, no CDN)
 vision/
   run_vision.py    cameras -> counter -> FMS; records match video
   counters/        zone, linecross, mock, base interface
   rescore.py       recount a recorded match with a new model
   pick_roi.py      draw the hub region on a camera frame
+  vconfig.py       vision config loader (takes vision_key from event.yaml)
   models/          put weights here (gitignored)
 config/
-  event.yaml       event, PINs, TBA, game rules
-  vision.yaml      cameras, ROIs, counter, weights
-  vision.mock.yaml fake fuel for rehearsal
-tests/             hand-computed scoring, schedule, bracket, ranking tests
-run.sh             start FMS + vision together
+  event.example.yaml   template: event, PINs, TBA, game rules (committed)
+  vision.example.yaml  template: cameras, ROIs, counter, weights (committed)
+  vision.mock.yaml     fake fuel for rehearsal (committed)
+  event.yaml           your event; created by fms.init, gitignored
+  vision.yaml          your cameras; created by fms.init, gitignored
+docs/screenshots/  images used in this README
+tests/             hand-computed scoring, schedule, bracket, selection, setup tests
+run.sh             start FMS + vision together (runs fms.init on first use)
 CLAUDE.md          project context for AI coding agents (AGENTS.md links to it)
+LICENSE            MIT
 ```
 
 ---
@@ -90,13 +135,14 @@ You need Python 3.12–3.14 and git. The FMS alone needs very little. The vision
 
 ```bash
 brew install python@3.12 git          # or use python.org Python 3.12–3.14
-git clone https://github.com/<you>/watchtower-fms.git
+git clone https://github.com/<owner>/watchtower-fms.git
 cd watchtower-fms
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt -r vision/requirements.txt
 chmod +x run.sh
-python -m pytest -q                   # expect: 10 passed
+python -m fms.init                    # creates config/event.yaml + config/vision.yaml, prints PINs
+python -m pytest -q                   # expect: 16 passed
 python -c "import torch, cv2, ultralytics; print(torch.__version__, torch.backends.mps.is_available())"
 ```
 
@@ -106,11 +152,12 @@ The last line should end in `True`, which means Apple Silicon GPU (MPS) inferenc
 
 ```powershell
 winget install Python.Python.3.12 Git.Git
-git clone https://github.com/<you>/watchtower-fms.git
+git clone https://github.com/<owner>/watchtower-fms.git
 cd watchtower-fms
 py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1            # if blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 pip install -r requirements.txt -r vision\requirements.txt
+python -m fms.init
 python -m pytest -q
 ```
 
@@ -122,12 +169,13 @@ python -m pytest -q
 
 ```bash
 sudo apt install python3 python3-venv git      # Debian/Ubuntu
-git clone https://github.com/<you>/watchtower-fms.git
+git clone https://github.com/<owner>/watchtower-fms.git
 cd watchtower-fms
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt -r vision/requirements.txt
 chmod +x run.sh
+python -m fms.init
 python -m pytest -q
 ```
 
@@ -143,17 +191,22 @@ To try the pages or run scoring by hand, install just `requirements.txt` and ski
 
 ## Configuration
 
+Your event's settings live in two gitignored files, so your PINs and event details never end up in git:
+
+- `python -m fms.init` copies `config/event.example.yaml` → `config/event.yaml` and `config/vision.example.yaml` → `config/vision.yaml`. It fills in three random 6-digit PINs and a random vision key, and prints the PINs. It never overwrites an existing file. `run.sh` runs it automatically the first time.
+- The server won't start if `config/event.yaml` is missing, a PIN is still `CHANGE-ME` or blank, or the control PIN is the same as the ref or emcee PIN.
+
 ### `config/event.yaml`
 
 | Section | Key | What it does |
 |---|---|---|
 | `event` | `name`, `date`, `utc_offset_hours` | Display name; date and offset produce TBA match times (PDT = −7) |
 | | `tba_event_key` | e.g. `2026xxxx`, from the TBA event URL |
-| | `teams` | Team numbers at the event |
+| | `teams` | Team numbers at the event. At least 6 to build a schedule, at least 12 for live alliance selection (4 alliances of 3) |
 | | `qual_start`, `cycle_min`, `lunch` | Schedule clock; the generator warns if quals run past lunch |
 | `server` | `port` | Default 8000. Don't change it after phones have saved the pages |
-| | `pins.control / ref / emcee` | **Change these.** Anyone on the WiFi can load the pages |
-| | `vision_key` | Shared secret; must match `config/vision.yaml` |
+| | `pins.control / ref / emcee` | Generated by `fms.init`. Give each one only to that role: anyone on the WiFi can load the pages |
+| | `vision_key` | Shared secret between the FMS and vision. Vision reads it from this file, so you don't copy it anywhere |
 | `tba` | `enabled` | Off while rehearsing (see [TBA](#the-blue-alliance)) |
 | | `send_score_breakdown` | Off by default; totals-only is always accepted |
 | `game` | all | Every timing and point value. **Verify against the manual** |
@@ -165,6 +218,7 @@ TBA credentials don't go in this file. See [The Blue Alliance](#the-blue-allianc
 | Key | What it does |
 |---|---|
 | `fms_url` | Where vision sends events (`http://127.0.0.1:8000` on the same laptop) |
+| `vision_key` | Optional. Leave it out to use `server.vision_key` from `config/event.yaml` |
 | `record_dir` | Raw hub video per match; `""` disables recording |
 | `defaults.counter` | `zone`, `linecross`, `mock`, or `"module:Class"` |
 | `defaults.weights` | Path to the model, e.g. `models/fuel_best.pt` |
@@ -235,7 +289,7 @@ Then on each phone, open `http://<ip>:8000/ref` (or `/emcee`) and choose Share �
 - **Phones must stay on WiFi.** Cellular can't reach a local IP. On iPhone, turn off Wi-Fi Assist (Settings → Cellular), and no VPNs.
 - **Internet is only needed for TBA.** Scoring works fully offline, and TBA updates queue until internet returns.
 
-Default PINs are `control 6059`, `ref 4821`, `emcee 7390`. Change them in `config/event.yaml`.
+PINs are in `config/event.yaml` (`fms.init` printed them). Changing one there takes effect on the next server restart; phones then ask for the new PIN.
 
 ---
 
@@ -250,7 +304,7 @@ Open `/control` → **Schedule**.
 
 Seed is optional; the same seed gives the same schedule.
 
-**Import instead:** paste CSV lines `match,red1,red2,red3,blue1,blue2,blue3[,HH:MM]`. Mark a surrogate with `*`, e.g. `6059*`.
+**Import instead:** paste CSV lines `match,red1,red2,red3,blue1,blue2,blue3[,HH:MM]`. Mark a surrogate with `*`, e.g. `254*`.
 
 **Surrogates:** if `teams × matches per team` isn't divisible by 6, some teams play one extra match as a surrogate. Surrogate matches don't count in their rankings.
 
@@ -447,15 +501,14 @@ tba:
   enabled: true
 ```
 
-Keep the secrets out of git:
+Keep the secrets out of git. `tba_secrets.sh` is already gitignored:
 
 ```bash
 cat > tba_secrets.sh <<'EOF'
 export TBA_AUTH_ID="..."
 export TBA_AUTH_SECRET="..."
 EOF
-echo "tba_secrets.sh" >> .gitignore
-source tba_secrets.sh             # in the same terminal that starts the server
+source tba_secrets.sh             # run.sh does this for you if the file exists
 ```
 
 On Windows PowerShell, set them in the server's terminal instead: `$env:TBA_AUTH_ID="..."` and `$env:TBA_AUTH_SECRET="..."`.
@@ -551,7 +604,7 @@ For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a ma
 **The week before**
 - [ ] Every `game:` value checked against the 2026 manual
 - [ ] TBA write access approved; team list test passed
-- [ ] PINs changed
+- [ ] `config/event.yaml` has your event name, date, teams and TBA key; PINs shared only with their roles
 - [ ] Full rehearsal with refs and emcee on phones, using mock vision
 - [ ] Model weights tested on recorded footage
 
@@ -590,6 +643,10 @@ For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a ma
 | Can't commit a playoff match | It's tied; pick who advances or reset |
 | Start button disabled | Match isn't `scheduled`; reset it, or select the next match |
 | `permission denied: ./run.sh` | `chmod +x run.sh` |
+| `config/event.yaml not found` | Run `python -m fms.init` from the repo root |
+| `Set server.pins ...` or `control PIN ... must differ` | Edit the PINs in `config/event.yaml`; each role needs its own, and `CHANGE-ME` isn't allowed |
+| "Add at least 6 team numbers" when generating | Fill in `event.teams` in `config/event.yaml` and restart the server |
+| "Need at least 12 teams" starting alliance selection | Live selection needs 4 full alliances; use manual alliance entry for smaller events |
 
 ---
 
@@ -601,8 +658,22 @@ For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a ma
 - TBA accepting `?t=` timestamps on match videos (test one).
 - TBA playoff type for the 4-alliance bracket.
 
+**Built for one shape of event**
+- The 2026 game, REBUILT. Scoring lives in `fms/game.py` and the values in `config/event.yaml`; another season means new scoring code.
+- Exactly 4 alliances in a double-elimination bracket with best-of-3 finals. Live selection needs at least 12 teams. With fewer, enter alliances by hand (at least captain + 1 pick each).
+- One laptop runs everything. Pages are plain `http://` on the local network, protected only by PINs, so use a venue network you trust.
+
 **Not implemented**
 - Yellow and red cards, DQs, playoff backup robots.
 - FRC's exact ranking and playoff tiebreakers. Rankings use the sort described above; playoff ties are decided by the scorekeeper.
 - TBA `score_breakdown`: off by default, because TBA validates per-season keys.
 - Automatic robot enable/disable. This system doesn't talk to driver stations.
+
+---
+
+## Contributing, license, credits
+
+- **Bugs and ideas:** open a GitHub issue. Logs from the server terminal and a screenshot of `/control` → Setup help a lot.
+- **Pull requests:** keep scoring math in `fms/game.py`, add a hand-computed test for any scoring or timeline change, and make sure `python -m pytest -q` passes. Update this README in the same PR when setup or usage changes. `CLAUDE.md` lists the invariants.
+- **License:** MIT (see `LICENSE`). Use it, change it, and run your own events with it.
+- **Credits:** built for the 10th Street Showdown offseason event, October 2026.
