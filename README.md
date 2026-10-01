@@ -1,86 +1,595 @@
-# Scrimmage FMS (REBUILT 2026)
+# Watchtower FMS: scrimmage field management with vision scoring
 
-Two independent processes on the MacBook. The FMS never touches the model; vision never touches scoring rules.
+A field management system for a one-day FRC offseason scrimmage, built for the 2026 game **REBUILT**. It runs on one laptop on the venue WiFi. Two hub cameras count fuel automatically. Refs log fouls from their phones. The emcee's phone tells them which hub lights to switch. Scores, rankings, alliances, playoff results and match videos go to The Blue Alliance.
+
+It doesn't control robots. It's the scoring, timing and event-management layer around the field.
+
+---
+
+## Contents
+
+1. [Architecture](#architecture)
+2. [Repo layout](#repo-layout)
+3. [Setup: macOS, Windows, Linux](#setup)
+4. [Configuration](#configuration)
+5. [Running](#running)
+6. [Phones and networking](#phones-and-networking)
+7. [Before the event: schedule](#before-the-event-schedule)
+8. [Running a match](#running-a-match)
+9. [Rankings, alliance selection, playoffs](#rankings-alliance-selection-playoffs)
+10. [Vision: plugging in models](#vision-plugging-in-models)
+11. [The Blue Alliance](#the-blue-alliance)
+12. [Livestream and match videos](#livestream-and-match-videos)
+13. [Data, backups, resetting](#data-backups-resetting)
+14. [Testing](#testing)
+15. [Working on this with AI agents](#working-on-this-with-ai-agents)
+16. [Event-day checklist](#event-day-checklist)
+17. [Troubleshooting](#troubleshooting)
+18. [Limitations and things to verify](#limitations-and-things-to-verify)
+
+---
+
+## Architecture
+
+Two independent processes. The FMS never touches the model, and vision never touches scoring rules.
 
 ```
- hub cam RED ─┐                                     ┌─ ref phones    /ref     (fouls)
-              ├─ vision/run_vision.py ──(t, hub, n)─▶ FMS server ─┼─ emcee phone  /emcee   (auto result, hub light cues)
- hub cam BLUE ┘   counter plugin + model   HTTP       SQLite     ├─ field TV / OBS  /display
-                                                                   ├─ scorekeeper  /control (start, review, commit)
- stream cam ─▶ OBS ─▶ YouTube live                     │          └─▶ TBA outbox (retries when internet is back)
+ hub cam RED ──┐                                          ┌─ /ref      ref phones: fouls
+               ├─ vision/run_vision.py ─(t, hub, n)──▶ FMS server ──┼─ /emcee    emcee phone: auto result, hub light cues
+ hub cam BLUE ─┘   counter plugin + YOLO     HTTP      FastAPI    ├─ /control  scorekeeper laptop: start, review, commit
+                                                     + SQLite   ├─ /display  field TV / OBS overlay
+ stream cam ──▶ OBS ──▶ YouTube live                     │       └─▶ TBA outbox (retries until delivered)
 ```
 
-Vision only reports *timestamped fuel events*. The FMS decides which period each ball belongs to from the match timeline, so you can fix a late start click after the match and the whole score re-buckets.
+**Vision only reports timestamped fuel events:** which hub, when, and how many. It knows nothing about periods, shifts or points.
 
-## Setup (once)
+**The FMS decides what each ball is worth.** It builds the match timeline from the scorekeeper's start click, then checks every fuel event against it: which period it fell in, whether that alliance's hub was active, and whether it landed inside the 3-second grace window after a hub shut off. That gives you three things:
+
+- **Start-click error is fixable after the match.** Shift the timeline ±0.5 s and every ball re-buckets instantly.
+- **Vision can be swapped, restarted or replaced** (new model, offline recount) without touching the FMS.
+- **The FMS works with no vision at all.** The scorekeeper types fuel counts per period in review.
+
+Everything lives in SQLite, so a crash or restart loses nothing. Phones get live state over one websocket and keep their own clock in sync with the server.
+
+---
+
+## Repo layout
+
+```
+fms/
+  server.py        API, websocket, match engine (start, auto decision, review, commit)
+  game.py          timeline + scoring: pure functions, all values from config
+  schedule.py      qual schedule generator + CSV import
+  bracket.py       4-alliance double elimination + rankings
+  tba.py           TBA trusted API client with persistent outbox
+  store.py         SQLite persistence
+  config.py        config loader + defaults
+  static/          control / ref / emcee / display pages (vanilla JS, no CDN)
+vision/
+  run_vision.py    cameras -> counter -> FMS; records match video
+  counters/        zone, linecross, mock, base interface
+  rescore.py       recount a recorded match with a new model
+  pick_roi.py      draw the hub region on a camera frame
+  models/          put weights here (gitignored)
+config/
+  event.yaml       event, PINs, TBA, game rules
+  vision.yaml      cameras, ROIs, counter, weights
+  vision.mock.yaml fake fuel for rehearsal
+tests/             hand-computed scoring, schedule, bracket, ranking tests
+run.sh             start FMS + vision together
+CLAUDE.md          project context for AI coding agents (AGENTS.md links to it)
+```
+
+---
+
+## Setup
+
+You need Python 3.12–3.14 and git. The FMS alone needs very little. The vision stack (PyTorch, Ultralytics, OpenCV) is about 1 GB.
+
+### macOS (recommended; event laptop)
 
 ```bash
-cd frc-fms
-python3.11 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt            # FMS
-pip install -r vision/requirements.txt     # vision (ultralytics, opencv)
-python -m pytest -q                        # 10 tests, hand-computed scores
+brew install python@3.12 git          # or use python.org Python 3.12–3.14
+git clone https://github.com/<you>/watchtower-fms.git
+cd watchtower-fms
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r vision/requirements.txt
+chmod +x run.sh
+python -m pytest -q                   # expect: 10 passed
+python -c "import torch, cv2, ultralytics; print(torch.__version__, torch.backends.mps.is_available())"
 ```
 
-Edit `config/event.yaml`: PINs, `vision_key`, team list, TBA key. **Check every number under `game:` against the 2026 manual.**
+The last line should end in `True`, which means Apple Silicon GPU (MPS) inference is available. The first import can take up to a minute.
 
-## Run
+### Windows
+
+```powershell
+winget install Python.Python.3.12 Git.Git
+git clone https://github.com/<you>/watchtower-fms.git
+cd watchtower-fms
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1            # if blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+pip install -r requirements.txt -r vision\requirements.txt
+python -m pytest -q
+```
+
+- `run.sh` is a bash script. Use two terminals instead (see [Running](#running)), or run it from Git Bash or WSL.
+- NVIDIA GPU: install the CUDA build of PyTorch from pytorch.org *before* `vision/requirements.txt`. Otherwise inference runs on the CPU, which is too slow for two live cameras.
+- Allow Python through Windows Defender Firewall on **Private** networks when prompted.
+
+### Linux
+
+```bash
+sudo apt install python3 python3-venv git      # Debian/Ubuntu
+git clone https://github.com/<you>/watchtower-fms.git
+cd watchtower-fms
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r vision/requirements.txt
+chmod +x run.sh
+python -m pytest -q
+```
+
+- For camera access, add yourself to the `video` group: `sudo usermod -aG video $USER`, then log out and back in.
+- For an NVIDIA GPU, install the matching CUDA PyTorch build first.
+- If `ufw` is on: `sudo ufw allow 8000/tcp`.
+
+### FMS only (no vision)
+
+To try the pages or run scoring by hand, install just `requirements.txt` and skip `vision/requirements.txt`.
+
+---
+
+## Configuration
+
+### `config/event.yaml`
+
+| Section | Key | What it does |
+|---|---|---|
+| `event` | `name`, `date`, `utc_offset_hours` | Display name; date and offset produce TBA match times (PDT = −7) |
+| | `tba_event_key` | e.g. `2026xxxx`, from the TBA event URL |
+| | `teams` | Team numbers at the event |
+| | `qual_start`, `cycle_min`, `lunch` | Schedule clock; the generator warns if quals run past lunch |
+| `server` | `port` | Default 8000. Don't change it after phones have saved the pages |
+| | `pins.control / ref / emcee` | **Change these.** Anyone on the WiFi can load the pages |
+| | `vision_key` | Shared secret; must match `config/vision.yaml` |
+| `tba` | `enabled` | Off while rehearsing (see [TBA](#the-blue-alliance)) |
+| | `send_score_breakdown` | Off by default; totals-only is always accepted |
+| `game` | all | Every timing and point value. **Verify against the manual** |
+
+TBA credentials don't go in this file. See [The Blue Alliance](#the-blue-alliance).
+
+### `config/vision.yaml`
+
+| Key | What it does |
+|---|---|
+| `fms_url` | Where vision sends events (`http://127.0.0.1:8000` on the same laptop) |
+| `record_dir` | Raw hub video per match; `""` disables recording |
+| `defaults.counter` | `zone`, `linecross`, `mock`, or `"module:Class"` |
+| `defaults.weights` | Path to the model, e.g. `models/fuel_best.pt` |
+| `hubs.red/blue.source` | Camera index (`0`, `1`), a video file path, or an `rtsp://` URL |
+| `hubs.red/blue.roi` | `[x, y, w, h]` of the hub opening in full-resolution pixels |
+
+Any key can be set under `defaults` or overridden per hub.
+
+---
+
+## Running
+
+### One command (macOS / Linux)
+
+```bash
+source .venv/bin/activate
+./run.sh                                     # real cameras (config/vision.yaml)
+./run.sh ../config/vision.mock.yaml          # mock fuel: no model or cameras
+./run.sh ../config/vision.yaml --preview     # camera windows with detections drawn
+```
+
+Ctrl+C stops both processes. On macOS, `run.sh` also keeps the laptop awake.
+
+### Two terminals (event day, and Windows)
+
+Two terminals let you restart vision, for example to swap models, without touching the FMS.
 
 ```bash
 # terminal 1 (repo root)
-caffeinate -dimsu python -m fms.server
+source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
+source tba_secrets.sh              # only if TBA is enabled (Windows: see TBA section)
+caffeinate -dimsu python -m fms.server    # macOS; elsewhere just: python -m fms.server
 
 # terminal 2
-cd vision && python run_vision.py --config ../config/vision.yaml --preview
+cd vision
+source ../.venv/bin/activate
+python run_vision.py --config ../config/vision.yaml --preview
 ```
 
-Pages: `http://<mac-ip>:8000/` (find the IP with `ipconfig getifaddr en0`). On phones: open the page, Share → Add to Home Screen.
+In `--preview`, press `q` in a camera window to quit vision.
 
-### No model yet? Rehearse everything anyway
+### Rehearse with no model
 
-```bash
-cd vision && python run_vision.py --config ../config/vision.mock.yaml
-```
+`./run.sh ../config/vision.mock.yaml` emits random fuel into both hubs. Everything else is real: refs, emcee, commits, rankings, playoffs. Use it to train volunteers before the model is ready.
 
-Mock vision emits random fuel. Refs, emcee, commits, rankings and TBA all behave for real. You can also run with vision off entirely and type fuel counts into the review table.
+---
 
-## Plugging in the model
+## Phones and networking
 
-1. Copy weights to `vision/models/fuel_best.pt`.
-2. `cd vision && python pick_roi.py 0` → paste the printed `roi:` into `config/vision.yaml` for that hub. Repeat for camera 1.
-3. Pick a counter: `zone` (default, short tracks inside the ROI; built for the fragmentation problem you hit with ByteTrack), `linecross` (ByteTrack + line), `mock`, or your own class via `counter: "my_module:MyCounter"` (interface in `vision/counters/base.py`: `process(frame, t) -> new_count`).
-4. Restart only the vision process. The FMS keeps running and loses nothing except the seconds vision was down.
+Everyone joins the **venue WiFi**: the scorekeeper laptop, ref phones and the emcee phone. Phones open the laptop's address:
 
-Every match, vision records raw hub video + per-frame timestamps to `vision/recordings/`. After you train a better model:
+| OS | Find the laptop's IP |
+|---|---|
+| macOS | `ipconfig getifaddr en0` (try `en1` if blank) |
+| Windows | `ipconfig` → "IPv4 Address" of the WiFi adapter |
+| Linux | `hostname -I` |
 
-```bash
-python rescore.py --match qm7 --hub red --video recordings/qm7_<id>_red.mp4 --weights models/v2.pt
-```
+Then on each phone, open `http://<ip>:8000/ref` (or `/emcee`) and choose Share → **Add to Home Screen**. It opens like an app.
 
-That replaces the hub's fuel for that match on the same clock. Reopen the match first if it's committed. Those recordings are also your best training data: they're from the real mount.
+- **`localhost` / `127.0.0.1` only works on the laptop itself.** On a phone it means the phone.
+- **Type `http://` and `:8000`.** Some phone browsers try `https://` otherwise, and that fails.
+- **The IP changes per network,** so recheck it at the venue. To get a name that never changes on macOS:
+  ```bash
+  sudo scutil --set LocalHostName watchtower-fms
+  ```
+  Then phones use `http://watchtower-fms.local:8000/ref`. iPhones resolve `.local` reliably, some Android phones don't, and some managed networks block it. Keep the IP as a backup.
+- **Client isolation.** Some networks, especially guest ones, block phones from reaching the laptop. Test at the venue: if `http://<ip>:8000` loads on the laptop but not a phone, check the laptop firewall first. If it still fails, ask the venue for a non-guest network or to disable "client/AP isolation".
+- **Phones must stay on WiFi.** Cellular can't reach a local IP. On iPhone, turn off Wi-Fi Assist (Settings → Cellular), and no VPNs.
+- **Internet is only needed for TBA.** Scoring works fully offline, and TBA updates queue until internet returns.
+
+Default PINs are `control 6059`, `ref 4821`, `emcee 7390`. Change them in `config/event.yaml`.
+
+---
+
+## Before the event: schedule
+
+Open `/control` → **Schedule**.
+
+**Generate:**
+1. The page suggests matches per team from your team count, start time, cycle time and lunch.
+2. Click **Generate**. It searches for about 4 s and shows a preview with stats: back-to-backs, max partner and opponent repeats, and when quals end.
+3. Click **Save this schedule.**
+
+Seed is optional; the same seed gives the same schedule.
+
+**Import instead:** paste CSV lines `match,red1,red2,red3,blue1,blue2,blue3[,HH:MM]`. Mark a surrogate with `*`, e.g. `6059*`.
+
+**Surrogates:** if `teams × matches per team` isn't divisible by 6, some teams play one extra match as a surrogate. Surrogate matches don't count in their rankings.
+
+**Back-to-backs:** with 12 teams and 6-team matches, some teams will play two matches in a row. Avoiding that entirely would mean the same two groups of 6 alternate all day. The generator minimizes them. Plan queueing and battery swaps around the ones it shows.
+
+**Push to TBA:** click **Send schedule to TBA**. This sends the team list and all matches as unplayed.
+
+The schedule locks once any qual match has started.
+
+---
 
 ## Running a match
 
-1. **Start**: click *Start match* on the field countdown. If you were late, fix it later with the ±0.5 s buttons (negative = clicked late). Optional *Teleop started* click re-anchors teleop if the field's teleop start drifted.
-2. **Auto result**: 3 s after auto ends (the grace window), the FMS compares auto fuel. The alliance that scored more has its hub **off** in Shift 1. Tie = coin flip. The emcee's phone shows it with the hub light plan and buzzes 3 s before every hub change.
-3. **Lock the call**: the emcee taps *Lights set*. Shift scoring follows the locked call, because the lights are what robots actually played to. If the auto margin is within `close_auto_margin`, both screens warn: get the head ref's call.
-4. **Review**: after the match, enter tower levels, check fouls, type corrected fuel totals per period if vision was off. Vision data is never deleted; your number overrides it.
-5. **Commit**: sends the match, rankings, and match video link to TBA, and advances to the next match.
+### Scorekeeper (`/control` → Match)
 
-## TBA
+1. **Select** the match. It auto-advances to the next one after each commit.
+2. **Start match** exactly on the field countdown.
+   - Clicked late? After the match, use **−0.5 s / −1 s** (negative = real start was earlier). The score re-buckets instantly.
+   - **Teleop started** (optional): click it if the field's teleop start drifted from the default 3 s pause.
+3. **Auto result:** the FMS decides it 3 s after auto ends (the grace window).
+   - The alliance with **more auto fuel has its hub OFF in Shift 1.** A tie is a coin flip.
+   - If the margin is within `close_auto_margin` (5), you get a warning. Get the head ref's call.
+   - **Red off first / Blue off first** overrides the result and locks it.
+4. The match goes to **review** automatically when it ends: 2:43 of match time plus 3 s grace.
 
-- Your offseason event must exist on TBA, and you need Trusted API keys for it (request write access for your event through TBA; approval can take days, so do it now). Put them in env vars `TBA_AUTH_ID` / `TBA_AUTH_SECRET`, set `tba.enabled: true`.
-- Set the event's playoff type to 4-alliance double elimination on TBA. Keys used: `sf1m1`–`sf5m1`, `f1m1`–`f1m3`.
-- Every write goes into a SQLite outbox and retries forever on network errors; 4xx rejections fail after 3 tries and show in Setup. Test with one match before the event.
-- `send_score_breakdown` is off: TBA validates per-season breakdown keys, and totals-only is guaranteed to be accepted.
-- Match videos: set the livestream's YouTube ID in Setup and click *Stream went live now* when OBS goes live. Each committed match gets `<id>?t=<seconds>` pointing 10 s before its start. No uploading.
+### Emcee (`/emcee`)
 
-## Network: the part most likely to break
+- Shows the big match clock and both hub tiles, which glow when that hub is active.
+- After auto, it shows who won, the auto counts, and the light plan: "Shift 1: Blue OFF, Red ON".
+- **Lights set** locks the call. Shift scoring follows the locked call, because that's what robots actually played to.
+- Before every hub change it counts down ("In 7s → Shift 2: Red ON, Blue OFF"). It turns amber at 5 s and vibrates at 3 s on Android.
 
-- Event WiFi very often has **client isolation**: phones can't reach the laptop at all. Bring your own router, plug the MacBook in by Ethernet, give it a DHCP reservation. Test ref phones on that router before event day.
-- macOS will ask to allow incoming connections for Python the first time: allow it.
-- Internet can drop; the FMS doesn't need it. TBA updates queue and flush later.
+### Refs (`/ref`)
 
-## Not implemented (decide if you need them)
+- Enter your PIN and name once.
+- The big buttons are **Red fouled: Minor / Major** and **Blue fouled: Minor / Major**. Points go to the *other* alliance (minor 5, major 15 by default).
+- After a tap you can tag the team that fouled, or skip.
+- Refs can remove their own entries until the match is committed. The scorekeeper can remove any.
 
-Yellow/red cards and DQs, surrogate display on TBA beyond the match field, backup robots in playoffs, FRC's exact tiebreakers (see `fms/bracket.py`). Playoff ties require the scorekeeper to pick who advances or reset and replay.
+### Review and commit (`/control`)
+
+| Area | What to do |
+|---|---|
+| **Fuel table** | Vision count per period. Type the real count in **final** to override. Vision data is never deleted |
+| **Inactive-hub fuel seen** | Balls that went into a hub while it was off (worth 0). Useful for spotting a wrong auto call |
+| **Tower** | Per robot: **L1 in auto** checkbox and end level (none / L1 / L2 / L3) |
+| **Fouls** | Everything refs logged. Remove mistakes, or add your own |
+| **Summary** | Fuel, auto, teleop, tower, penalty points, total, bonus RP, RP |
+| **Video** | Auto-suggested from the livestream, or paste a YouTube ID |
+| **Commit and send to TBA** | Locks the match; pushes the match, rankings and video; advances to the next match |
+
+- **Reopen for edits** unlocks a committed match. Recommitting re-sends it to TBA.
+- **Reset match** (before commit) clears timing, adjustments and climbs so the match can be replayed. You're asked whether to delete its fouls.
+
+### Field display (`/display`)
+
+Full-screen scoreboard for a TV, or add it as a **Browser Source** in OBS for the stream overlay. It shows live provisional scores, the clock, and hub-active indicators, then the final breakdown with the winner after commit. No PIN.
+
+### Scoring rules as implemented
+
+- Auto 20 s → 3 s pause → Transition 10 s → Shifts 1–4, 25 s each, hubs alternating → Endgame 30 s. Teleop is 140 s.
+- 1 point per fuel in an active hub. Fuel within 3 s after a hub turns off still counts.
+- Auto L1 climb: 15. Teleop climb: L1 10, L2 20, L3 30. Minor foul: 5. Major foul: 15. All configurable.
+- RP: win 3, tie 1, plus Energized (≥100 fuel), Supercharged (≥360 fuel), Traversal (≥50 tower points).
+
+---
+
+## Rankings, alliance selection, playoffs
+
+**Rankings** (`/control` → Rankings):
+- Recomputed on every committed qual and queued to TBA automatically. **Push rankings to TBA** forces it.
+- Sort order: ranking score (average RP), then average match score, average tower, average fuel, team number.
+
+**Alliance selection** (`/control` → Alliances & playoffs):
+- Pick Captain, Pick 1 and Pick 2 for A1–A4. Dropdowns are in rank order.
+- **Save alliances and build bracket** sends the alliances to TBA and creates the first two playoff matches.
+- Alliances can be changed until the first playoff match starts.
+
+**Bracket:** 4-alliance double elimination, then best-of-3 finals. Matches appear as results come in.
+
+| Match | Red vs Blue |
+|---|---|
+| sf1m1 | A1 vs A4 (upper) |
+| sf2m1 | A2 vs A3 (upper) |
+| sf3m1 | losers of sf1 and sf2 (lower; loser is out) |
+| sf4m1 | winners of sf1 and sf2 (upper final) |
+| sf5m1 | loser of sf4 vs winner of sf3 (lower final; loser is out) |
+| f1m1–f1m3 | winner of sf4 vs winner of sf5, first to 2 wins |
+
+The better seed is red, except in the finals, where the upper-bracket winner is red.
+
+**Playoff ties can't be committed.** Pick who advances using your tiebreaker, or reset and replay.
+
+---
+
+## Vision: plugging in models
+
+### Contract
+
+A counter receives frames from one hub camera and returns how many **new** balls it counted in that frame:
+
+```python
+class MyCounter(Counter):            # vision/counters/base.py
+    def process(self, frame, t) -> int: ...
+    def draw(self, frame): ...       # optional, for --preview
+```
+
+Vision timestamps each count and batches it to the FMS 4× per second. If the FMS is unreachable, events buffer and re-send.
+
+### Swap in a model
+
+1. Copy weights to `vision/models/` (e.g. `fuel_best.pt`; `.pt` files are gitignored, so share them separately).
+2. Set `weights:` in `config/vision.yaml`.
+3. Restart **only** the vision process. The FMS keeps running and loses only the seconds vision was down.
+
+Inference runs on MPS (Apple Silicon), CUDA, or CPU, whichever is available.
+
+### Set the hub region (ROI)
+
+```bash
+cd vision
+python pick_roi.py 0          # camera index, or: python pick_roi.py frame.png
+```
+
+Drag a box over the hub opening and press Enter. It prints `roi: [x, y, w, h]` in full-resolution pixels (Retina-safe). Paste that into the hub's entry in `config/vision.yaml`. Re-pick it if a camera gets bumped.
+
+### Counters
+
+| Counter | How it counts | Use when |
+|---|---|---|
+| `zone` (default) | Runs the model on a crop around the ROI; links detections frame-to-frame with a small nearest-neighbor tracker; counts each short track once | Wide or noisy views. Built because ByteTrack fragmented badly on broadcast footage |
+| `linecross` | Ultralytics ByteTrack; counts IDs crossing a line inside the ROI moving down | Close cameras with clean, continuous ball tracks |
+| `mock` | Random fuel at `rate_per_s`, no model or camera (`source: none`) | Rehearsals, UI testing |
+| `"pkg.module:Class"` | Your own | Anything else |
+
+`zone` tuning keys:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `conf` | 0.25 | Detection confidence |
+| `imgsz` | 640 | Inference size on the crop; use 960 if balls are under ~20 px |
+| `crop_pad` | 60 | Pixels of padding around the ROI |
+| `max_px` | 60 | Max movement between frames to count as the same ball |
+| `min_hits` | 2 | Frames a track must be seen before it counts (kills one-frame noise) |
+| `max_missed` | 3 | Frames a ball may vanish and keep its identity |
+| `min_dy` | 0 | Required downward travel before counting (0 = off) |
+
+### Recording and rescoring
+
+While a match runs, vision records each hub to `vision/recordings/<match>_<id>_<hub>.mp4`, with per-frame timestamps in a matching `.csv`.
+
+With a better model later, recount a match:
+
+```bash
+cd vision
+python rescore.py --match qm7 --hub red --video recordings/qm7_<id>_red.mp4 --weights models/v2.pt --dry-run
+python rescore.py --match qm7 --hub red --video recordings/qm7_<id>_red.mp4 --weights models/v2.pt
+```
+
+- `--dry-run` only prints the count.
+- Without it, that hub's fuel for the match is replaced in the FMS, on the same clock. The match must be in review, so **Reopen** it first if it's committed.
+
+These recordings are also your best training data, because they come from the real camera mount.
+
+### Camera tips
+
+- Put each camera on its own USB port or controller. Two 1080p streams can saturate one hub.
+- Lock exposure and focus if the camera allows it, since auto-exposure changes under arena lights.
+- Mount cameras rigidly. The ROI is in pixels.
+- If vision and the FMS run on different machines, both clocks must be NTP-synced.
+
+---
+
+## The Blue Alliance
+
+### Getting access
+
+1. Your offseason event must exist on TBA.
+2. Request **write (Trusted API) access** for that event from TBA. Approval can take days, so do it early.
+3. Once approved, you get an **Auth ID** and **Auth Secret** for the event. A single "read key" from your account page is not a write key.
+
+### Configure
+
+In `config/event.yaml`:
+
+```yaml
+event:
+  tba_event_key: "2026xxxx"
+tba:
+  enabled: true
+```
+
+Keep the secrets out of git:
+
+```bash
+cat > tba_secrets.sh <<'EOF'
+export TBA_AUTH_ID="..."
+export TBA_AUTH_SECRET="..."
+EOF
+echo "tba_secrets.sh" >> .gitignore
+source tba_secrets.sh             # in the same terminal that starts the server
+```
+
+On Windows PowerShell, set them in the server's terminal instead: `$env:TBA_AUTH_ID="..."` and `$env:TBA_AUTH_SECRET="..."`.
+
+On TBA's side, set the event's playoff type to **4-alliance double elimination**.
+
+### Test safely
+
+1. Before any schedule exists, click **Send schedule to TBA**. Only the team list goes.
+2. Confirm the teams appear on the TBA event page.
+3. `HTTP 401` in Setup means the ID, secret or event key is wrong.
+
+### What gets sent
+
+| Trigger | Endpoint |
+|---|---|
+| Send schedule | `team_list/update`, `matches/update` (unplayed, score −1) |
+| Commit match | `matches/update`, `rankings/update` (quals), `match_videos/add` (if a video is set) |
+| Save alliances | `alliance_selections/update`, plus the new playoff matches |
+| Webcast URL | `info/update` |
+| Push everything | All of the above, resent |
+
+### Outbox
+
+- Every write goes into SQLite first, then a background sender delivers it.
+- **Network errors retry forever.** Offline at the venue is fine.
+- **4xx rejections** become "failed" after 3 tries and show in Setup, where **Retry failed** re-queues them.
+- Superseded writes are collapsed, so only the newest rankings are sent.
+- The header pill shows queued and failed counts.
+
+### Warning: rehearsals
+
+With `enabled: true`, every committed match goes to the real event page, including mock-vision scores. Rehearse with `enabled: false`. Before the event, wipe practice data (see [Data, backups, resetting](#data-backups-resetting)).
+
+---
+
+## Livestream and match videos
+
+TBA doesn't host video. Match videos are links into your YouTube livestream at the right timestamp, so nothing needs uploading.
+
+1. Stream the third camera with OBS to YouTube. Add `/display` as a Browser Source for the score overlay.
+2. In `/control` → Setup, enter the livestream's **YouTube video ID** and click **Save**.
+3. Click **Stream went live now** the moment OBS goes live.
+4. Every committed match gets `<videoID>?t=<seconds>`, starting 10 s before auto. You can override it per match in review.
+5. Optional: enter the stream URL under **Send to TBA** so it shows as the event webcast.
+
+Test this on one match early, and check the timestamp lands where you expect.
+
+---
+
+## Data, backups, resetting
+
+- All state lives in `data/fms.sqlite3`: matches, fuel events, fouls, the TBA outbox and settings. It's gitignored.
+- **Results CSV:** `/control` → Schedule → **Download results CSV**, which has per-period fuel, tower, fouls and RP for every match. Grab one at lunch and at the end of the day.
+- **Backup:** copy `data/fms.sqlite3` while the server is stopped.
+- **Fresh start** (after rehearsals): stop the server, then run `rm data/fms.sqlite3*`.
+
+---
+
+## Testing
+
+```bash
+python -m pytest -q
+```
+
+The tests cover the timeline, grace-window attribution, the auto decision, full match scores (hand-computed), manual adjustments, playoff ties, schedule balance and surrogates, the full double-elimination bracket, and rankings. `game.score_match` also checks at runtime that two independent totals agree.
+
+For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a match on `/control`.
+
+---
+
+## Working on this with AI agents
+
+- **`CLAUDE.md`** holds the project context Claude Code reads every session: architecture, invariants, game values, constraints, and what's not built yet.
+- **`AGENTS.md`** is a link to it, for Codex and other agents.
+- Edit only `CLAUDE.md`.
+- The rule: scoring math lives only in `fms/game.py`, and `python -m pytest -q` must pass after every change.
+- When a change affects setup or usage, update this README in the same commit.
+
+---
+
+## Event-day checklist
+
+**The week before**
+- [ ] Every `game:` value checked against the 2026 manual
+- [ ] TBA write access approved; team list test passed
+- [ ] PINs changed
+- [ ] Full rehearsal with refs and emcee on phones, using mock vision
+- [ ] Model weights tested on recorded footage
+
+**At the venue**
+- [ ] Laptop plugged in, on venue WiFi
+- [ ] Laptop IP noted (or `.local` name confirmed)
+- [ ] One phone loads `/ref` (proves there's no client isolation)
+- [ ] Both hub cameras mounted; ROIs re-picked with `pick_roi.py`
+- [ ] Vision pill green in `/control`
+- [ ] `rm data/fms.sqlite3*` done, `tba.enabled: true`, `source tba_secrets.sh`
+- [ ] Server started; schedule generated, saved and sent to TBA
+- [ ] OBS live → **Stream went live now** clicked
+- [ ] Refs and emcee have the pages on their home screens
+
+**During**
+- Start on the countdown; fix the offset in review if needed.
+- Emcee locks the auto call every match.
+- Review climbs and fouls before every commit.
+- Download the results CSV at lunch.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Phone can't load the page | Use the laptop IP, not localhost; include `http://` and `:8000`; same WiFi, not cellular; allow Python through the firewall; test for client isolation ([Phones and networking](#phones-and-networking)) |
+| `address already in use` | An old server is still running: `lsof -ti :8000 \| xargs kill` (macOS/Linux) |
+| "Log in again" on a phone | Wrong PIN, or the PIN changed; reload and re-enter |
+| Vision pill red / "silent" | Vision process not running, wrong `fms_url`, or `vision_key` mismatch |
+| "camera read failed" | Wrong camera index, camera used by another app (e.g. OBS), or unplugged |
+| Counts way too high | Raise `min_hits` or `conf`, tighten the ROI, lower `max_px` |
+| Counts too low | Lower `conf`, raise `imgsz` to 960, raise `max_missed`, check the ROI covers the opening |
+| TBA "failed" with 401 | Wrong auth ID, secret or event key; secrets not sourced in the server terminal |
+| TBA "failed" with 400 | TBA rejected the data, e.g. a team not registered on the event; fix, then **Retry failed** |
+| Can't commit a playoff match | It's tied; pick who advances or reset |
+| Start button disabled | Match isn't `scheduled`; reset it, or select the next match |
+| `permission denied: ./run.sh` | `chmod +x run.sh` |
+
+---
+
+## Limitations and things to verify
+
+**Verify before the event**
+- Every value under `game:`. Sources disagreed on teleop Level 1 (10 vs 15).
+- RP thresholds and foul values.
+- TBA accepting `?t=` timestamps on match videos (test one).
+- TBA playoff type for the 4-alliance bracket.
+
+**Not implemented**
+- Yellow and red cards, DQs, playoff backup robots.
+- FRC's exact ranking and playoff tiebreakers. Rankings use the sort described above; playoff ties are decided by the scorekeeper.
+- TBA `score_breakdown`: off by default, because TBA validates per-season keys.
+- Automatic robot enable/disable. This system doesn't talk to driver stations.
