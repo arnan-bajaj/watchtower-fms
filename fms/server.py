@@ -129,7 +129,19 @@ def build_state():
         "vision": {h: {**v, "age": round(time.time() - v["seen"], 1)} for h, v in vision_status.items()},
         "tba": {"configured": tba.configured, "key": tba.key, **store.outbox_stats()},
         "webcast": store.get("webcast") or {},
+        "selection": selection_public(),
+        "display": store.get("display") or "match",
     }
+
+
+def selection_public():
+    sel = store.get("selection")
+    if not sel:
+        return None
+    s = bracket.selection(sel["order"], sel["picks"])
+    s["order"] = sel["order"]
+    s["saved"] = bool(sel.get("saved"))
+    return s
 
 
 async def broadcast():
@@ -336,6 +348,7 @@ async def start(body: dict = Body(default={}), x_fms_token: str = Header(None)):
     store.update_match(m["key"], auto_start=now, status="running", offset=0.0,
                        first_inactive=None, fi_locked=0, fi_coin=0)
     store.set("current", m["key"])
+    store.set("display", "match")
     mark_dirty()
     return {"ok": True, "auto_start": now}
 
@@ -544,19 +557,26 @@ def _advance_bracket():
         tba.one_match(nm, None)
 
 
+def _playoffs_started():
+    return any(x["auto_start"] for x in store.matches() if x["comp_level"] != "qm")
+
+
 @app.post("/api/alliances")
 async def alliances(body: dict = Body(...), x_fms_token: str = Header(None)):
     need(x_fms_token)
-    al = [[int(t) for t in a if t] for a in body["alliances"]]
+    _save_alliances([[int(t) for t in a if t] for a in body["alliances"]])
+    return {"ok": True}
+
+
+def _save_alliances(al):
     flat = [t for a in al for t in a]
     if len(al) != 4 or any(len(a) < 2 for a in al):
         raise HTTPException(400, "Need 4 alliances with at least captain + 1 pick")
     if len(flat) != len(set(flat)):
         raise HTTPException(400, "A team is on two alliances")
-    po = [x for x in store.matches() if x["comp_level"] != "qm"]
-    if any(x["auto_start"] for x in po):
+    if _playoffs_started():
         raise HTTPException(409, "Playoffs already started; alliances are locked")
-    for x in po:
+    for x in [x for x in store.matches() if x["comp_level"] != "qm"]:
         store.x("DELETE FROM matches WHERE key=?", (x["key"],))
     store.set("alliances", al)
     tba.alliances(al)
@@ -564,7 +584,117 @@ async def alliances(body: dict = Body(...), x_fms_token: str = Header(None)):
     if not any(x["status"] == "scheduled" and x["comp_level"] == "qm" for x in store.matches()):
         store.set("current", "sf1m1")
     mark_dirty()
+
+
+# Live selection: only the frozen rank order and the list of picks are stored; everything else is
+# replayed by bracket.selection, so undo is just dropping the last pick.
+def _sel():
+    sel = store.get("selection")
+    if not sel:
+        raise HTTPException(409, "Alliance selection hasn't started")
+    return sel
+
+
+@app.post("/api/selection/start")
+async def selection_start(x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    if _playoffs_started():
+        raise HTTPException(409, "Playoffs already started; alliances are locked")
+    order = [r["team"] for r in bracket.rankings(CFG["event"]["teams"], store.matches("qm"))]
+    try:
+        bracket.selection(order, [])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    store.set("selection", {"order": order, "picks": [], "started": time.time()})
+    store.set("display", "selection")
+    mark_dirty()
     return {"ok": True}
+
+
+def _set_picks(sel, picks):
+    try:
+        bracket.selection(sel["order"], picks)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    sel["picks"], sel["saved"] = picks, False
+    store.set("selection", sel)
+    mark_dirty()
+    return {"ok": True}
+
+
+@app.post("/api/selection/pick")
+async def selection_pick(body: dict = Body(...), x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    sel = _sel()
+    return _set_picks(sel, sel["picks"] + [int(body["team"])])
+
+
+@app.post("/api/selection/undo")
+async def selection_undo(x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    sel = _sel()
+    if not sel["picks"]:
+        raise HTTPException(409, "No picks to undo")
+    return _set_picks(sel, sel["picks"][:-1])
+
+
+@app.post("/api/selection/cancel")
+async def selection_cancel(x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    store.delete("selection")
+    store.set("display", "match")
+    mark_dirty()
+    return {"ok": True}
+
+
+@app.post("/api/selection/finish")
+async def selection_finish(x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    sel = _sel()
+    s = bracket.selection(sel["order"], sel["picks"])
+    if not s["done"]:
+        raise HTTPException(409, "Selection isn't finished")
+    _save_alliances(s["alliances"])
+    sel["saved"] = True
+    store.set("selection", sel)
+    mark_dirty()
+    return {"ok": True}
+
+
+@app.post("/api/display")
+async def display_mode(body: dict = Body(...), x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    mode = body.get("mode")
+    if mode not in ("match", "selection"):
+        raise HTTPException(400, "mode must be match or selection")
+    store.set("display", mode)
+    mark_dirty()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ wipe
+@app.post("/api/admin/wipe")
+async def wipe(body: dict = Body(...), x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    if str(body.get("pin", "")) != str(CFG["server"]["pins"]["control"]):
+        raise HTTPException(403, "Wrong scorekeeper PIN")
+    scope = body.get("scope")
+    if scope not in ("all", "playoffs"):
+        raise HTTPException(400, "scope must be all or playoffs")
+    if any(m["status"] == "running" for m in store.matches()):
+        raise HTTPException(409, "A match is running")
+    db = pathlib.Path(CFG["server"]["db"])
+    dest = db.parent / "backups" / f"{db.stem}-{datetime.now():%Y%m%d-%H%M%S}-before-wipe-{scope}.sqlite3"
+    store.backup(str(dest))
+    store.wipe(scope)
+    if scope == "playoffs":
+        nxt = next((m for m in store.matches("qm") if m["status"] != "committed"), None)
+        if nxt:
+            store.set("current", nxt["key"])
+        else:
+            store.delete("current")
+    mark_dirty()
+    return {"ok": True, "backup": str(dest)}
 
 
 # ------------------------------------------------------------------ TBA / webcast / export
@@ -585,6 +715,33 @@ def push_all(x_fms_token: str = Header(None)):
 def push_rankings(x_fms_token: str = Header(None)):
     need(x_fms_token)
     tba.rankings(bracket.rankings(CFG["event"]["teams"], store.matches("qm")))
+    return {"ok": True}
+
+
+@app.post("/api/tba/delete_match")
+def tba_delete_match(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """Removes one match from TBA only. Local data is untouched; committing it again re-sends it."""
+    need(x_fms_token)
+    if not tba.key:
+        raise HTTPException(400, "No TBA event key configured")
+    m = _get(body.get("key"))
+    tba.delete_matches([m["key"]])
+    if body.get("refresh_rankings", True):
+        tba.rankings(bracket.rankings(CFG["event"]["teams"], store.matches("qm")))
+    mark_dirty()
+    return {"ok": True}
+
+
+@app.post("/api/tba/delete_all")
+def tba_delete_all(x_fms_token: str = Header(None)):
+    """Takes every match (the schedule and any results) and the rankings off TBA.
+    Local data is untouched; 'Send schedule to TBA' puts the schedule back."""
+    need(x_fms_token)
+    if not tba.key:
+        raise HTTPException(400, "No TBA event key configured")
+    tba.delete_all_matches()
+    tba.clear_rankings()
+    mark_dirty()
     return {"ok": True}
 
 

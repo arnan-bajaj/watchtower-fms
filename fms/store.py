@@ -56,6 +56,36 @@ class Store:
         self.x("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
                (k, json.dumps(v)))
 
+    def delete(self, k):
+        self.x("DELETE FROM kv WHERE k=?", (k,))
+
+    # ---- admin
+    def backup(self, dest):
+        pathlib.Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        out = sqlite3.connect(dest)
+        with self.lock:
+            self.db.backup(out)
+        out.close()
+
+    def wipe(self, scope):
+        """scope 'all': everything except the login secret. 'playoffs': playoff matches, their
+        fouls, alliances, selection, and any not-yet-sent playoff TBA writes."""
+        with self.lock:
+            self.db.execute("BEGIN")
+            if scope == "all":
+                for t in ("matches", "fuel", "fouls", "outbox"):
+                    self.db.execute(f"DELETE FROM {t}")
+                self.db.execute("DELETE FROM kv WHERE k != 'secret'")
+            else:
+                self.db.execute("DELETE FROM fouls WHERE match_key IN "
+                                "(SELECT key FROM matches WHERE comp_level != 'qm')")
+                self.db.execute("DELETE FROM matches WHERE comp_level != 'qm'")
+                self.db.execute("DELETE FROM kv WHERE k IN ('alliances', 'selection', 'display')")
+                self.db.execute("DELETE FROM outbox WHERE state='pending' AND (dedupe='alliances' OR "
+                                "dedupe LIKE 'match:sf%' OR dedupe LIKE 'match:f%' OR "
+                                "dedupe LIKE 'video:sf%' OR dedupe LIKE 'video:f%')")
+            self.db.execute("COMMIT")
+
     # ---- matches
     @staticmethod
     def _decode(r):

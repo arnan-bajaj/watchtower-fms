@@ -324,10 +324,14 @@ Full-screen scoreboard for a TV, or add it as a **Browser Source** in OBS for th
 - Recomputed on every committed qual and queued to TBA automatically. **Push rankings to TBA** forces it.
 - Sort order: ranking score (average RP), then average match score, average tower, average fuel, team number.
 
-**Alliance selection** (`/control` → Alliances & playoffs):
-- Pick Captain, Pick 1 and Pick 2 for A1–A4. Dropdowns are in rank order.
-- **Save alliances and build bracket** sends the alliances to TBA and creates the first two playoff matches.
-- Alliances can be changed until the first playoff match starts.
+**Live alliance selection** (`/control` → Alliances & playoffs):
+- **Start alliance selection** freezes the current rankings. The top 4 become captains, and `/display` switches to a selection screen showing the alliances, who's picking, and the teams still available.
+- Click a team to record the pick. Round 1 goes A1→A4 and round 2 goes A4→A1. In round 1 a captain who hasn't picked yet can be invited: confirm they accepted, lower alliances move up, and the next-ranked team becomes the new A4 captain.
+- **Undo last pick** and **Cancel selection** are there for mistakes. Declines aren't tracked: if a team declines, just wait for the next pick.
+- After the last pick, **Save alliances and build bracket** sends the alliances to TBA and creates the first two playoff matches. The display keeps showing the final alliances until you switch it back or start a match.
+- The button at the top of the panel toggles the field display between the selection screen and the match screen.
+
+**Manual alliance entry** (same tab): pick Captain, Pick 1 and Pick 2 for A1–A4 from dropdowns in rank order. Use it to skip live selection or fix a mistake. Alliances can be changed until the first playoff match starts.
 
 **Bracket:** 4-alliance double elimination, then best-of-3 finals. Matches appear as results come in.
 
@@ -473,6 +477,10 @@ On TBA's side, set the event's playoff type to **4-alliance double elimination**
 | Save alliances | `alliance_selections/update`, plus the new playoff matches |
 | Webcast URL | `info/update` |
 | Push everything | All of the above, resent |
+| Off TBA (Schedule → All matches) | `matches/delete` for that match, then `rankings/update` |
+| Take all matches and rankings off TBA (Setup) | `matches/delete_all`, then empty `rankings/update` |
+
+Takedowns only touch TBA; local data is kept. Anything pushed again later (a commit, **Send schedule**, **Push everything**) puts it back. Let takedowns finish sending before **Wipe everything**, since a wipe clears the outbox.
 
 ### Outbox
 
@@ -505,9 +513,14 @@ Test this on one match early, and check the timestamp lands where you expect.
 ## Data, backups, resetting
 
 - All state lives in `data/fms.sqlite3`: matches, fuel events, fouls, the TBA outbox and settings. It's gitignored.
+- **Past matches:** `/control` → Results lists every played match. Click one for its full breakdown: per-period fuel (with the vision count where it was overridden), tower, fouls, RP and video. Viewing doesn't change the current match or the field display. **Open in Match tab** brings it up for editing or reopening.
 - **Results CSV:** `/control` → Schedule → **Download results CSV**, which has per-period fuel, tower, fouls and RP for every match. Grab one at lunch and at the end of the day.
 - **Backup:** copy `data/fms.sqlite3` while the server is stopped.
-- **Fresh start** (after rehearsals): stop the server, then run `rm data/fms.sqlite3*`.
+- **Wipe from the UI:** `/control` → Setup → Wipe data asks for the scorekeeper PIN again and refuses while a match is running. It always saves a copy to `data/backups/` first.
+  - **Wipe playoffs** removes alliances, the live selection and every playoff match (and their fouls and unsent TBA writes). Quals are kept.
+  - **Wipe everything** removes the schedule, results, fuel, fouls, the TBA queue and settings like the webcast. Logins stay valid.
+  - Neither one deletes anything already sent to TBA.
+- **Fresh start** (after rehearsals): use Wipe everything, or stop the server and run `rm data/fms.sqlite3*`.
 
 ---
 
@@ -517,7 +530,7 @@ Test this on one match early, and check the timestamp lands where you expect.
 python -m pytest -q
 ```
 
-The tests cover the timeline, grace-window attribution, the auto decision, full match scores (hand-computed), manual adjustments, playoff ties, schedule balance and surrogates, the full double-elimination bracket, and rankings. `game.score_match` also checks at runtime that two independent totals agree.
+The tests cover the timeline, grace-window attribution, the auto decision, full match scores (hand-computed), manual adjustments, playoff ties, schedule balance and surrogates, the full double-elimination bracket, live alliance selection (serpentine order, captain promotion, illegal picks), and rankings. `game.score_match` also checks at runtime that two independent totals agree.
 
 For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a match on `/control`.
 
