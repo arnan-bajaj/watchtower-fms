@@ -4,6 +4,14 @@ fms_url: http://127.0.0.1:8000
 # vision_key: defaults to server.vision_key in config/event.yaml
 record_dir: recordings           # raw hub video per match (for rescoring + training data); "" to disable
 
+# Optional: also feed live counts to a bioarena field, which then decides the auto winner
+# ("Counted" mode) and lights the hubs. The Mac needs a wired link to the field switch with the
+# address bioarena is configured to accept (its Settings -> Hub FUEL Counter). Remove to disable.
+# bioarena:
+#   host: 10.0.100.5
+#   port: 8411
+#   bind: 10.0.100.21            # source address; only needed if the Mac has several on that subnet
+
 defaults:                        # applied to both hubs unless overridden
   counter: zone                  # zone | linecross | mock | "your_module:YourClass"
   weights: models/fuel_best.pt   # drop new weights here, restart vision; FMS never needs to restart
