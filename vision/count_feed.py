@@ -98,7 +98,7 @@ class CountFeed(threading.Thread):
         try:
             self.sock.sendto(datagram(self.session, self.seq, self.counts, age_ms, self.info), self.dest)
             self.error = None
-        except OSError as e:  # e.g. field Ethernet unplugged; keep counting, next send catches up
+        except OSError as e:  # e.g. network down; keep counting, next send catches up
             self.error = str(e)
         self.last_sent = time.monotonic()
 
