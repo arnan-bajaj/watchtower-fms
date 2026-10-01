@@ -1,13 +1,13 @@
 # ---------------------------------------------------------------- event
 event:
-  name: "Piedmont Makers Scrimmage"
+  name: "10th Street Showdown"
   date: "2026-10-10"            # used for TBA match times
   utc_offset_hours: -7          # PDT
-  tba_event_key: ""             # from TBA once your offseason event is approved
+  tba_event_key: "2026catstd"             # from TBA once your offseason event is approved
   teams: [6059, 8033, 2035, 5026, 8793, 4669, 5940, 9470, 4159, 114, 7419, 3045]
   qual_start: "09:30"
-  cycle_min: 8                  # match-to-match time; drives the schedule clock
-  lunch: "12:00"                # schedule preview warns if quals run past this
+  cycle_min: 10                  # match-to-match time; drives the schedule clock
+  lunch: "12:50"                # schedule preview warns if quals run past this
 
 # ---------------------------------------------------------------- server
 server:
@@ -16,13 +16,13 @@ server:
   db: data/fms.sqlite3
   pins:                         # CHANGE THESE. Anyone on the WiFi can load the pages.
     control: "6059"
-    ref: "4821"
-    emcee: "7390"
+    ref: "9470"
+    emcee: "4159"
   vision_key: "change-me-too"   # must match config/vision.yaml
 
 # ---------------------------------------------------------------- TBA trusted API
 tba:
-  enabled: false                # flip on once auth works (test with 1 match first)
+  enabled: true                # flip on once auth works (test with 1 match first)
   # Prefer env vars: export TBA_AUTH_ID=... TBA_AUTH_SECRET=...
   auth_id: ""
   auth_secret: ""
