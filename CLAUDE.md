@@ -59,5 +59,8 @@ Yellow/red cards and DQs, playoff backup robots, FRC's exact ranking/playoff tie
 TBA `score_breakdown` (off by default; TBA validates per-season keys).
 
 ## Working style for this repo
-Direct answers, uncomfortable truths first. Prove changes with tests or a mock run before calling them done.
+- Direct answers, uncomfortable truths first. Prove changes with tests or a mock run before calling them done.
 Small commits; don't refactor across `fms/` and `vision/` in one change.
+- Docs travel with code: if a change affects how to run, configure, or use the system, update README.md
+  in the same commit. If it changes architecture, invariants, game values, or "Not implemented yet",
+  update CLAUDE.md too. Never leave docs describing behavior that no longer exists.
