@@ -14,8 +14,8 @@ import pathlib
 
 import cv2
 import requests
-import yaml
 
+import vconfig
 from counters import load_counter
 
 
@@ -28,7 +28,7 @@ def main():
     ap.add_argument("--weights")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
-    cfg = yaml.safe_load(open(a.config))
+    cfg = vconfig.load(a.config)
     hc = {**cfg.get("defaults", {}), **cfg["hubs"][a.hub], "hub": a.hub}
     if a.weights:
         hc["weights"] = a.weights

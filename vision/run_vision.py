@@ -20,8 +20,8 @@ import time
 import cv2
 import numpy as np
 import requests
-import yaml
 
+import vconfig
 from counters import load_counter
 
 STOP = threading.Event()
@@ -170,7 +170,7 @@ def main():
     ap.add_argument("--config", default="../config/vision.yaml")
     ap.add_argument("--preview", action="store_true")
     args = ap.parse_args()
-    cfg = yaml.safe_load(open(args.config))
+    cfg = vconfig.load(args.config)
     sender = Sender(cfg["fms_url"], cfg["vision_key"])
     sender.start()
     defaults = cfg.get("defaults", {})
