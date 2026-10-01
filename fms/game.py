@@ -98,6 +98,19 @@ def decide_first_inactive(auto_red: int, auto_blue: int, rng=None):
     return (rng or random).choice(ALLIANCES), True
 
 
+def first_inactive_from_hubs(shift: str, active: dict) -> str | None:
+    """Read the auto result off live hub lights (e.g. a bioarena status reply): during an odd
+    shift the first_inactive alliance is dark, during an even shift the other one is.
+    None unless exactly one hub is dark in a shift."""
+    if not (isinstance(shift, str) and shift.upper().startswith("SHIFT") and shift[5:].isdigit()):
+        return None
+    dark = [a for a in ALLIANCES if (active or {}).get(a) is False]
+    lit = [a for a in ALLIANCES if (active or {}).get(a) is True]
+    if len(dark) != 1 or len(lit) != 1:
+        return None
+    return dark[0] if int(shift[5:]) % 2 == 1 else other(dark[0])
+
+
 def score_match(g: dict, periods: list[Period], events, adjust: dict | None,
                 climbs: dict | None, fouls, playoff: bool = False,
                 winner_override: str | None = None) -> dict:

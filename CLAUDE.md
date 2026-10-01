@@ -64,6 +64,10 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
 - Vision records raw hub video + per-frame timestamps per match; `vision/rescore.py` recounts a match offline
   and replaces that hub's events in the FMS on the same clock.
 - macOS: OpenCV GUI calls must stay on the main thread (preview is done there).
+- Optional live count feeds (`vision/count_feed.py`, `feeds:` / `--feed HOST:PORT`): cumulative red/blue
+  over UDP to field systems that decide the auto winner themselves (bioarena protocol v1). Sent on every
+  count, before the FMS POST. Their replies are relayed to the FMS; once a shift shows one hub dark the FMS
+  adopts and locks that `first_inactive` once per match (the lights are the truth).
 
 ## Event constraints
 - Everyone (refs, emcee, scorekeeper) is on the venue WiFi; no hotspot. Some networks isolate clients;
