@@ -1,4 +1,4 @@
-"""vision/bioarena.py against a fake bioarena on localhost (protocol v1, spec section 4)."""
+"""vision/count_feed.py against a fake field system on localhost (bioarena protocol v1)."""
 import json
 import pathlib
 import socket
@@ -6,7 +6,7 @@ import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "vision"))
-from bioarena import BioarenaFeed, datagram  # noqa: E402
+from count_feed import CountFeed, datagram, parse_target, targets  # noqa: E402
 
 
 def test_datagram_shape():
@@ -22,10 +22,10 @@ def _recv(fake, timeout=1.0):
     return json.loads(data), addr
 
 
-def test_feed_against_fake_bioarena():
+def test_feed_against_fake_field():
     fake = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     fake.bind(("127.0.0.1", 0))
-    feed = BioarenaFeed("127.0.0.1", fake.getsockname()[1], heartbeat_s=0.1)
+    feed = CountFeed("127.0.0.1", fake.getsockname()[1], heartbeat_s=0.1)
     feed.start()
     try:
         hb, addr = _recv(fake)  # heartbeat with nothing counted yet
@@ -63,4 +63,34 @@ def test_feed_against_fake_bioarena():
 
 
 def test_restart_gets_new_session():
-    assert BioarenaFeed("127.0.0.1", 9).session != BioarenaFeed("127.0.0.1", 9).session
+    assert CountFeed("127.0.0.1", 9).session != CountFeed("127.0.0.1", 9).session
+
+
+def test_targets_from_config_and_cli():
+    assert parse_target("10.0.100.5:8411") == {"host": "10.0.100.5", "port": 8411}
+    assert parse_target("192.168.1.50") == {"host": "192.168.1.50", "port": 8411}
+    assert parse_target("fms.local:9000") == {"host": "fms.local", "port": 9000}
+    cfg = {"feeds": [{"name": "bioarena", "host": "10.0.100.5", "bind": "10.0.100.21"},
+                     {"host": "10.0.0.9", "port": 9001, "enabled": False}]}
+    got = targets(cfg, ["10.0.100.5:8411", "192.168.1.50:9000"])  # first is a duplicate
+    assert got == [{"port": 8411, "name": "bioarena", "host": "10.0.100.5", "bind": "10.0.100.21"},
+                   {"port": 9000, "host": "192.168.1.50"}]
+    assert targets({"feeds": {"host": "h"}}) == [{"port": 8411, "host": "h"}]  # one mapping is fine
+    assert targets({}) == [] and targets({"feeds": None}, None) == []
+
+
+def test_two_feeds_get_every_count():
+    socks = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(2)]
+    for s in socks:
+        s.bind(("127.0.0.1", 0))
+    feeds = [CountFeed("127.0.0.1", s.getsockname()[1], heartbeat_s=5) for s in socks]
+    try:
+        for f in feeds:
+            f.add("blue", 3, time.time())
+        for s in socks:
+            d, _ = _recv(s)
+            assert (d["red"], d["blue"]) == (0, 3)
+        assert feeds[0].session != feeds[1].session
+    finally:
+        for s in socks:
+            s.close()

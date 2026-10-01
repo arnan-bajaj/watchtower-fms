@@ -1,21 +1,21 @@
-"""Feed live hub counts to a bioarena field ("Hub FUEL Counter Feed", protocol v1).
+"""Live count feeds: stream hub counts over UDP to field systems that decide the auto winner
+and drive the hub lights themselves (e.g. bioarena's "Hub FUEL Counter Feed", protocol v1).
 
-bioarena never takes an auto winner from outside. In its "Counted" auto-winner mode it
-decides the winner itself at T+23.000 s on its own match clock, from the counts it has
-RECEIVED by then, and lights the hubs from that call. So the way to forward the auto
-result is to be bioarena's counter: stream counts fast enough that every auto ball
-arrives before T+23.
+Such a field never takes an auto winner from outside. It decides at its own deadline (bioarena:
+T+23.000 s on its match clock) from the counts it has RECEIVED by then. So the way to forward
+the auto result is to be the field's counter: send every count the moment it happens.
 
-One UDP datagram carries both hubs, sent on every count and as a 10 Hz heartbeat:
+One datagram carries both hubs, sent on every count and as a heartbeat (default 10 Hz):
 
   {"v":1,"session":"c1f3a9d2","seq":4821,"red":57,"blue":0,"age_ms":38}
 
-red/blue are cumulative since this process started and never reset; bioarena baselines
-them per match. `session` is new on every start so bioarena can tell a restart from a
-lost packet. bioarena replies with its match state; the latest reply is passed on to the
-FMS (via the normal vision status) so Watchtower can follow what the hub lights showed.
+red/blue are cumulative since this process started and never reset; the receiver baselines
+them per match. `session` is new on every start so it can tell a restart from a lost packet.
+Replies (the field's match state and hub lights) are kept and passed on to the FMS through
+the normal vision status, so Watchtower can follow what the lights actually showed.
 
-Off unless config/vision.yaml has a `bioarena:` block.
+Any number of destinations, each with its own address, port and source address:
+config/vision.yaml `feeds:` and/or `run_vision.py --feed HOST:PORT`. None = off.
 """
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ import threading
 import time
 
 HUBS = ("red", "blue")
+DEFAULT_PORT = 8411  # bioarena's default
 
 
 def datagram(session, seq, counts, age_ms=None, info=None) -> bytes:
@@ -38,14 +39,36 @@ def datagram(session, seq, counts, age_ms=None, info=None) -> bytes:
     return json.dumps(msg, separators=(",", ":")).encode()
 
 
-class BioarenaFeed(threading.Thread):
-    def __init__(self, host, port=8411, bind="", heartbeat_s=0.1):
+def parse_target(s: str) -> dict:
+    """"10.0.100.5:8411" or "10.0.100.5" -> {"host": ..., "port": ...}."""
+    host, _, port = s.strip().rpartition(":") if ":" in s else (s.strip(), "", "")
+    return {"host": host, "port": int(port) if port else DEFAULT_PORT}
+
+
+def targets(cfg: dict, cli: list[str] | None = None) -> list[dict]:
+    """Feed destinations from config `feeds:` (a list, or one mapping) plus --feed flags.
+    Duplicates (same host:port) are dropped."""
+    raw = cfg.get("feeds") or []
+    if isinstance(raw, dict):
+        raw = [raw]
+    out, seen = [], set()
+    for t in [*raw, *(parse_target(s) for s in cli or [])]:
+        t = {"port": DEFAULT_PORT, **t}
+        if t.get("enabled", True) and (t["host"], int(t["port"])) not in seen:
+            seen.add((t["host"], int(t["port"])))
+            out.append(t)
+    return out
+
+
+class CountFeed(threading.Thread):
+    def __init__(self, host, port=DEFAULT_PORT, bind="", heartbeat_s=0.1, name=None):
         super().__init__(daemon=True)
         self.dest = (socket.gethostbyname(host), int(port))
+        self.name_ = name or f"{host}:{port}"
         self.session = secrets.token_hex(4)
-        self.heartbeat_s = heartbeat_s
+        self.heartbeat_s = float(heartbeat_s)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind((bind or "", 0))  # bind: force the source address bioarena allows
+        self.sock.bind((bind or "", 0))  # bind: force the source address the receiver allows
         self.sock.setblocking(False)
         self.lock = threading.Lock()
         self.counts = {h: 0 for h in HUBS}
@@ -56,9 +79,14 @@ class BioarenaFeed(threading.Thread):
         self.info = None
         self.stop = threading.Event()
 
+    @classmethod
+    def from_target(cls, t: dict):
+        return cls(t["host"], t.get("port", DEFAULT_PORT), t.get("bind", ""),
+                   t.get("heartbeat_s", 0.1), t.get("name"))
+
     def add(self, hub, n, t_capture):
         """Call the moment a counter counts. Sends immediately; `t_capture` (time.time() of the
-        confirming frame) gives bioarena the camera-to-send latency as age_ms."""
+        confirming frame) gives the receiver the camera-to-send latency as age_ms."""
         if hub not in HUBS or n <= 0:
             return
         with self.lock:
@@ -80,7 +108,7 @@ class BioarenaFeed(threading.Thread):
                 data, addr = self.sock.recvfrom(2048)
             except (BlockingIOError, InterruptedError):
                 return
-            except OSError:  # ICMP port unreachable etc.: bioarena not listening right now
+            except OSError:  # ICMP port unreachable etc.: receiver not listening right now
                 return
             if addr[0] != self.dest[0]:
                 continue
@@ -102,10 +130,10 @@ class BioarenaFeed(threading.Thread):
                     self._send()
 
     def status(self) -> dict:
-        """What the FMS gets: our counts, the link state, and bioarena's latest reply."""
+        """What the FMS gets: our counts, the link state, and the receiver's latest reply."""
         age = time.time() - self.reply_at if self.reply else None
         with self.lock:
             counts = dict(self.counts)
-        return {"dest": f"{self.dest[0]}:{self.dest[1]}", "session": self.session, "sent": counts,
-                "error": self.error, "reply": self.reply,
+        return {"name": self.name_, "dest": f"{self.dest[0]}:{self.dest[1]}", "session": self.session,
+                "sent": counts, "error": self.error, "reply": self.reply,
                 "reply_age": None if age is None else round(age, 2)}
