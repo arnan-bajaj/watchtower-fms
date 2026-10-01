@@ -83,7 +83,7 @@ def test_adjust_total_and_playoff():
 
 
 def test_schedule_12_teams():
-    teams = [6059, 8033, 2035, 5026, 8793, 4669, 5940, 9470, 4159, 114, 7419, 3045]
+    teams = list(range(101, 113))
     ms, st = schedule.generate(teams, 9, seed=1, time_budget_s=1.5)
     assert len(ms) == 18
     c = Counter(t for m in ms for t in m["red"] + m["blue"])
@@ -186,7 +186,7 @@ class _Outbox:
 
 def test_tba_takedown_payloads():
     import hashlib
-    cfg = {"event": {"tba_event_key": "2026catstd"},
+    cfg = {"event": {"tba_event_key": "2026test"},
            "tba": {"enabled": True, "auth_id": "id", "auth_secret": "sec", "base_url": "https://x"}}
     ob = _Outbox()
     t = TBA(cfg, ob)
@@ -194,9 +194,9 @@ def test_tba_takedown_payloads():
     t.delete_all_matches()
     t.clear_rankings()
     assert ob.rows == [
-        ("/api/trusted/v1/event/2026catstd/matches/delete", '["qm1"]', "delete:qm1"),
-        ("/api/trusted/v1/event/2026catstd/matches/delete_all", "2026catstd", "delete_all"),
-        ("/api/trusted/v1/event/2026catstd/rankings/update", '{"breakdowns":[],"rankings":[]}', "rankings"),
+        ("/api/trusted/v1/event/2026test/matches/delete", '["qm1"]', "delete:qm1"),
+        ("/api/trusted/v1/event/2026test/matches/delete_all", "2026test", "delete_all"),
+        ("/api/trusted/v1/event/2026test/rankings/update", '{"breakdowns":[],"rankings":[]}', "rankings"),
     ]
     sent = {}
 
@@ -211,7 +211,67 @@ def test_tba_takedown_payloads():
         assert t._send({"path": path, "body": body}) == (True, "", False)
     finally:
         tm.requests.post = orig
-    assert sent["url"] == "https://x/api/trusted/v1/event/2026catstd/matches/delete_all"
-    assert sent["data"] == b"2026catstd"
+    assert sent["url"] == "https://x/api/trusted/v1/event/2026test/matches/delete_all"
+    assert sent["data"] == b"2026test"
     assert sent["h"]["X-TBA-Auth-Sig"] == hashlib.md5(
-        b"sec/api/trusted/v1/event/2026catstd/matches/delete_all2026catstd").hexdigest()
+        b"sec/api/trusted/v1/event/2026test/matches/delete_all2026test").hexdigest()
+
+
+def _example_config(tmp_path):
+    import pathlib
+    import shutil
+    root = pathlib.Path(__file__).resolve().parent.parent / "config"
+    for f in ("event.example.yaml", "vision.example.yaml"):
+        shutil.copy(root / f, tmp_path / f)
+    return tmp_path
+
+
+def test_init_creates_configs_with_random_pins(tmp_path):
+    import yaml
+    from fms import config, init
+    d = _example_config(tmp_path)
+    r = init.init(d)
+    assert sorted(r["created"]) == [str(d / "event.yaml"), str(d / "vision.yaml")]
+    ev = yaml.safe_load((d / "event.yaml").read_text())
+    pins = ev["server"]["pins"]
+    assert pins == r["pins"] and len(set(pins.values())) == 3
+    assert all(len(p) == 6 and p.isdigit() for p in pins.values())
+    assert config.PLACEHOLDER not in (d / "event.yaml").read_text()
+    assert ev["tba"]["enabled"] is False and ev["event"]["teams"] == []
+    cfg = config.load(str(d / "event.yaml"))          # passes validation as generated
+    assert cfg["server"]["pins"]["control"] == pins["control"]
+    before = (d / "event.yaml").read_text()
+    r2 = init.init(d)                                  # never overwrites
+    assert r2["created"] == [] and r2["pins"] is None and (d / "event.yaml").read_text() == before
+
+
+def test_config_refuses_placeholder_and_shared_pins(tmp_path):
+    import shutil
+    import pytest
+    from fms import config
+    d = _example_config(tmp_path)
+    with pytest.raises(SystemExit, match="not found"):
+        config.load(str(d / "event.yaml"))
+    shutil.copy(d / "event.example.yaml", d / "event.yaml")
+    with pytest.raises(SystemExit, match="control, ref, emcee"):
+        config.load(str(d / "event.yaml"))
+    text = (d / "event.example.yaml").read_text()
+    for role, pin in (("control", "1234"), ("ref", "1234"), ("emcee", "5678")):
+        text = text.replace(f'    {role}: "CHANGE-ME"', f'    {role}: "{pin}"')
+    (d / "event.yaml").write_text(text)
+    with pytest.raises(SystemExit, match="must differ"):
+        config.load(str(d / "event.yaml"))
+    (d / "event.yaml").write_text(text.replace('    ref: "1234"', '    ref: "4321"'))
+    with pytest.raises(SystemExit, match="vision_key"):
+        config.load(str(d / "event.yaml"))
+
+
+def test_vision_key_falls_back_to_event_config(tmp_path):
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "vision"))
+    import vconfig
+    (tmp_path / "event.yaml").write_text('server: {vision_key: "abc123"}\n')
+    (tmp_path / "v.yaml").write_text("fms_url: http://x\nhubs: {}\n")
+    assert vconfig.load(tmp_path / "v.yaml")["vision_key"] == "abc123"
+    (tmp_path / "v.yaml").write_text('fms_url: http://x\nvision_key: "own"\n')
+    assert vconfig.load(tmp_path / "v.yaml")["vision_key"] == "own"

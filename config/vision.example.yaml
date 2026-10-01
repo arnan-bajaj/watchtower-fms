@@ -1,5 +1,7 @@
+# Camera configuration. `python -m fms.init` copies this to config/vision.yaml (gitignored),
+# where you set camera sources and the hub ROIs from pick_roi.py.
 fms_url: http://127.0.0.1:8000
-vision_key: "change-me-too"      # must match server.vision_key in event.yaml
+# vision_key: defaults to server.vision_key in config/event.yaml
 record_dir: recordings           # raw hub video per match (for rescoring + training data); "" to disable
 
 defaults:                        # applied to both hubs unless overridden

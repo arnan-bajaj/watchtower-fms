@@ -1,28 +1,31 @@
+# Event configuration. Copy to config/event.yaml with `python -m fms.init` (it also generates
+# random PINs and a vision key), then set the event name, date, teams and TBA key below.
+# config/event.yaml is gitignored, so your PINs and event details stay out of the repo.
 # ---------------------------------------------------------------- event
 event:
-  name: "10th Street Showdown"
-  date: "2026-10-10"            # used for TBA match times
-  utc_offset_hours: -7          # PDT
-  tba_event_key: "2026catstd"             # from TBA once your offseason event is approved
-  teams: [6059, 8033, 2035, 5026, 8793, 4669, 5940, 9470, 4159, 114, 7419, 3045]
+  name: "My Offseason Event"
+  date: ""                      # YYYY-MM-DD; used for TBA match times
+  utc_offset_hours: -7          # your local offset from UTC on event day (PDT = -7, EDT = -4)
+  tba_event_key: ""             # e.g. 2026abcd, once your event exists on TBA
+  teams: []                     # team numbers, e.g. [254, 1678, 971, ...]; at least 12 for alliance selection
   qual_start: "09:30"
-  cycle_min: 10                  # match-to-match time; drives the schedule clock
-  lunch: "12:50"                # schedule preview warns if quals run past this
+  cycle_min: 8                  # match-to-match time; drives the schedule clock
+  lunch: "12:00"                # schedule preview warns if quals run past this
 
 # ---------------------------------------------------------------- server
 server:
   host: 0.0.0.0
   port: 8000
   db: data/fms.sqlite3
-  pins:                         # CHANGE THESE. Anyone on the WiFi can load the pages.
-    control: "6059"
-    ref: "9470"
-    emcee: "4159"
-  vision_key: "change-me-too"   # must match config/vision.yaml
+  pins:                         # `python -m fms.init` fills these with random PINs
+    control: "CHANGE-ME"
+    ref: "CHANGE-ME"
+    emcee: "CHANGE-ME"
+  vision_key: "CHANGE-ME"       # shared with the vision process (it reads this file)
 
 # ---------------------------------------------------------------- TBA trusted API
 tba:
-  enabled: true                # flip on once auth works (test with 1 match first)
+  enabled: false                # turn on once TBA auth works (test with 1 match first)
   # Prefer env vars: export TBA_AUTH_ID=... TBA_AUTH_SECRET=...
   auth_id: ""
   auth_secret: ""

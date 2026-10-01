@@ -4,6 +4,8 @@ import pathlib
 
 import yaml
 
+PLACEHOLDER = "CHANGE-ME"  # value in config/event.example.yaml; fms.init replaces it
+
 DEFAULTS = {
     "event": {
         "name": "FRC Scrimmage",
@@ -19,8 +21,8 @@ DEFAULTS = {
         "host": "0.0.0.0",
         "port": 8000,
         "db": "data/fms.sqlite3",
-        "pins": {"control": "0000", "ref": "1111", "emcee": "2222"},
-        "vision_key": "change-me",
+        "pins": {"control": PLACEHOLDER, "ref": PLACEHOLDER, "emcee": PLACEHOLDER},
+        "vision_key": PLACEHOLDER,
     },
     "tba": {
         "enabled": False,
@@ -55,13 +57,25 @@ def _merge(base, over):
 
 def load(path: str | None = None) -> dict:
     path = path or os.environ.get("FMS_CONFIG", "config/event.yaml")
-    data = {}
     p = pathlib.Path(path)
-    if p.exists():
-        data = yaml.safe_load(p.read_text()) or {}
-    cfg = _merge(DEFAULTS, data)
+    if not p.exists():
+        raise SystemExit(f"{path} not found. Run `python -m fms.init` to create it from config/event.example.yaml.")
+    cfg = _merge(DEFAULTS, yaml.safe_load(p.read_text()) or {})
     # secrets from env win over the file
     cfg["tba"]["auth_id"] = os.environ.get("TBA_AUTH_ID", cfg["tba"]["auth_id"])
     cfg["tba"]["auth_secret"] = os.environ.get("TBA_AUTH_SECRET", cfg["tba"]["auth_secret"])
-    cfg["event"]["teams"] = [int(t) for t in cfg["event"]["teams"]]
+    cfg["event"]["teams"] = [int(t) for t in cfg["event"]["teams"] or []]
+    validate(cfg, path)
     return cfg
+
+
+def validate(cfg, path="config/event.yaml"):
+    """Refuse to serve with placeholder or shared PINs: anyone on the venue WiFi can open the pages."""
+    pins = {r: str(v).strip() for r, v in cfg["server"]["pins"].items()}
+    bad = [r for r, v in pins.items() if not v or v == PLACEHOLDER]
+    if bad:
+        raise SystemExit(f"Set server.pins ({', '.join(bad)}) in {path}, or run `python -m fms.init` on a fresh copy.")
+    if pins["control"] in (pins.get("ref"), pins.get("emcee")):
+        raise SystemExit(f"The control PIN in {path} must differ from the ref and emcee PINs.")
+    if str(cfg["server"]["vision_key"]).strip() in ("", PLACEHOLDER):
+        raise SystemExit(f"Set server.vision_key in {path} to any random string.")
