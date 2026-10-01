@@ -72,6 +72,9 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
 ## Event constraints
 - Everyone (refs, emcee, scorekeeper) is on the venue WiFi; no hotspot. Some networks isolate clients;
   test phone -> Mac reachability at the venue. The Mac's IP changes per network.
+- Count feeds to a field system (e.g. bioarena) normally run over the same venue WiFi, no wired link. The
+  field accepts one source address, so its counter setting must hold the Mac's current IP, and `feeds:`
+  must hold the field's IP; both change per network.
 - With few teams (e.g. 12) and 6-team matches, some back-to-backs are unavoidable; the schedule optimizer
   minimizes them. Schedules need >= 6 teams; live alliance selection needs >= 12 (4 alliances of 3).
 

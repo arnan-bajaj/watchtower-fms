@@ -659,6 +659,7 @@ For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a ma
 - [ ] One phone loads `/ref` (proves there's no client isolation)
 - [ ] Both hub cameras mounted; ROIs re-picked with `pick_roi.py`
 - [ ] Vision pill green in `/control`
+- [ ] If a field system (e.g. bioarena) lights the hubs: its IP in `feeds:`, this Mac's current IP in its counter settings, mode set to Counted, **field** pill green in `/control` and the counter `ONLINE` on the field's panel
 - [ ] `rm data/fms.sqlite3*` done, `tba.enabled: true`, `source tba_secrets.sh`
 - [ ] Server started; schedule generated, saved and sent to TBA
 - [ ] OBS live → **Stream went live now** clicked
@@ -666,7 +667,7 @@ For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a ma
 
 **During**
 - Start on the countdown; fix the offset in review if needed.
-- Emcee locks the auto call every match.
+- Emcee locks the auto call every match (with a fed field, Watchtower locks it from the field's lights).
 - Review climbs and fouls before every commit.
 - Download the results CSV at lunch.
 
