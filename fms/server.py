@@ -199,6 +199,15 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+@app.middleware("http")
+async def revalidate_static(request, call_next):
+    # Pages are no-store; make CSS/JS revalidate too, or phones keep an old style.css after an update.
+    resp = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 def page(name):
     return FileResponse(STATIC / f"{name}.html", headers={"Cache-Control": "no-store"})
 

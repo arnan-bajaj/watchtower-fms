@@ -6,3 +6,4 @@ __pycache__/
 tba_secrets.sh
 config/event.yaml
 config/vision.yaml
+tba_secrets.sh
