@@ -224,6 +224,7 @@ TBA credentials don't go in this file. See [The Blue Alliance](#the-blue-allianc
 | `defaults.weights` | Path to the model, e.g. `models/fuel_best.pt` |
 | `hubs.red/blue.source` | Camera index (`0`, `1`), a video file path, or an `rtsp://` URL |
 | `hubs.red/blue.roi` | `[x, y, w, h]` of the hub opening in full-resolution pixels |
+| `feeds` | Optional list of field systems to stream live counts to (`name`, `host`, `port`, `bind`, `heartbeat_s`). See [Feeding a field system](#feeding-a-field-system-bioarena) |
 
 Any key can be set under `defaults` or overridden per hub.
 
@@ -481,6 +482,47 @@ These recordings are also your best training data, because they come from the re
 - If vision and the FMS run on different machines, both clocks must be NTP-synced.
 
 ---
+
+### Feeding a field system (bioarena)
+
+Some fields light the hubs themselves and decide the auto winner from a live count, for example
+bioarena (Team 841's practice-field FMS) in its **Counted** auto-winner mode. Such a field does not accept
+a winner from outside. It decides at its own deadline (bioarena: 3 s after auto ends, on its own
+clock) from the counts it has *received* by then. So vision acts as the field's counter: every
+count is sent over UDP the moment the camera confirms it, plus a 10 Hz heartbeat:
+
+```json
+{"v":1,"session":"c1f3a9d2","seq":4821,"red":57,"blue":0,"age_ms":38}
+```
+
+`red`/`blue` are cumulative since vision started (the field baselines them per match), and
+`age_ms` is the time from frame capture to send. Point it at any number of fields in
+`config/vision.yaml`:
+
+```yaml
+feeds:
+  - name: bioarena
+    host: 10.0.100.5
+    port: 8411
+    bind: 10.0.100.21     # optional source address
+```
+
+or, without editing config, `python run_vision.py --feed 10.0.100.5:8411` (repeatable).
+
+**Watchtower follows the field's call.** The field's replies (match state and which hub is lit)
+are relayed to the FMS. As soon as a shift shows one hub dark, the FMS sets and locks the auto
+result to match what the lights showed, even if its own count disagreed (logged as `[field]`).
+The scorekeeper can still override it afterwards. `/control` shows a **field** pill (hover for
+each feed's state).
+
+**Networking.** bioarena only accepts the counter from one configured address on the field
+management network (`10.0.100.0/24`, wired). The laptop running vision needs a wired link to the
+field switch with that static address, while phones still reach it on the venue WiFi. Set the
+same address in bioarena → Settings → Hub FUEL Counter, and set the auto-winner mode to Counted.
+
+**Latency.** A ball that reaches the field after its deadline doesn't affect the auto call. The
+`zone` counter counts on the `min_hits`-th frame inside the ROI, so keep `min_hits` low (2) and
+fps high. Check `age_ms` on the field's match panel (bioarena turns it amber above 250 ms).
 
 ## The Blue Alliance
 

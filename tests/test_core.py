@@ -47,6 +47,20 @@ def test_decide():
     assert coin and fi in ("red", "blue")
 
 
+def test_first_inactive_from_hub_lights():
+    f = game.first_inactive_from_hubs
+    assert f("SHIFT1", {"red": False, "blue": True}) == "red"   # odd shift: first_inactive is dark
+    assert f("SHIFT3", {"red": True, "blue": False}) == "blue"
+    assert f("SHIFT2", {"red": False, "blue": True}) == "blue"  # even shift: the other one is dark
+    assert f("SHIFT4", {"red": True, "blue": False}) == "red"
+    assert f("TRANSITION", {"red": True, "blue": False}) is None
+    assert f("AUTO", {"red": True, "blue": True}) is None
+    assert f("SHIFT1", {"red": True, "blue": True}) is None
+    assert f("SHIFT1", {"red": False, "blue": False}) is None
+    assert f("SHIFT1", {"red": False}) is None and f("SHIFT1", None) is None
+    assert f(None, {"red": False, "blue": True}) is None and f("SHIFTX", {}) is None
+
+
 def _match_events():
     return [(1005, "red", 10), (1025, "red", 5), (1040, "red", 7), (1070, "red", 40),
             (1120, "red", 30), (1140, "red", 20),

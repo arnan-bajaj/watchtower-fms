@@ -51,7 +51,7 @@
 </head><body>
 <div class="bar">
   <span><span class="conn"></span> <b id="evname">FMS</b> <span id="curkey" class="small"></span></span>
-  <span class="row small"><span id="vpill" class="pill">vision</span><span id="tpill" class="pill">TBA</span></span>
+  <span class="row small"><span id="vpill" class="pill">vision</span><span id="tpill" class="pill">TBA</span><span id="fpill" class="pill" hidden>field</span></span>
 </div>
 <main class="wrap" id="app" hidden>
   <div class="tabs" id="tabs">
@@ -581,6 +581,11 @@ function renderPills(s) {
   const ok = v.length && v.every((x) => x.age <= 3 && !x.error);
   $("#vpill").className = "pill " + (ok ? "ok" : "bad");
   $("#vpill").textContent = ok ? "vision ok" : "vision down";
+  const fd = s.feeds || [], fup = fd.filter((f) => f.link).length;
+  $("#fpill").hidden = !fd.length;
+  $("#fpill").className = "pill " + (fup === fd.length ? "ok" : "bad");
+  $("#fpill").textContent = fd.length === 1 ? (fup ? "field ok" : "field down") : `field ${fup}/${fd.length}`;
+  $("#fpill").title = fd.map((f) => `${f.name} ${f.dest}: ${f.link ? f.shift || f.match_state || "linked" : f.error || "no reply"}`).join("\n");
   const t = s.tba;
   $("#tpill").className = "pill " + (!t.configured ? "" : (t.pending || t.dead) ? "bad" : "ok");
   $("#tpill").textContent = !t.configured ? "TBA off" : `TBA ${t.pending || 0} queued${t.dead ? ", " + t.dead + " failed" : ""}`;

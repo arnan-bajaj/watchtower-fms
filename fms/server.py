@@ -32,6 +32,9 @@ store.set("secret", SECRET)
 
 clients: set[WebSocket] = set()
 vision_status: dict = {}
+feed_status: list = []        # live count feeds to field systems, relayed by vision (count_feed.py)
+feed_seen = 0.0
+_field_applied: set = set()   # (match key, auto_start) whose auto result came from a field's lights
 _dirty = threading.Event()  # set from any thread; tick loop broadcasts
 
 
@@ -127,6 +130,7 @@ def build_state():
         "alliances": store.get("alliances"),
         "champion": bracket.champion({x["key"]: x for x in ms}),
         "vision": {h: {**v, "age": round(time.time() - v["seen"], 1)} for h, v in vision_status.items()},
+        "feeds": feeds_public(),
         "tba": {"configured": tba.configured, "key": tba.key, **store.outbox_stats()},
         "webcast": store.get("webcast") or {},
         "selection": selection_public(),
@@ -158,6 +162,32 @@ async def broadcast():
         clients.discard(ws)
 
 
+def _feed_link(f):
+    return time.time() - feed_seen <= 2 and f.get("reply_age") is not None and f["reply_age"] <= 1
+
+
+def field_first_inactive():
+    """The auto result as a fed field's hub lights show it (first feed with a fresh answer)."""
+    for f in feed_status:
+        r = f.get("reply") or {}
+        fi = _feed_link(f) and game.first_inactive_from_hubs(r.get("shift"), r.get("hub_active"))
+        if fi:
+            return fi
+    return None
+
+
+def feeds_public():
+    out = []
+    for f in feed_status:
+        r = f.get("reply") or {}
+        out.append({"name": f.get("name"), "dest": f.get("dest"), "error": f.get("error"),
+                    "sent": f.get("sent"), "link": _feed_link(f),
+                    "match_state": r.get("match_state"), "shift": r.get("shift"),
+                    "first_inactive": game.first_inactive_from_hubs(r.get("shift"), r.get("hub_active"))
+                    if _feed_link(f) else None})
+    return out
+
+
 async def tick():
     last = 0.0
     while True:
@@ -171,6 +201,18 @@ async def tick():
                 _, bd = compute(m)
                 fi, coin = game.decide_first_inactive(bd["red"]["auto_fuel"], bd["blue"]["auto_fuel"])
                 store.update_match(m["key"], first_inactive=fi, fi_coin=int(coin))
+                push = True
+            # With a fed field (e.g. bioarena), its hub lights ARE the auto result: adopt them
+            # once per match, as soon as a shift shows them. Later manual overrides still stick.
+            fi = field_first_inactive() if now >= ps[0].end else None
+            if fi and (m["key"], m["auto_start"]) not in _field_applied:
+                _field_applied.add((m["key"], m["auto_start"]))
+                m = store.match(m["key"])
+                if fi != m.get("first_inactive"):
+                    print(f"[field] {m['key']}: field lights show {fi} first inactive "
+                          f"(Watchtower had {m.get('first_inactive')})")
+                    store.update_match(m["key"], first_inactive=fi, fi_coin=0)
+                store.update_match(m["key"], fi_locked=1)
                 push = True
             if now >= ps[-1].end + GRACE:
                 store.update_match(m["key"], status="review")
@@ -811,6 +853,7 @@ def _vision_auth(key):
 
 @app.post("/api/vision/events")
 def vision_events(body: dict = Body(...), x_vision_key: str = Header(None)):
+    global feed_seen
     _vision_auth(x_vision_key)
     rows = []
     for hub, evs in (body.get("events") or {}).items():
@@ -818,7 +861,11 @@ def vision_events(body: dict = Body(...), x_vision_key: str = Header(None)):
             rows += [(t, hub, n) for t, n in evs if n]
     if rows:
         store.add_fuel(rows, body.get("source", "live"))
-    for hub, st in (body.get("status") or {}).items():
+    status = dict(body.get("status") or {})
+    if isinstance(status.get("feeds"), list):
+        feed_status[:] = [f for f in status.pop("feeds") if isinstance(f, dict)]
+        feed_seen = time.time()
+    for hub, st in status.items():
         vision_status[hub] = {**st, "seen": time.time()}
     if rows:
         mark_dirty()
