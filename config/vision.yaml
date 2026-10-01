@@ -1,0 +1,29 @@
+fms_url: http://127.0.0.1:8000
+vision_key: "change-me-too"      # must match server.vision_key in event.yaml
+record_dir: recordings           # raw hub video per match (for rescoring + training data); "" to disable
+
+defaults:                        # applied to both hubs unless overridden
+  counter: zone                  # zone | linecross | mock | "your_module:YourClass"
+  weights: models/fuel_best.pt   # drop new weights here, restart vision; FMS never needs to restart
+  conf: 0.25
+  imgsz: 640
+  crop_pad: 60
+  max_px: 60
+  min_hits: 2
+  max_missed: 3
+  min_dy: 0
+  width: 1920
+  height: 1080
+  fps: 30
+
+hubs:
+  red:
+    source: 0                    # camera index, video file path, or rtsp:// URL
+    roi: [800, 300, 320, 180]    # from pick_roi.py
+  blue:
+    source: 1
+    roi: [800, 300, 320, 180]
+
+# Rehearsal without a model or cameras:
+#   defaults: {counter: mock, rate_per_s: 3}
+#   hubs: {red: {source: none}, blue: {source: none}}

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest/ref.json">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/style.css">
+<title>FMS Ref</title>
+<style>
+  .fouls { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+  .side { border-radius: var(--r-lg); padding: .75rem; }
+  .side.red { background: var(--red-soft); } .side.blue { background: var(--blue-soft); }
+  .side h3 { margin-bottom: .5rem; }
+  .fbtn { width: 100%; min-height: 5.2rem; margin-bottom: .6rem; font-size: 1.15rem; line-height: 1.2; }
+  .fbtn small { display: block; font-weight: 500; opacity: .85; font-size: .8rem; }
+  .tag { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .4rem; }
+  .tag button { flex: 1; min-height: 2.8rem; }
+  li { margin-bottom: .4rem; }
+  ul { padding-left: 1.1rem; margin: 0; }
+</style>
+</head><body>
+<div class="bar"><span><span class="conn"></span> <b id="mk">–</b></span><span class="num" id="clk">–:––</span><span id="me" class="small"></span></div>
+<main class="wrap" id="app" hidden>
+  <div class="panel row" style="justify-content:space-between"><span id="ph" class="phase">–</span><span id="st" class="pill">–</span></div>
+  <div class="fouls">
+    <div class="side red"><h3 class="tred">Red fouled</h3><div class="teams small" id="rt"></div>
+      <button class="fbtn red" data-a="red" data-k="minor">Minor<small>+<span class="pmin"></span> to Blue</small></button>
+      <button class="fbtn red" data-a="red" data-k="major">Major<small>+<span class="pmaj"></span> to Blue</small></button>
+    </div>
+    <div class="side blue"><h3 class="tblue">Blue fouled</h3><div class="teams small" id="bt"></div>
+      <button class="fbtn blue" data-a="blue" data-k="minor">Minor<small>+<span class="pmin"></span> to Red</small></button>
+      <button class="fbtn blue" data-a="blue" data-k="major">Major<small>+<span class="pmaj"></span> to Red</small></button>
+    </div>
+  </div>
+  <div class="panel" id="tagbox" hidden style="margin-top:1rem"></div>
+  <div class="panel" style="margin-top:1rem"><h2>Fouls this match</h2><ul id="list"></ul></div>
+</main>
+<script src="/static/common.js"></script>
+<script>
+const { $, esc } = FMS;
+let lastFoul = null;
+FMS.gate("ref", "Your name (e.g. Head ref)").then(() => {
+  $("#app").hidden = false;
+  $("#me").textContent = localStorage.getItem("fms_name") || "";
+  FMS.connect();
+});
+document.querySelectorAll(".fbtn").forEach((b) => b.onclick = async () => {
+  const cur = FMS.state && FMS.state.current;
+  if (!cur) return FMS.toast("No match selected", true);
+  if (navigator.vibrate) navigator.vibrate(40);
+  try {
+    const j = await FMS.api("/api/fouls", { key: cur.key, committed_by: b.dataset.a, kind: b.dataset.k,
+                                            ref: localStorage.getItem("fms_name") });
+    lastFoul = { id: j.id, a: b.dataset.a, k: b.dataset.k, teams: cur[b.dataset.a] };
+    showTag();
+    FMS.toast(`${b.dataset.a} ${b.dataset.k} logged`);
+  } catch (e) { FMS.toast(e.message, true); }
+});
+function showTag() {
+  const box = $("#tagbox");
+  if (!lastFoul) { box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = `<div>Tag a team on that ${esc(lastFoul.a)} ${esc(lastFoul.k)}? (optional)</div>
+    <div class="tag">${lastFoul.teams.map((t) => `<button data-t="${t}">${t}</button>`).join("")}
+    <button class="ghost" data-t="">Skip</button></div>`;
+  box.querySelectorAll("button").forEach((b) => b.onclick = async () => {
+    if (b.dataset.t) { try { await FMS.api(`/api/fouls/${lastFoul.id}`, { team: +b.dataset.t }); } catch (e) { FMS.toast(e.message, true); } }
+    lastFoul = null; showTag();
+  });
+}
+FMS.on((s) => {
+  const cur = s.current, g = s.game;
+  document.querySelectorAll(".pmin").forEach((e) => e.textContent = g.fouls.minor);
+  document.querySelectorAll(".pmaj").forEach((e) => e.textContent = g.fouls.major);
+  $("#mk").textContent = cur ? cur.key : "–";
+  $("#st").textContent = cur ? cur.status : "–";
+  $("#rt").textContent = cur ? cur.red.join(" · ") : "";
+  $("#bt").textContent = cur ? cur.blue.join(" · ") : "";
+  const locked = !cur || cur.status === "committed";
+  document.querySelectorAll(".fbtn").forEach((b) => b.disabled = locked);
+  const me = localStorage.getItem("fms_name");
+  const t0 = cur && cur.periods ? cur.periods[0].start : null;
+  $("#list").innerHTML = !cur || !cur.fouls.length ? `<li class="muted">None yet</li>` :
+    cur.fouls.map((f) => `<li><b class="t${f.committed_by}">${f.committed_by} ${f.kind}</b>
+      ${f.team ? "· " + f.team : ""} <span class="muted small">${t0 ? FMS.mmss(f.t - t0) : ""} ${esc(f.ref)}</span>
+      ${f.ref === me && !locked ? `<button class="ghost small" data-del="${f.id}">Remove</button>` : ""}</li>`).join("");
+  $("#list").querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
+    try { await FMS.api(`/api/fouls/${b.dataset.del}`, { delete: true }); } catch (e) { FMS.toast(e.message, true); }
+  });
+});
+everyFrame(() => {
+  const cur = FMS.state && FMS.state.current, p = FMS.phase(cur);
+  $("#clk").textContent = FMS.mmss(p.clock);
+  $("#ph").textContent = p.label + (p.remaining != null && p.name !== "pre" ? ` · ${FMS.mmss(p.remaining)} left` : "");
+});
+</script>
+</body></html>

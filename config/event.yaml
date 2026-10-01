@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------- event
+event:
+  name: "Piedmont Makers Scrimmage"
+  date: "2026-10-10"            # used for TBA match times
+  utc_offset_hours: -7          # PDT
+  tba_event_key: ""             # from TBA once your offseason event is approved
+  teams: [6059, 8033, 2035, 5026, 8793, 4669, 5940, 9470, 4159, 114, 7419, 3045]
+  qual_start: "09:30"
+  cycle_min: 8                  # match-to-match time; drives the schedule clock
+  lunch: "12:00"                # schedule preview warns if quals run past this
+
+# ---------------------------------------------------------------- server
+server:
+  host: 0.0.0.0
+  port: 8000
+  db: data/fms.sqlite3
+  pins:                         # CHANGE THESE. Anyone on the WiFi can load the pages.
+    control: "6059"
+    ref: "4821"
+    emcee: "7390"
+  vision_key: "change-me-too"   # must match config/vision.yaml
+
+# ---------------------------------------------------------------- TBA trusted API
+tba:
+  enabled: false                # flip on once auth works (test with 1 match first)
+  # Prefer env vars: export TBA_AUTH_ID=... TBA_AUTH_SECRET=...
+  auth_id: ""
+  auth_secret: ""
+  send_score_breakdown: false   # TBA validates breakdown keys per season; totals-only is safe
+  retry_s: 15
+
+# ---------------------------------------------------------------- REBUILT rules
+# VERIFY every number against the 2026 Game Manual (section 6) before the event.
+# Sources disagree on teleop Level 1 (10 vs 15). Everything scores from these values.
+game:
+  auto_s: 20
+  auto_teleop_gap_s: 3          # pause between auto and teleop if nobody clicks "Teleop started"
+  transition_s: 10
+  shift_s: 25
+  n_shifts: 4
+  endgame_s: 30
+  score_grace_s: 3              # fuel landing this long after a hub deactivates still counts
+  close_auto_margin: 5          # emcee/control get a "confirm" warning if auto is this close
+  fuel_points: 1
+  auto_tower_l1: 15
+  tower: {L0: 0, L1: 10, L2: 20, L3: 30}
+  fouls: {minor: 5, major: 15}
+  rp:
+    win: 3
+    tie: 1
+    energized_fuel: 100
+    supercharged_fuel: 360
+    traversal_tower_points: 50

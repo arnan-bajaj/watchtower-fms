@@ -1,0 +1,5 @@
+data/
+vision/recordings/
+vision/models/*.pt
+__pycache__/
+.venv/
