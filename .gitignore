@@ -4,3 +4,5 @@ vision/models/*.pt
 __pycache__/
 .venv/
 tba_secrets.sh
+config/event.yaml
+config/vision.yaml

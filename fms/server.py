@@ -265,6 +265,8 @@ def schedule_preview(body: dict = Body(...), x_fms_token: str = Header(None)):
     start = body.get("start") or CFG["event"]["qual_start"]
     cycle = float(body.get("cycle_min") or CFG["event"]["cycle_min"])
     seed = body.get("seed")
+    if len(CFG["event"]["teams"]) < 6:
+        raise HTTPException(400, "Add at least 6 team numbers to event.teams in config/event.yaml, then restart the server")
     matches, st = schedule.generate(CFG["event"]["teams"], mpt, seed=seed)
     out = _preview(matches, start, cycle)
     out["stats"] = st
