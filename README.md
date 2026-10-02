@@ -485,6 +485,13 @@ These recordings are also your best training data, because they come from the re
 
 ### Feeding a field system (bioarena)
 
+> **Status:** the receiving side is not in bioarena yet. As of bioarena `main` (2026-09-26) there
+> is no Hub FUEL Counter receiver and no Counted mode: bioarena picks the auto winner (random, or
+> forced red/blue) at the *start* of auto and can't change it mid-match. Watchtower's side
+> implements bioarena's draft "Hub FUEL Counter Feed" spec (protocol v1) and is tested against a
+> fake receiver; it starts working once bioarena ships that spec. Until then, with bioarena
+> lighting the hubs, the emcee locks Watchtower's auto result to whatever the lights showed.
+
 Some fields light the hubs themselves and decide the auto winner from a live count, for example
 bioarena (Team 841's practice-field FMS) in its **Counted** auto-winner mode. Such a field does not accept
 a winner from outside. It decides at its own deadline (bioarena: 3 s after auto ends, on its own
@@ -514,7 +521,7 @@ result to match what the lights showed, even if its own count disagreed (logged 
 The scorekeeper can still override it afterwards. `/control` shows a **field** pill (hover for
 each feed's state).
 
-#### Setting up a bioarena field
+#### Setting up a bioarena field (once it has the counter feed)
 
 Any network works as long as the vision laptop can reach bioarena's IP; usually that's the
 venue WiFi, with no wired link needed. (These steps follow bioarena's feed spec; menu names may
