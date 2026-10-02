@@ -514,14 +514,46 @@ result to match what the lights showed, even if its own count disagreed (logged 
 The scorekeeper can still override it afterwards. `/control` shows a **field** pill (hover for
 each feed's state).
 
-**Networking.** Any network works as long as the vision laptop can reach the field's IP
-(often the venue WiFi; check with `ping`). bioarena only accepts counts from **one** configured
-source address, so in bioarena → Settings → Hub FUEL Counter enter the vision laptop's IP *on
-that network* (`ipconfig getifaddr en0` for WiFi), and set the auto-winner mode to Counted.
-`host` in `feeds:` is bioarena's IP on that same network. The Mac's IP changes per network and
-can change if its DHCP lease does, so re-check both before matches (a DHCP reservation helps).
-If the WiFi isolates clients, phones and the feed both fail; test it at the venue. WiFi adds a
-few ms usually, with occasional spikes; bioarena's `OFFLINE` badge and latency figure show it.
+#### Setting up a bioarena field
+
+Any network works as long as the vision laptop can reach bioarena's IP; usually that's the
+venue WiFi, with no wired link needed. (These steps follow bioarena's feed spec; menu names may
+differ slightly on your version.)
+
+**In bioarena** (whoever runs it):
+1. **Settings → Hub FUEL Counter:** set the counter address to the vision laptop's IP on that
+   network (`ipconfig getifaddr en0` on a Mac's WiFi) and the UDP port (default `8411`). Save.
+   bioarena accepts counts from that one address only; blank means no counter.
+2. **Match panel → AUTO winner:** choose **Counted**. Random/Red/Blue ignore the counts. The
+   setting persists across bioarena restarts.
+3. Note bioarena's IP on that network for `host:` below.
+
+**In `config/vision.yaml`**, then restart vision:
+```yaml
+feeds:
+  name: bioarena
+  host: 192.168.1.50      # bioarena's IP from step 3
+  port: 8411              # must match bioarena's port
+```
+Leave out `bind:` unless the laptop is on several networks at once. It must be one of the
+laptop's own addresses, or vision won't start (`Can't assign requested address`).
+
+**Check before matches count:**
+- bioarena's match panel shows the counter **ONLINE**; the **field** pill on `/control` is green.
+- Run a practice match: the alliance with more auto fuel goes dark in Shift 1, and Watchtower's
+  locked auto result matches the lights.
+
+**If it won't connect**, most likely first: the laptop's IP in bioarena is stale (it changes per
+network, and can change when the DHCP lease renews; a DHCP reservation helps); `host:` is wrong;
+the ports don't match; or the WiFi isolates clients (then phones can't load `/ref` either).
+
+**If vision goes down mid-event:** in Counted mode bioarena won't start a match while the counter
+is offline. Switch bioarena's auto winner to Random (or have its operator pick a side) to keep
+running; Watchtower still follows the hub lights it sees, and the emcee/scorekeeper can set the
+auto result by hand.
+
+WiFi usually adds a few ms with occasional spikes; bioarena's `OFFLINE` badge and latency figure
+show it.
 
 **Latency.** A ball that reaches the field after its deadline doesn't affect the auto call. The
 `zone` counter counts on the `min_hits`-th frame inside the ROI, so keep `min_hits` low (2) and
