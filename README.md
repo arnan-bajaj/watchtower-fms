@@ -549,8 +549,8 @@ the ports don't match; or the WiFi isolates clients (then phones can't load `/re
 
 **If vision goes down mid-event:** in Counted mode bioarena won't start a match while the counter
 is offline. Switch bioarena's auto winner to Random (or have its operator pick a side) to keep
-running; Watchtower still follows the hub lights it sees, and the emcee/scorekeeper can set the
-auto result by hand.
+running. Watchtower can't see bioarena's lights without vision (the replies come through it), so
+the emcee or scorekeeper sets Watchtower's auto result by hand to match the lights.
 
 WiFi usually adds a few ms with occasional spikes; bioarena's `OFFLINE` badge and latency figure
 show it.
