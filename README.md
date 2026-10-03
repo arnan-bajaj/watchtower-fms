@@ -142,7 +142,7 @@ source .venv/bin/activate
 pip install -r requirements.txt -r vision/requirements.txt
 chmod +x run.sh
 python -m fms.init                    # creates config/event.yaml + config/vision.yaml, prints PINs
-python -m pytest -q                   # expect: 16 passed
+python -m pytest -q                   # expect: 26 passed
 python -c "import torch, cv2, ultralytics; print(torch.__version__, torch.backends.mps.is_available())"
 ```
 
@@ -443,6 +443,7 @@ Drag a box over the hub opening and press Enter. It prints `roi: [x, y, w, h]` i
 | `zone` (default) | Runs the model on a crop around the ROI; links detections frame-to-frame with a small nearest-neighbor tracker; counts each short track once | Wide or noisy views. Built because ByteTrack fragmented badly on broadcast footage |
 | `linecross` | Ultralytics ByteTrack; counts IDs crossing a line inside the ROI moving down | Close cameras with clean, continuous ball tracks |
 | `mock` | Random fuel at `rate_per_s`, no model or camera (`source: none`) | Rehearsals, UI testing |
+| `"tbavid.fms_counter:ColourCounter"` / `"tbavid.fms_counter:ComboCounter"` | External, from [YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model): yellow blobs crossing down into a hub outline; `ComboCounter` blends in a fuel model | A camera on the hub mouth; see [External hub counter](#external-hub-counter-yolov26-frc-model) |
 | `"pkg.module:Class"` | Your own | Anything else |
 
 `zone` tuning keys:
@@ -474,6 +475,33 @@ python rescore.py --match qm7 --hub red --video recordings/qm7_<id>_red.mp4 --we
 - Without it, that hub's fuel for the match is replaced in the FMS, on the same clock. The match must be in review, so **Reopen** it first if it's committed.
 
 These recordings are also your best training data, because they come from the real camera mount.
+
+### External hub counter (YOLOv26-FRC-Model)
+
+[YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model) ships a counter plugin for this vision process. It is not part of this repo; clone it next to this one and put it on the Python path.
+
+- `tbavid.fms_counter:ColourCounter` counts yellow blobs crossing down into a hub outline. It needs no model or GPU. On four scored 2026 Einstein broadcasts it measured 10.1% mean error against the official counts at 60 fps, with the auto winner right on all four.
+- `tbavid.fms_counter:ComboCounter` blends that with a fuel model (`model:`). On the same four it measured 6.8%, but three were in the model's training set; expect 7–9% on a new match. It needs Apple Silicon or a GPU. The model runs on its own thread; if it falls behind it turns itself off and the hub counts by colour.
+- Neither has been checked against a hand-counted practice hub yet. Do the 20-ball test before trusting it.
+
+```yaml
+# config/vision.yaml
+defaults:
+  counter: "tbavid.fms_counter:ComboCounter"   # or ColourCounter (no model)
+  model: /path/to/fuel_relabel.pt
+  fps: 60                     # the camera's real rate: it times the model, and 60 counts better than 30
+hubs:
+  red:
+    source: 0
+    setup: /path/to/cams.json # outlines + ball size drawn in its `run.py hubgui`
+    camera: red-cam
+```
+
+```bash
+PYTHONPATH=/path/to/YOLOv26-FRC-Model ./run.sh            # or before python run_vision.py / rescore.py
+```
+
+Its `deploy/FRC_FMS.md` has the full steps: drawing the hubs, measuring a ball, the pre-match checks. `rescore.py` works with it unchanged. On a recording the plugin waits for the model on every frame, so a recount skips nothing.
 
 ### Camera tips
 
