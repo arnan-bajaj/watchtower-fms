@@ -13,6 +13,9 @@ Tuning knobs (config/vision.yaml):
   min_hits    frames a track must be seen before it counts (2 kills single-frame noise)
   max_missed  frames a track may vanish and still be the same ball
   min_dy      require this much downward travel before counting (0 = off)
+  classes     model class ids to count (default: the class named "fuel" if the model has
+              one, else every class). A model that also detects robots would otherwise
+              count every robot box in the ROI as fuel.
 """
 from __future__ import annotations
 
@@ -23,10 +26,23 @@ import cv2
 from .base import Counter, crop_box, load_yolo
 
 
+def fuel_classes(names, cfg):
+    """Class ids to keep: cfg `classes` if set, else the ids named "fuel", else None (all).
+
+    `names` is the model's {id: name} map. Returning None keeps the old behaviour for a
+    single-class model whose class is not called "fuel".
+    """
+    if cfg.get("classes") is not None:
+        return [int(c) for c in cfg["classes"]]
+    fuel = [int(i) for i, n in dict(names or {}).items() if str(n).lower() == "fuel"]
+    return fuel or None
+
+
 class ZoneCounter(Counter):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.model, self.device = load_yolo(cfg["weights"])
+        self.classes = fuel_classes(getattr(self.model, "names", {}), cfg)
         self.conf = cfg.get("conf", 0.25)
         self.imgsz = cfg.get("imgsz", 640)
         self.pad = cfg.get("crop_pad", 60)
@@ -41,7 +57,7 @@ class ZoneCounter(Counter):
     def _detect(self, frame):
         crop, (ox, oy) = crop_box(frame, self.roi, self.pad)
         r = self.model.predict(crop, conf=self.conf, imgsz=self.imgsz, device=self.device,
-                               verbose=False)[0]
+                               classes=self.classes, verbose=False)[0]
         x, y, w, h = self.roi
         out = []
         for cx, cy, bw, bh in r.boxes.xywh.tolist():
