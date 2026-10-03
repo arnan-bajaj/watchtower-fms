@@ -59,7 +59,9 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
 ## Vision
 - Counter plugins: `zone` (default; short nearest-neighbor tracks inside the hub ROI, built because ByteTrack
   fragmented badly on wide shots; counts only the model class named `fuel`, or `classes:`), `linecross`, `mock`, or custom `"module:Class"` with
-  `process(frame, t) -> int` (see `vision/counters/base.py`).
+  `process(frame, t) -> int` (see `vision/counters/base.py`). An external one, `tbavid.fms_counter:ColourCounter`
+  / `ComboCounter` from YOLOv26-FRC-Model, loads through that path (needs it on `PYTHONPATH`); README
+  "External hub counter". Do not copy it into this repo; it is maintained there.
 - Model weights go in `vision/models/` (gitignored). Restart only the vision process to swap models.
 - Vision records raw hub video + per-frame timestamps per match; `vision/rescore.py` recounts a match offline
   and replaces that hub's events in the FMS on the same clock.
