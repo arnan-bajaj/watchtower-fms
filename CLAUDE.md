@@ -58,7 +58,7 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
 
 ## Vision
 - Counter plugins: `zone` (default; short nearest-neighbor tracks inside the hub ROI, built because ByteTrack
-  fragmented badly on wide shots), `linecross`, `mock`, or custom `"module:Class"` with
+  fragmented badly on wide shots; counts only the model class named `fuel`, or `classes:`), `linecross`, `mock`, or custom `"module:Class"` with
   `process(frame, t) -> int` (see `vision/counters/base.py`).
 - Model weights go in `vision/models/` (gitignored). Restart only the vision process to swap models.
 - Vision records raw hub video + per-frame timestamps per match; `vision/rescore.py` recounts a match offline

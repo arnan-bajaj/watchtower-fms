@@ -456,6 +456,7 @@ Drag a box over the hub opening and press Enter. It prints `roi: [x, y, w, h]` i
 | `min_hits` | 2 | Frames a track must be seen before it counts (kills one-frame noise) |
 | `max_missed` | 3 | Frames a ball may vanish and keep its identity |
 | `min_dy` | 0 | Required downward travel before counting (0 = off) |
+| `classes` | the class named `fuel` | Model class ids to count. With a model that also detects robots (`fuel, robot_blue, robot_red`), only fuel is counted; a model with one class not named `fuel` counts everything |
 
 ### Recording and rescoring
 
