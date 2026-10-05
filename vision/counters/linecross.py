@@ -12,6 +12,12 @@ from .base import Counter, load_yolo
 
 
 class LineCrossCounter(Counter):
+    NAME = "linecross"
+    DESCRIPTION = "ByteTrack IDs crossing a line in the ROI, moving down"
+    NEEDS = ("model",)
+    OPTIONS = {"line_y": "full-frame y of the line (ROI middle)", "conf": "detection confidence (0.25)",
+               "imgsz": "inference size (960)", "tracker": "Ultralytics tracker yaml (bytetrack.yaml)"}
+
     def __init__(self, cfg):
         super().__init__(cfg)
         self.model, self.device = load_yolo(cfg["weights"])

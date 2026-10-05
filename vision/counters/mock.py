@@ -9,6 +9,10 @@ from .base import Counter
 
 
 class MockCounter(Counter):
+    NAME = "mock"
+    DESCRIPTION = "Random fuel for rehearsals; no model or camera (source: none)"
+    OPTIONS = {"rate_per_s": "average fuel per second (3.0)"}
+
     def __init__(self, cfg):
         super().__init__(cfg)
         self.rate = float(cfg.get("rate_per_s", 3.0))

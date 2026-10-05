@@ -142,7 +142,7 @@ source .venv/bin/activate
 pip install -r requirements.txt -r vision/requirements.txt
 chmod +x run.sh
 python -m fms.init                    # creates config/event.yaml + config/vision.yaml, prints PINs
-python -m pytest -q                   # expect: 26 passed
+python -m pytest -q                   # expect: 37 passed
 python -c "import torch, cv2, ultralytics; print(torch.__version__, torch.backends.mps.is_available())"
 ```
 
@@ -419,6 +419,41 @@ class MyCounter(Counter):            # vision/counters/base.py
 
 Vision timestamps each count and batches it to the FMS 4× per second. If the FMS is unreachable, events buffer and re-send.
 
+### Counter plugins
+
+`counter:` takes a built-in name (`zone`, `linecross`, `mock`), the short name of a plugin, or a full `"module:Class"`. To see what's available:
+
+```bash
+cd vision && python run_vision.py --list-counters
+```
+
+**Using someone else's counter.** Either install it into this venv (`pip install -e path/to/their/repo`), or add its folder to `plugin_paths:` in `config/vision.yaml` (relative to that file, no install, no `PYTHONPATH`):
+
+```yaml
+plugin_paths: [../../their-repo]
+defaults:
+  counter: their-counter        # the short name it registers
+```
+
+**Writing one.** Only `__init__(cfg)` and `process(frame, t) -> int` are required. Optional, and read with defaults so older plugins keep working:
+
+| Attribute | What it's for |
+|---|---|
+| `PLUGIN_API = 1` | The contract version. A plugin newer than this vision is refused with a message. |
+| `NAME`, `DESCRIPTION`, `NEEDS` | Shown by `--list-counters` (e.g. `NEEDS = ("model", "gpu")`). |
+| `OPTIONS = {"key": "help"}` | Its config keys. A misspelt key (`confidence` for `conf`) is then flagged at startup. |
+| `status() -> {"detail", "warning", "error"}` | Sent with each second's report and shown under the hub in `/control` → Setup → Vision. |
+| `close()` | Called once when vision stops. |
+
+To give it a short name, register it in your package's `pyproject.toml`:
+
+```toml
+[project.entry-points."watchtower.counters"]
+my-counter = "my_package.module:MyCounter"
+```
+
+A plugin that fails to load now shows its error in `/control` instead of the hub just reading "never connected".
+
 ### Swap in a model
 
 1. Copy weights to `vision/models/` (e.g. `fuel_best.pt`; `.pt` files are gitignored, so share them separately).
@@ -478,16 +513,18 @@ These recordings are also your best training data, because they come from the re
 
 ### External hub counter (YOLOv26-FRC-Model)
 
-[YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model) ships a counter plugin for this vision process. It is not part of this repo; clone it next to this one and put it on the Python path.
+[YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model) ships two counter plugins for this vision process, `tbavid-colour` and `tbavid-combo`. They are not part of this repo: clone it next to this one, then either `pip install -e ../YOLOv26-FRC-Model` in this venv or add it to `plugin_paths:` (see [Counter plugins](#counter-plugins)).
 
-- `tbavid.fms_counter:ColourCounter` counts yellow blobs crossing down into a hub outline. It needs no model or GPU. On four scored 2026 Einstein broadcasts it measured 10.1% mean error against the official counts at 60 fps, with the auto winner right on all four.
-- `tbavid.fms_counter:ComboCounter` blends that with a fuel model (`model:`). On the same four it measured 6.8%, but three were in the model's training set; expect 7–9% on a new match. It needs Apple Silicon or a GPU. The model runs on its own thread; if it falls behind it turns itself off and the hub counts by colour.
+- `tbavid-colour` counts yellow blobs crossing down into a hub outline. It needs no model or GPU. On four scored 2026 Einstein broadcasts it measured 10.1% mean error against the official counts at 60 fps, with the auto winner right on all four.
+- `tbavid-combo` blends that with a fuel model (`model:`). On the same four it measured 6.8%, but three were in the model's training set; expect 7–9% on a new match. It needs Apple Silicon or a GPU. The model runs on its own thread; if it falls behind it turns itself off and the hub counts by colour.
+- Draw each outline with its top edge 3–4 ball widths above the hood, where a falling ball is still in view. On the 2026 Central Valley broadcast an outline on the hood rim gave 38.9% error and the raised one 6.4%. On that broadcast the combo was 34.5%, worse than colour alone, so check it on your own camera.
 - Neither has been checked against a hand-counted practice hub yet. Do the 20-ball test before trusting it.
 
 ```yaml
 # config/vision.yaml
+plugin_paths: [../../YOLOv26-FRC-Model]   # or pip install -e it and drop this line
 defaults:
-  counter: "tbavid.fms_counter:ComboCounter"   # or ColourCounter (no model)
+  counter: tbavid-colour      # or tbavid-combo (needs model:)
   model: /path/to/fuel_relabel.pt
   fps: 60                     # the camera's real rate: it times the model, and 60 counts better than 30
 hubs:
@@ -497,9 +534,7 @@ hubs:
     camera: red-cam
 ```
 
-```bash
-PYTHONPATH=/path/to/YOLOv26-FRC-Model ./run.sh            # or before python run_vision.py / rescore.py
-```
+`/control` → Setup → Vision shows each hub's counter with its own status line, e.g. `colour 123`, or `colour 29 · model 25`, or a warning when the model was too slow and turned itself off.
 
 Its `deploy/FRC_FMS.md` has the full steps: drawing the hubs, measuring a ball, the pre-match checks. `rescore.py` works with it unchanged. On a recording the plugin waits for the model on every frame, so a recount skips nothing.
 

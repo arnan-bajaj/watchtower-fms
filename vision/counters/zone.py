@@ -39,6 +39,16 @@ def fuel_classes(names, cfg):
 
 
 class ZoneCounter(Counter):
+    NAME = "zone"
+    DESCRIPTION = "Model detections inside the hub ROI, each short track counted once"
+    NEEDS = ("model",)
+    OPTIONS = {"conf": "detection confidence (0.25)", "imgsz": "inference size (640)",
+               "crop_pad": "px around the ROI (60)", "max_px": "max move per frame (60)",
+               "min_hits": "frames before a track counts (2)",
+               "max_missed": "frames a ball may vanish (3)",
+               "min_dy": "downward travel needed (0)",
+               "classes": "model class ids to count (the class named fuel)"}
+
     def __init__(self, cfg):
         super().__init__(cfg)
         self.model, self.device = load_yolo(cfg["weights"])
