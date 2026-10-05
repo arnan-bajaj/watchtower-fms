@@ -18,10 +18,13 @@ record_dir: recordings           # raw hub video per match (for rescoring + trai
 #     heartbeat_s: 0.1           # optional
 
 defaults:                        # applied to both hubs unless overridden
-  counter: zone                  # zone | linecross | mock | "your_module:YourClass"
-  # External colour counter, see README "External hub counter":
-  #   counter: "tbavid.fms_counter:ColourCounter"   (or ComboCounter + model: path/to/fuel_relabel.pt)
-  #   and per hub: setup: path/to/cams.json, camera: <name>; run with PYTHONPATH=path/to/YOLOv26-FRC-Model
+  counter: zone                  # zone | linecross | mock | a plugin's name | "module:Class"
+  # `python run_vision.py --list-counters` shows what's available. External ones
+  # (README "Counter plugins"): pip install -e them, or list their folder in
+  # plugin_paths: at the top of this file. E.g. the YOLOv26-FRC-Model colour counter:
+  #   plugin_paths: [../../YOLOv26-FRC-Model]
+  #   counter: tbavid-colour     (or tbavid-combo + model: path/to/fuel_relabel.pt)
+  #   and per hub: setup: path/to/cams.json, camera: <name>
   weights: models/fuel_best.pt   # drop new weights here, restart vision; FMS never needs to restart
   conf: 0.25
   imgsz: 640
