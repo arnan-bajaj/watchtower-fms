@@ -427,7 +427,14 @@ Vision timestamps each count and batches it to the FMS 4× per second. If the FM
 cd vision && python run_vision.py --list-counters
 ```
 
-**Using someone else's counter.** Either install it into this venv (`pip install -e path/to/their/repo`), or add its folder to `plugin_paths:` in `config/vision.yaml` (relative to that file, no install, no `PYTHONPATH`):
+**The easy way: `vision/plugins/`.** Nothing to edit but the `counter:` line.
+
+- *Your own counter:* copy `vision/plugins/_example.py` to `vision/plugins/my_counter.py`, change its `NAME`, and set `counter: <that NAME>`. The template is a working counter with every optional part commented.
+- *Someone else's repo:* `cd vision && python run_vision.py --add-plugin ~/dev/YOLOv26-FRC-Model`. It prints the counter names that repo provides. It writes a one-line `vision/plugins/<repo>.path` file holding the folder, which works the same on macOS, Windows and Linux. `--remove-plugin <repo>` undoes it.
+
+Files in `vision/plugins/` are read without being imported, so a broken one cannot stop vision from starting. They are gitignored except the template and its README. Built-in names cannot be taken over.
+
+**Other ways to use someone else's counter.** Either install it into this venv (`pip install -e path/to/their/repo`), or add its folder to `plugin_paths:` in `config/vision.yaml` (relative to that file, no install, no `PYTHONPATH`):
 
 ```yaml
 plugin_paths: [../../their-repo]
@@ -513,7 +520,7 @@ These recordings are also your best training data, because they come from the re
 
 ### External hub counter (YOLOv26-FRC-Model)
 
-[YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model) ships two counter plugins for this vision process, `tbavid-colour` and `tbavid-combo`. They are not part of this repo: clone it next to this one, then either `pip install -e ../YOLOv26-FRC-Model` in this venv or add it to `plugin_paths:` (see [Counter plugins](#counter-plugins)).
+[YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model) ships two counter plugins for this vision process, `tbavid-colour` and `tbavid-combo`. They are not part of this repo. Clone it, then run `cd vision && python run_vision.py --add-plugin ~/dev/YOLOv26-FRC-Model`. Alternatively, `pip install -e` it or add it to `plugin_paths:` (see [Counter plugins](#counter-plugins)).
 
 - `tbavid-colour` counts yellow blobs crossing down into a hub outline. It needs no model or GPU. On four scored 2026 Einstein broadcasts it measured 10.1% mean error against the official counts at 60 fps, with the auto winner right on all four.
 - `tbavid-combo` blends that with a fuel model (`model:`). On the same four it measured 6.8%, but three were in the model's training set; expect 7–9% on a new match. It needs Apple Silicon or a GPU. The model runs on its own thread; if it falls behind it turns itself off and the hub counts by colour.
@@ -522,7 +529,7 @@ These recordings are also your best training data, because they come from the re
 
 ```yaml
 # config/vision.yaml
-plugin_paths: [../../YOLOv26-FRC-Model]   # or pip install -e it and drop this line
+# after --add-plugin; or plugin_paths: [../../YOLOv26-FRC-Model]
 defaults:
   counter: tbavid-colour      # or tbavid-combo (needs model:)
   model: /path/to/fuel_relabel.pt

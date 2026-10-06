@@ -134,3 +134,71 @@ def test_list_shows_needs_and_options_and_survives_a_bad_plugin(plugdir):
     out = C.list_counters({"fancy": "myplug:Fancy", "gone": "nosuchmodule:X"})
     assert "a test counter  [needs gpu]" in out and "conf: confidence" in out
     assert "gone" in out and "cannot load" in out
+
+
+def test_dropped_in_file_is_found_by_name_without_importing(tmp_path, monkeypatch):
+    drop = tmp_path / "plugins"
+    drop.mkdir()
+    (drop / "dropme.py").write_text(textwrap.dedent('''
+        class Mine:
+            NAME = "dropped"
+            def __init__(self, cfg): self.total = 0
+            def process(self, frame, t): return 3
+        class Helper:                  # no NAME, no process: not a counter
+            pass
+        raise RuntimeError("only runs if imported")
+    '''))
+    (drop / "_skipme.py").write_text("class X:\n    NAME = 'skipped'\n")
+    (drop / "broken.py").write_text("class (:\n")
+    monkeypatch.setattr(C, "PLUGINS_DIR", drop)
+    monkeypatch.setattr(C, "_entry_points", lambda: {})
+    found = C.available()
+    assert found["dropped"] == {"spec": "dropme:Mine", "source": "plugins/dropme.py"}
+    assert "skipped" not in found and "helper" not in found
+    sys.modules.pop("dropme", None)
+
+
+def test_dropped_in_file_loads_and_cannot_take_a_builtin(tmp_path, monkeypatch):
+    drop = tmp_path / "plugins"
+    drop.mkdir()
+    (drop / "dropok.py").write_text(
+        "class Z:\n    NAME = 'zone'\n    def process(self, f, t): return 0\n"
+        "class Ok:\n    def __init__(self, cfg): self.total = 0\n    def process(self, f, t): return 5\n")
+    monkeypatch.setattr(C, "PLUGINS_DIR", drop)
+    monkeypatch.setattr(C, "_entry_points", lambda: {})
+    assert C.resolve("zone") == "counters.zone:ZoneCounter"
+    assert C.load_counter({"counter": "ok", "hub": "red"}).process(None, 0) == 5
+    sys.modules.pop("dropok", None)
+    sys.path.remove(str(drop))
+
+
+def test_add_plugin_remembers_a_repo_and_remove_forgets_it(plugdir, tmp_path, monkeypatch):
+    drop = tmp_path / "plugins"
+    monkeypatch.setattr(C, "PLUGINS_DIR", drop)
+    monkeypatch.setattr(C, "_PATH_PLUGINS", {})
+    (plugdir / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n[project.entry-points."watchtower.counters"]\n'
+        'repo-one = "myplug:Fancy"\n')
+    names = C.add_plugin(str(plugdir))
+    assert "repo-one" in names and "fancy" in names
+    assert (drop / f"{plugdir.name}.path").read_text().strip() == str(plugdir.resolve())
+    assert C.available()["repo-one"]["source"] == f"plugins/{plugdir.name}.path"
+    assert C.load_counter({"counter": "repo-one", "hub": "red"}).process(None, 0) == 0
+    assert C.remove_plugin(plugdir.name) and not C.remove_plugin(plugdir.name)
+    with pytest.raises(SystemExit, match="no counters"):
+        C.add_plugin(str(drop))
+
+
+def test_add_plugin_path_that_went_missing_is_listed_not_fatal(tmp_path, monkeypatch):
+    drop = tmp_path / "plugins"
+    drop.mkdir()
+    (drop / "gone.path").write_text(str(tmp_path / "nowhere") + "\n")
+    monkeypatch.setattr(C, "PLUGINS_DIR", drop)
+    monkeypatch.setattr(C, "_entry_points", lambda: {})
+    assert "not found" in C.available()["gone (missing)"]["source"]
+    assert C.resolve("zone") == "counters.zone:ZoneCounter"
+
+
+def test_the_template_is_a_valid_counter():
+    tpl = pathlib.Path(C.__file__).resolve().parent.parent / "plugins" / "_example.py"
+    assert C._named_classes(tpl) == {"my-counter": "MyCounter"}
