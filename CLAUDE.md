@@ -96,3 +96,7 @@ TBA `score_breakdown` (off by default; TBA validates per-season keys), alliance 
 Direct answers, uncomfortable truths first. Prove changes with tests or a mock run before calling them done.
 Small commits; don't refactor across `fms/` and `vision/` in one change. Update README.md (and this file)
 in the same commit as any change to setup, usage or invariants.
+- The Watchtower app (`.github/workflows/app.yml`) is built from YOLOv26-FRC-Model's `apps/watchtower/` (launcher,
+  spec, smoke test) at the tag in `.github/hubcounter-release`, with this repo's code as the FMS. It runs fms.init
+  into `~/Documents/Watchtower/config`, so `fms.server`'s import-time `config.load()` and relative `data/` paths must
+  keep working from whatever folder the process chdirs to. Bump `.github/hubcounter-release` to pick up counter fixes.

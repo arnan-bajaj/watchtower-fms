@@ -23,6 +23,34 @@ Built for the 10th Street Showdown (October 2026) and shared so other teams can 
 
 ---
 
+## The app (no terminal)
+
+Each release has **Watchtower** as a double-click app, with the hub-camera
+counter from [YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model)
+built in:
+
+| computer | download |
+|---|---|
+| Mac (Apple silicon) | `Watchtower-mac.zip` |
+| Windows 10/11 | `Watchtower-windows.zip` |
+| Linux PC | `Watchtower-linux-x64.tar.gz` |
+| Raspberry Pi 4/5 (64-bit Pi OS) | `Watchtower-linux-arm64.tar.gz` |
+
+- **First launch** makes `Documents/Watchtower/config/event.yaml` with new
+  PINs and a vision key.
+- **Every launch:**
+  - starts the FMS on port 8000 for phones on the Wi-Fi;
+  - starts the hub counter already sending to it;
+  - opens a start page with every link and PIN.
+- **Event name, date and teams:** set them in that `event.yaml`, then Quit
+  (on the hub camera page) and reopen.
+- **First open:** the apps are unsigned. On a Mac: System Settings → Privacy
+  & Security → Open Anyway. On Windows: More info → Run anyway.
+
+`.github/workflows/app.yml` builds them on each tag. The hub counter comes
+from the YOLOv26-FRC-Model release named in `.github/hubcounter-release`.
+Everything below is the from-source setup, which the app replaces.
+
 ## Quick start (no cameras, about 5 minutes)
 
 ```bash
@@ -45,6 +73,7 @@ Open `http://localhost:8000` on the laptop, or `http://<laptop-ip>:8000` on a ph
 
 ## Contents
 
+1. [The app (no terminal)](#the-app-no-terminal)
 1. [Quick start](#quick-start-no-cameras-about-5-minutes)
 1. [Architecture](#architecture)
 2. [Repo layout](#repo-layout)
@@ -118,6 +147,7 @@ config/
   vision.mock.yaml     fake fuel for rehearsal (committed)
   event.yaml           your event; created by fms.init, gitignored
   vision.yaml          your cameras; created by fms.init, gitignored
+.github/workflows/app.yml  builds the Watchtower app on each tag (see "The app")
 docs/screenshots/  images used in this README
 tests/             hand-computed scoring, schedule, bracket, selection, setup tests
 run.sh             start FMS + vision together (runs fms.init on first use)
