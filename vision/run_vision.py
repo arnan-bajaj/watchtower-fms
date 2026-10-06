@@ -27,7 +27,8 @@ import requests
 
 import vconfig
 from count_feed import CountFeed, targets
-from counters import load_counter
+from counters import (add_plugin, add_plugin_paths, list_counters, load_counter,
+                      plugin_status, remove_plugin)
 
 STOP = threading.Event()
 
@@ -104,8 +105,9 @@ class Recorder:
 
 
 class HubWorker(threading.Thread):
-    def __init__(self, hub, cfg, sender, rec_dir, preview):
+    def __init__(self, hub, cfg, sender, rec_dir, preview, plugins=None):
         super().__init__(daemon=True)
+        self.plugins = plugins
         self.hub, self.cfg, self.sender, self.preview = hub, {**cfg, "hub": hub}, sender, preview
         self.recorder = Recorder(rec_dir, hub) if rec_dir else None
         self.frame_out = None
@@ -123,7 +125,15 @@ class HubWorker(threading.Thread):
         return cap
 
     def run(self):
-        counter = load_counter(self.cfg)
+        try:
+            counter = load_counter(self.cfg, self.plugins)
+        except BaseException as e:      # SystemExit from a bad name, or the plugin's own error
+            # Before, a plugin that failed to load ended this thread silently and
+            # /control showed the hub as "never connected". Say why, there and here.
+            msg = f"counter {self.cfg.get('counter')!r} failed to load: {e}"
+            print(f"{self.hub}: {msg}")
+            self.sender.status[self.hub] = {"fps": 0, "error": msg, "counter": str(self.cfg.get("counter"))}
+            return
         src = str(self.cfg["source"])
         is_file = not src.isdigit() and src != "none" and not src.startswith(("rtsp", "http"))
         cap = self.open()
@@ -168,11 +178,18 @@ class HubWorker(threading.Thread):
                 fps = n_frames / (time.time() - t_fps)
                 n_frames, t_fps = 0, time.time()
                 self.sender.status[self.hub] = {"fps": round(fps, 1), "counter": self.cfg["counter"],
-                                                "session_total": counter.total}
+                                                "session_total": counter.total,
+                                                **plugin_status(counter)}
             if self.preview:
                 self.frame_out = counter.draw(frame.copy())
         if self.recorder:
             self.recorder.close()
+        close = getattr(counter, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as e:                        # noqa: BLE001
+                print(f"{self.hub}: counter close() failed: {e}")
 
 
 def main():
@@ -181,8 +198,29 @@ def main():
     ap.add_argument("--preview", action="store_true")
     ap.add_argument("--feed", action="append", metavar="HOST:PORT",
                     help="also stream live counts to this field system (repeatable; adds to config feeds:)")
+    ap.add_argument("--list-counters", action="store_true",
+                    help="list every counter plugin available (built-in, installed, plugin_paths) and exit")
+    ap.add_argument("--add-plugin", metavar="FOLDER",
+                    help="add a folder of counters (e.g. another repo) to vision/plugins/ and exit")
+    ap.add_argument("--remove-plugin", metavar="NAME",
+                    help="remove a folder added with --add-plugin (its folder name) and exit")
     args = ap.parse_args()
+    if args.add_plugin:
+        names = add_plugin(args.add_plugin)
+        print(f"added: counter: {' / '.join(names)} now works in config/vision.yaml")
+        return
+    if args.remove_plugin:
+        print("removed" if remove_plugin(args.remove_plugin) else f"no plugin {args.remove_plugin!r} in vision/plugins/")
+        return
+    if args.list_counters:
+        import yaml
+        p = pathlib.Path(args.config)
+        raw = (yaml.safe_load(p.read_text()) or {}) if p.exists() else {}
+        add_plugin_paths(raw.get("plugin_paths"), p.parent)
+        print(list_counters(raw.get("plugins")))
+        return
     cfg = vconfig.load(args.config)
+    add_plugin_paths(cfg.get("plugin_paths"), pathlib.Path(args.config).parent)
     feeds = [CountFeed.from_target(t) for t in targets(cfg, args.feed)]
     for f in feeds:
         f.start()
@@ -194,7 +232,7 @@ def main():
     for hub in ("red", "blue"):
         if hub in cfg["hubs"] and cfg["hubs"][hub].get("enabled", True):
             w = HubWorker(hub, {**defaults, **cfg["hubs"][hub]}, sender,
-                          cfg.get("record_dir"), args.preview)
+                          cfg.get("record_dir"), args.preview, cfg.get("plugins"))
             w.start()
             workers.append(w)
     print(f"vision running: {[w.hub for w in workers]} -> {cfg['fms_url']}  (Ctrl+C to stop)")

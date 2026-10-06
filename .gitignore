@@ -7,3 +7,6 @@ tba_secrets.sh
 config/event.yaml
 config/vision.yaml
 tba_secrets.sh
+vision/plugins/*
+!vision/plugins/_example.py
+!vision/plugins/README.md
