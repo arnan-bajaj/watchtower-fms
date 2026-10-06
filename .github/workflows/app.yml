@@ -1,0 +1,148 @@
+name: app
+
+# Builds the Watchtower app -- this FMS plus the YOLOv26-FRC-Model hub
+# counter, set up and started on a double-click -- on each OS:
+#
+#   macOS (Apple silicon)  Watchtower-mac.zip            Watchtower.app
+#   Windows                Watchtower-windows.zip        Watchtower\Watchtower.exe
+#   Linux x64              Watchtower-linux-x64.tar.gz   Watchtower/Watchtower
+#   Linux arm64 (Pi 4/5)   Watchtower-linux-arm64.tar.gz Watchtower/Watchtower
+#
+# The launcher, build spec and smoke test live in YOLOv26-FRC-Model
+# (apps/watchtower/), at the tag in .github/hubcounter-release; this repo's
+# own code is what gets bundled as the FMS. The fuel model comes from that
+# repository's releases, checked against the checksum in its CHANGELOG.
+#
+#   v* tag here: build, smoke test, attach the four apps to this release
+#   pull request touching the FMS or this file: build + smoke test only
+#   "Run workflow" button: the same, on demand
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "fms/**"
+      - "config/*.example.yaml"
+      - ".github/workflows/app.yml"
+      - ".github/hubcounter-release"
+  workflow_dispatch:
+
+permissions:
+  contents: write            # to attach the builds to a release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            asset: Watchtower-mac.zip
+            program: dist/Watchtower.app/Contents/MacOS/Watchtower
+          - os: windows-latest
+            asset: Watchtower-windows.zip
+            program: dist/Watchtower/Watchtower.exe
+          - os: ubuntu-22.04
+            asset: Watchtower-linux-x64.tar.gz
+            program: dist/Watchtower/Watchtower
+          - os: ubuntu-22.04-arm
+            asset: Watchtower-linux-arm64.tar.gz
+            program: dist/Watchtower/Watchtower
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: watchtower-src
+
+      - name: Which YOLOv26-FRC-Model release builds the app
+        id: hub
+        run: echo "ref=$(cat watchtower-src/.github/hubcounter-release)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ShadowOfTheVOID/YOLOv26-FRC-Model
+          ref: ${{ steps.hub.outputs.ref }}
+          path: hub
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # PyPI's Linux torch carries CUDA (~3 GB, over GitHub's 2 GB asset
+      # limit); PyTorch's CPU index has it without. Ultralytics --no-deps, or
+      # it pulls a second OpenCV and SciPy.
+      - name: Install the build tools, OpenCV, PyTorch, Ultralytics and the FMS's server
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          else
+            pip install torch torchvision
+          fi
+          pip install pyinstaller opencv-python-headless numpy yt-dlp
+          pip install --no-deps ultralytics ultralytics-thop
+          pip install matplotlib pillow pyyaml requests psutil polars
+          pip install fastapi uvicorn websockets
+
+      - name: The fuel model, checked against YOLOv26-FRC-Model's CHANGELOG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: hub
+        run: |
+          mkdir -p models
+          gh release download "$(cat .github/models-release)" --repo ShadowOfTheVOID/YOLOv26-FRC-Model -p fuel_relabel.pt -D models --clobber
+          python - <<'PY'
+          import hashlib, re
+          want = re.search(r"^([0-9a-f]{64})  fuel_relabel\.pt$", open("CHANGELOG.md").read(), re.M).group(1)
+          got = hashlib.sha256(open("models/fuel_relabel.pt", "rb").read()).hexdigest()
+          assert got == want, f"fuel_relabel.pt is {got}, CHANGELOG says {want}"
+          print("fuel_relabel.pt", got)
+          PY
+
+      - name: Build
+        working-directory: hub
+        env:
+          HUBAPP: watchtower
+          WATCHTOWER_SRC: ${{ github.workspace }}/watchtower-src
+          HUBCOUNTER_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.0.0' }}
+          HUBCOUNTER_REQUIRE_MODEL: "1"
+        run: pyinstaller --noconfirm --workpath build/watchtower apps/hubcounter/HubCounter.spec
+
+      - name: Smoke test (setup, FMS, counter preset to it, vision key, Quit)
+        working-directory: hub
+        run: python apps/watchtower/smoke_test.py "${{ matrix.program }}"
+
+      - name: Package
+        working-directory: hub
+        run: |
+          case "${{ matrix.asset }}" in
+            *mac.zip)  ditto -c -k --keepParent "dist/Watchtower.app" "${{ matrix.asset }}" ;;
+            *.zip)     python -c "import shutil; shutil.make_archive('${{ matrix.asset }}'[:-4], 'zip', 'dist', 'Watchtower')" ;;
+            *.tar.gz)  tar -czf "${{ matrix.asset }}" -C dist Watchtower ;;
+          esac
+          # A release asset over 2 GB is refused at upload; stop here instead.
+          python -c "import os,sys; n=os.path.getsize('${{ matrix.asset }}'); print(n>>20,'MB'); sys.exit(n > 1900*2**20)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: hub/${{ matrix.asset }}
+
+      # The release is normally made by hand from the tag (gh release create
+      # with the notes); wait for it, and make a bare one if nobody did.
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: hub
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for i in $(seq 1 40); do
+            gh release view "${{ github.ref_name }}" >/dev/null 2>&1 && break
+            sleep 15
+          done
+          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || \
+            gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --notes "Apps attached by the app workflow." || true
+          gh release upload "${{ github.ref_name }}" "${{ matrix.asset }}" --clobber
