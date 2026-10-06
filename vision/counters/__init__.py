@@ -20,6 +20,13 @@ Where `counter:` in config/vision.yaml is looked up, in this order:
    checkout of another repo can be used without installing it or setting
    PYTHONPATH.
 
+5. The `vision/plugins/` folder, the easy way. Drop in a `my_counter.py` whose
+   class has a `NAME`, and `counter: <that NAME>` works with nothing else to
+   edit. Or add a whole repo with
+   `python run_vision.py --add-plugin ~/dev/OtherRepo`. That writes
+   `plugins/OtherRepo.path`, a one-line file holding the folder, which works
+   the same on macOS, Windows and Linux (no symlinks).
+
 `python run_vision.py --list-counters` prints what is available.
 
 Nothing here imports cv2 or a model: the registry is tested, and the list
@@ -48,6 +55,93 @@ RUNNER_KEYS = {"counter", "hub", "source", "enabled", "fps", "width", "height", 
 
 
 _PATH_PLUGINS: dict = {}           # short names read from plugin_paths' pyproject.toml
+PLUGINS_DIR = pathlib.Path(__file__).resolve().parent.parent / "plugins"
+
+
+def _named_classes(pyfile: pathlib.Path) -> dict:
+    """{NAME: class name} for the counter classes in a dropped-in file (ones
+    with a NAME or a process() method), read from its source without importing
+    it, so a broken or slow plugin file cannot stop vision from starting or
+    break --list-counters for the others. A class without a NAME is listed
+    under its class name in lower case."""
+    import ast
+    try:
+        tree = ast.parse(pyfile.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError):
+        return {}
+    out = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        methods = {b.name for b in node.body if isinstance(b, ast.FunctionDef)}
+        name = None
+        for b in node.body:
+            if (isinstance(b, ast.Assign) and any(getattr(t, "id", "") == "NAME" for t in b.targets)
+                    and isinstance(b.value, ast.Constant) and isinstance(b.value.value, str)):
+                name = b.value.value
+        if name or "process" in methods:      # a NAME alone: a subclass tweaking a built-in
+            out[name or node.name.lower()] = node.name
+    return out
+
+
+def scan_plugins_dir(folder: pathlib.Path = None) -> dict:
+    """{name: (spec, source)} from the drop-in folder: *.py files, *.path files
+    (a folder to add, one line), and sub-folders such as a cloned repo. Files
+    and folders starting with '_' or '.' are skipped (the _example.py template)."""
+    folder = pathlib.Path(folder or PLUGINS_DIR)
+    if not folder.is_dir():
+        return {}
+    found = {}
+    if str(folder) not in sys.path:
+        sys.path.insert(0, str(folder))
+    for f in sorted(folder.iterdir()):
+        if f.name.startswith(("_", ".")):
+            continue
+        if f.suffix == ".py":
+            for name, cls in _named_classes(f).items():
+                found[name] = (f"{f.stem}:{cls}", f"plugins/{f.name}")
+        elif f.suffix == ".path" or f.is_dir():
+            target = f.read_text(encoding="utf-8").strip() if f.suffix == ".path" else str(f)
+            try:
+                add_plugin_paths([target], base=folder)
+            except SystemExit:
+                found[f"{f.stem} (missing)"] = (f"{f.stem}:missing", f"plugins/{f.name} -> {target} not found")
+                continue
+            q = pathlib.Path(os.path.expanduser(target))
+            q = (q if q.is_absolute() else folder / q).resolve()
+            for name, spec in _pyproject_plugins(q).items():
+                found[name] = (spec, f"plugins/{f.name}")
+            for py in sorted(q.glob("*.py")) if f.is_dir() else []:
+                if not py.name.startswith(("_", ".")):
+                    for name, cls in _named_classes(py).items():
+                        found.setdefault(name, (f"{py.stem}:{cls}", f"plugins/{f.name}/{py.name}"))
+    return found
+
+
+def add_plugin(path: str, folder: pathlib.Path = None) -> list:
+    """--add-plugin: remember a folder (a repo with counters) in the drop-in
+    folder as <name>.path. Returns the counter names it provides."""
+    folder = pathlib.Path(folder or PLUGINS_DIR)
+    q = pathlib.Path(os.path.expanduser(path)).resolve()
+    if not q.is_dir():
+        raise SystemExit(f"--add-plugin: {path} is not a folder")
+    names = list(_pyproject_plugins(q)) + [n for py in q.glob("*.py")
+                                          if not py.name.startswith(("_", "."))
+                                          for n in _named_classes(py)]
+    if not names:
+        raise SystemExit(f"--add-plugin: no counters in {q} (no 'watchtower.counters' in its "
+                         f"pyproject.toml, and no .py with a counter class at its top)")
+    folder.mkdir(exist_ok=True)
+    (folder / f"{q.name}.path").write_text(str(q) + "\n", encoding="utf-8")
+    return names
+
+
+def remove_plugin(name: str, folder: pathlib.Path = None) -> bool:
+    f = pathlib.Path(folder or PLUGINS_DIR) / f"{name}.path"
+    if f.is_file():
+        f.unlink()
+        return True
+    return False
 
 
 def _pyproject_plugins(folder: pathlib.Path) -> dict:
@@ -106,6 +200,8 @@ def available(plugins=None) -> dict:
     for n, (s, dist) in _entry_points().items():
         out.setdefault(n, {"spec": s, "source": f"installed ({dist})"})
     for n, (s, where) in _PATH_PLUGINS.items():
+        out.setdefault(n, {"spec": s, "source": where})
+    for n, (s, where) in scan_plugins_dir().items():
         out.setdefault(n, {"spec": s, "source": where})
     for n, s in (plugins or {}).items():
         out[n] = {"spec": str(s), "source": "config plugins:"}

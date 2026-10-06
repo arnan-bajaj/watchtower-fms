@@ -27,7 +27,8 @@ import requests
 
 import vconfig
 from count_feed import CountFeed, targets
-from counters import add_plugin_paths, list_counters, load_counter, plugin_status
+from counters import (add_plugin, add_plugin_paths, list_counters, load_counter,
+                      plugin_status, remove_plugin)
 
 STOP = threading.Event()
 
@@ -199,7 +200,18 @@ def main():
                     help="also stream live counts to this field system (repeatable; adds to config feeds:)")
     ap.add_argument("--list-counters", action="store_true",
                     help="list every counter plugin available (built-in, installed, plugin_paths) and exit")
+    ap.add_argument("--add-plugin", metavar="FOLDER",
+                    help="add a folder of counters (e.g. another repo) to vision/plugins/ and exit")
+    ap.add_argument("--remove-plugin", metavar="NAME",
+                    help="remove a folder added with --add-plugin (its folder name) and exit")
     args = ap.parse_args()
+    if args.add_plugin:
+        names = add_plugin(args.add_plugin)
+        print(f"added: counter: {' / '.join(names)} now works in config/vision.yaml")
+        return
+    if args.remove_plugin:
+        print("removed" if remove_plugin(args.remove_plugin) else f"no plugin {args.remove_plugin!r} in vision/plugins/")
+        return
     if args.list_counters:
         import yaml
         p = pathlib.Path(args.config)

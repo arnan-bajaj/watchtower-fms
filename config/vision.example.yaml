@@ -20,9 +20,9 @@ record_dir: recordings           # raw hub video per match (for rescoring + trai
 defaults:                        # applied to both hubs unless overridden
   counter: zone                  # zone | linecross | mock | a plugin's name | "module:Class"
   # `python run_vision.py --list-counters` shows what's available. External ones
-  # (README "Counter plugins"): pip install -e them, or list their folder in
-  # plugin_paths: at the top of this file. E.g. the YOLOv26-FRC-Model colour counter:
-  #   plugin_paths: [../../YOLOv26-FRC-Model]
+  # (README "Counter plugins"): drop a .py into vision/plugins/, or add a repo
+  # with `python run_vision.py --add-plugin ~/dev/YOLOv26-FRC-Model` (or
+  # pip install -e it / list it in plugin_paths: above). Then e.g.:
   #   counter: tbavid-colour     (or tbavid-combo + model: path/to/fuel_relabel.pt)
   #   and per hub: setup: path/to/cams.json, camera: <name>
   weights: models/fuel_best.pt   # drop new weights here, restart vision; FMS never needs to restart
