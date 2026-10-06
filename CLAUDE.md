@@ -57,11 +57,17 @@ When testing, run a separate server on another port with a scratch config, and s
 pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes).
 
 ## Vision
-- Counter plugins: `zone` (default; short nearest-neighbor tracks inside the hub ROI, built because ByteTrack
-  fragmented badly on wide shots; counts only the model class named `fuel`, or `classes:`), `linecross`, `mock`, or custom `"module:Class"` with
-  `process(frame, t) -> int` (see `vision/counters/base.py`). An external one, `tbavid.fms_counter:ColourCounter`
-  / `ComboCounter` from YOLOv26-FRC-Model, loads through that path (needs it on `PYTHONPATH`); README
-  "External hub counter". Do not copy it into this repo; it is maintained there.
+- Counter plugins (`vision/counters/__init__.py`, plugin API 1): `counter:` is a built-in (`zone`, `linecross`,
+  `mock`), a short name registered under the `watchtower.counters` entry-point group (pip-installed, or a
+  `plugin_paths:` folder's pyproject.toml), a class in `vision/plugins/*.py` (its NAME; found by parsing the
+  source with ast, never importing it, so a broken file can't stop startup), a repo recorded there as
+  `<name>.path` by `--add-plugin` (plain text, not a symlink, for Windows), a `plugins:` alias, or
+  `"module:Class"`. `vision/plugins/` is gitignored except `_example.py` (a working template; `_` files are
+  skipped) and README.md. Required: `__init__(cfg)`,
+  `process(frame, t) -> int`. Optional, defaulted: PLUGIN_API, NAME, DESCRIPTION, NEEDS, OPTIONS (misspelt keys
+  warned), `status()` (detail/warning/error, shown in /control), `close()`. `--list-counters` prints them. Keep the
+  registry free of cv2 (tests run without it). `zone` counts only the class named `fuel` (or `classes:`). The
+  YOLOv26-FRC-Model counters (tbavid-colour / tbavid-combo) are maintained there, not copied here.
 - Model weights go in `vision/models/` (gitignored). Restart only the vision process to swap models.
 - Vision records raw hub video + per-frame timestamps per match; `vision/rescore.py` recounts a match offline
   and replaces that hub's events in the FMS on the same clock.

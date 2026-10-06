@@ -16,7 +16,7 @@ import cv2
 import requests
 
 import vconfig
-from counters import load_counter
+from counters import add_plugin_paths, load_counter
 
 
 def main():
@@ -33,7 +33,8 @@ def main():
     if a.weights:
         hc["weights"] = a.weights
     ts = [float(r["t"]) for r in csv.DictReader(open(pathlib.Path(a.video).with_suffix(".csv")))]
-    counter = load_counter(hc)
+    add_plugin_paths(cfg.get("plugin_paths"), pathlib.Path(a.config).parent)
+    counter = load_counter(hc, cfg.get("plugins"))
     cap = cv2.VideoCapture(a.video)
     events, i = [], 0
     while True:

@@ -565,7 +565,9 @@ function renderSetup(s) {
     const x = v[h];
     return `<tr><td>${h} hub</td><td>${!x ? `<span class="pill bad">never connected</span>` :
       x.age > 3 ? `<span class="pill bad">silent ${x.age}s</span>` :
-      `<span class="pill ${x.error ? "bad" : "ok"}">${x.error ? esc(x.error) : x.fps + " fps"}</span> ${esc(x.counter || "")}`}</td></tr>`;
+      `<span class="pill ${x.error ? "bad" : "ok"}">${x.error ? esc(x.error) : x.fps + " fps"}</span> ${esc(x.counter || "")}` +
+      (x.detail ? `<div class="muted small">${esc(x.detail)}</div>` : "") +
+      (x.warning ? `<div class="small" style="color:#b45309">${esc(x.warning)}</div>` : "")}</td></tr>`;
   }).join("");
   const t = s.tba;
   $("#ttable").innerHTML = `<tr><td>Event key</td><td>${esc(t.key || "not set")}</td></tr>
