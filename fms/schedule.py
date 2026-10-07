@@ -131,11 +131,21 @@ def to_matches(seq):
     return out
 
 
-def add_times(matches, start_hhmm, cycle_min):
-    t = datetime.strptime(start_hhmm, "%H:%M")
+def hm(s):
+    """'9:30' / '09:30' -> datetime on a dummy day. ValueError on anything else."""
+    return datetime.strptime(str(s).strip(), "%H:%M")
+
+
+def add_times(matches, start_hhmm, cycle_min, lunch=None):
+    """Give each match a start time, one cycle apart. lunch=("12:00", "13:00") is a break no match's cycle may
+    overlap: the first match that would run into it starts at lunch's end instead, and quals carry on from there."""
+    t, step = hm(start_hhmm), timedelta(minutes=cycle_min)
+    ls, le = (hm(lunch[0]), hm(lunch[1])) if lunch else (None, None)
     for m in matches:
+        if lunch and t < le and t + step > ls:
+            t = le
         m["scheduled"] = t.strftime("%H:%M")
-        t += timedelta(minutes=cycle_min)
+        t += step
     return matches
 
 

@@ -91,6 +91,8 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
   must hold the field's IP; both change per network.
 - With few teams (e.g. 12) and 6-team matches, some back-to-backs are unavoidable; the schedule optimizer
   minimizes them. Schedules need >= 6 teams; live alliance selection needs >= 12 (4 alliances of 3).
+- Quals end by `lunch` by default. `quals_after_lunch` (or the Schedule tab checkbox) makes `schedule.add_times`
+  skip the `lunch`–`lunch_end` break (no match's cycle overlaps it) and warn against `day_end` instead.
 
 ## Not implemented yet
 Yellow/red cards and DQs, playoff backup robots, FRC's exact ranking/playoff tiebreakers,

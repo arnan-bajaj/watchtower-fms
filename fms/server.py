@@ -122,7 +122,8 @@ def build_state():
     ms = store.matches()
     return {
         "now": time.time(),
-        "event": {k: CFG["event"][k] for k in ("name", "teams", "tba_event_key", "lunch", "qual_start", "cycle_min")},
+        "event": {k: CFG["event"][k] for k in ("name", "teams", "tba_event_key", "lunch", "lunch_end",
+                                                    "quals_after_lunch", "day_end", "qual_start", "cycle_min")},
         "game": G,
         "current": match_public(m, True) if m else None,
         "matches": [match_public(x) for x in ms],
@@ -310,24 +311,44 @@ def _schedule_locked():
     return any(m["auto_start"] is not None or m["status"] == "committed" for m in store.matches("qm"))
 
 
-def _preview(matches, start, cycle):
+def _day(body):
+    """Schedule clock from the Schedule form, falling back to event.yaml. Times come back as HH:MM."""
+    e = CFG["event"]
+    try:
+        start, ls, le, de = (schedule.hm(body.get(k) or e[c]).strftime("%H:%M") for k, c in (
+            ("start", "qual_start"), ("lunch", "lunch"), ("lunch_end", "lunch_end"), ("day_end", "day_end")))
+        cycle = float(body.get("cycle_min") or e["cycle_min"])
+    except ValueError:
+        raise HTTPException(400, "Times must look like 13:00, and the cycle must be a number")
+    if le <= ls:
+        raise HTTPException(400, "Lunch must end after it starts")
+    after = bool(body.get("after_lunch", e["quals_after_lunch"]))
+    return {"start": start, "cycle": cycle, "lunch": (ls, le), "after_lunch": after, "day_end": de}
+
+
+def _preview(matches, day):
+    """Fill in times (unless every match has one) and say when quals end and whether that's in time."""
+    ls, le = day["lunch"]
     if not all(m.get("scheduled") for m in matches):
-        schedule.add_times(matches, start, cycle)
-    end = (datetime.strptime(matches[-1]["scheduled"], "%H:%M") + timedelta(minutes=cycle)).strftime("%H:%M")
-    return {"matches": matches, "quals_end": end, "fits_before_lunch": end <= CFG["event"]["lunch"]}
+        schedule.add_times(matches, day["start"], day["cycle"], day["lunch"] if day["after_lunch"] else None)
+    end = (schedule.hm(matches[-1]["scheduled"]) + timedelta(minutes=day["cycle"])).strftime("%H:%M")
+    limit = day["day_end"] if day["after_lunch"] else ls
+    return {"matches": matches, "quals_end": end, "fits": schedule.hm(end) <= schedule.hm(limit),
+            "limit": limit, "limit_name": "the end of the day" if day["after_lunch"] else "lunch",
+            "lunch": {"start": ls, "end": le} if day["after_lunch"] else None,
+            "after_lunch": sum(schedule.hm(m["scheduled"]) >= schedule.hm(le) for m in matches)}
 
 
 @app.post("/api/schedule/preview")
 def schedule_preview(body: dict = Body(...), x_fms_token: str = Header(None)):
     need(x_fms_token)
     mpt = int(body.get("matches_per_team", 6))
-    start = body.get("start") or CFG["event"]["qual_start"]
-    cycle = float(body.get("cycle_min") or CFG["event"]["cycle_min"])
+    day = _day(body)
     seed = body.get("seed")
     if len(CFG["event"]["teams"]) < 6:
         raise HTTPException(400, "Add at least 6 team numbers to event.teams in config/event.yaml, then restart the server")
     matches, st = schedule.generate(CFG["event"]["teams"], mpt, seed=seed)
-    out = _preview(matches, start, cycle)
+    out = _preview(matches, day)
     out["stats"] = st
     return out
 
@@ -339,7 +360,11 @@ def schedule_import(body: dict = Body(...), x_fms_token: str = Header(None)):
     if not matches:
         raise HTTPException(400, "No rows parsed. Format: match,red1,red2,red3,blue1,blue2,blue3[,HH:MM]")
     unknown = sorted({t for m in matches for t in m["red"] + m["blue"]} - set(CFG["event"]["teams"]))
-    out = _preview(matches, CFG["event"]["qual_start"], float(CFG["event"]["cycle_min"]))
+    day = _day(body)
+    try:
+        out = _preview(matches, day)
+    except ValueError:
+        raise HTTPException(400, "A time in the CSV isn't HH:MM")
     out["unknown_teams"] = unknown
     return out
 

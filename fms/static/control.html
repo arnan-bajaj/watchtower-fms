@@ -100,8 +100,12 @@
         <label class="field">First match <input id="sstart" inputmode="numeric"></label>
         <label class="field">Cycle (min) <input type="number" id="scycle" step="0.5" min="3"></label>
         <label class="field">Seed <input id="sseed" placeholder="random"></label>
+        <label class="field">Lunch from <input id="slunch" inputmode="numeric"></label>
+        <label class="field">Lunch to <input id="slunchend" inputmode="numeric"></label>
+        <label class="field">Day ends <input id="sdayend" inputmode="numeric"></label>
         <button class="primary" id="bgen">Generate</button>
       </div>
+      <label style="margin-top:.75rem"><input type="checkbox" id="safter"> Quals continue after lunch (for an event with no playoffs, or playoffs later)</label>
       <div class="hint" id="mpthint"></div>
       <div id="spreview" style="margin-top:1rem"></div>
     </div>
@@ -348,25 +352,38 @@ function nextFocus(el) {
 
 // ---- schedule
 function hhmm(t) { const [h, m] = t.split(":").map(Number); return h * 60 + m; }
+// The schedule clock as typed in the form; the server falls back to event.yaml for anything blank.
+function dayForm() {
+  return { start: $("#sstart").value, cycle_min: +$("#scycle").value, lunch: $("#slunch").value,
+           lunch_end: $("#slunchend").value, day_end: $("#sdayend").value, after_lunch: $("#safter").checked };
+}
 function suggestMpt(s) {
-  const e = s.event, n = e.teams.length;
-  const start = $("#sstart").value || "09:30", cyc = parseFloat($("#scycle").value) || 8;
-  const slots = Math.floor((hhmm(e.lunch) - hhmm(start)) / cyc);
-  const mpt = Math.max(1, Math.floor(slots * 6 / n));
-  $("#mpthint").textContent = `${n} teams. ${slots} match slots fit between ${start} and lunch (${e.lunch}) at ${cyc} min → up to ${mpt} matches per team.`;
+  const e = s.event, n = e.teams.length, d = dayForm();
+  const start = d.start || e.qual_start, cyc = d.cycle_min || 8;
+  const ls = d.lunch || e.lunch, le = d.lunch_end || e.lunch_end, de = d.day_end || e.day_end;
+  const fit = (a, b) => Math.max(0, Math.floor((hhmm(b) - hhmm(a)) / cyc));
+  // Same rule as the server: a match's whole cycle fits before lunch, the rest start at lunch's end.
+  const before = hhmm(start) >= hhmm(le) ? 0 : fit(start, ls);
+  const after = d.after_lunch ? fit(hhmm(start) > hhmm(le) ? start : le, de) : 0;
+  const mpt = Math.max(1, Math.floor((before + after) * 6 / n));
+  $("#mpthint").textContent = d.after_lunch
+    ? `${n} teams. ${before} match slots before lunch (${start}–${ls}) and ${after} after (${le}–${de}) at ${cyc} min → up to ${mpt} matches per team.`
+    : `${n} teams. ${before} match slots fit between ${start} and lunch (${ls}) at ${cyc} min → up to ${mpt} matches per team.`;
   return mpt;
 }
-["#sstart", "#scycle"].forEach((id) => $(id).addEventListener("input", () => S() && suggestMpt(S())));
+["#sstart", "#scycle", "#slunch", "#slunchend", "#sdayend"].forEach((id) => $(id).addEventListener("input", () => S() && suggestMpt(S())));
+$("#safter").onchange = () => { if (S()) $("#mpt").value = suggestMpt(S()); };
 $("#bgen").onclick = async () => {
   $("#bgen").disabled = true; $("#bgen").textContent = "Generating…";
   try {
-    preview = await api("/api/schedule/preview", { matches_per_team: +$("#mpt").value, start: $("#sstart").value,
-                                                   cycle_min: +$("#scycle").value, seed: $("#sseed").value || null });
+    preview = await api("/api/schedule/preview", { ...dayForm(), matches_per_team: +$("#mpt").value, seed: $("#sseed").value || null });
     renderPreview();
   } finally { $("#bgen").disabled = false; $("#bgen").textContent = "Generate"; }
 };
 let lastPreviewSides = "";
-$("#bimp").onclick = async () => { preview = await api("/api/schedule/import", { csv: $("#csv").value }); renderPreview(); };
+$("#bimp").onclick = async () => { preview = await api("/api/schedule/import", { ...dayForm(), csv: $("#csv").value }); renderPreview(); };
+// True where match i is the first one after the lunch break.
+const lunchRow = (p, i) => p.lunch && i > 0 && hhmm(p.matches[i].scheduled) >= hhmm(p.lunch.end) && hhmm(p.matches[i - 1].scheduled) < hhmm(p.lunch.end);
 function renderPreview() {
   const p = preview, st = p.stats;
   $("#spreview").innerHTML = `
@@ -374,9 +391,10 @@ function renderPreview() {
       <span class="pill ${st.back_to_back ? "bad" : "ok"}">${st.back_to_back} back-to-back</span>
       <span class="pill">max partner repeat ${st.max_partner_repeat}</span><span class="pill">max opponent repeat ${st.max_opp_repeat}</span></div>` : ""}
     ${p.unknown_teams && p.unknown_teams.length ? `<div class="warnbox">Teams not in config: ${p.unknown_teams.join(", ")}</div>` : ""}
-    <div class="${p.fits_before_lunch ? "" : "warnbox"}" style="margin:.5rem 0">Quals end at <b>${p.quals_end}</b>${p.fits_before_lunch ? "" : " — past lunch"}</div>
+    <div class="${p.fits ? "" : "warnbox"}" style="margin:.5rem 0">Quals end at <b>${p.quals_end}</b>${p.fits ? "" : ` — past ${p.limit_name} (${p.limit})`}
+      ${p.lunch ? `<span class="muted small"> · lunch ${p.lunch.start}–${p.lunch.end}, ${p.after_lunch} match${p.after_lunch === 1 ? "" : "es"} after it</span>` : ""}</div>
     <div class="scroll"><table><tr><th>#</th><th>Time</th>${bySide((a) => `<th>${Cap(a)}</th>`)}</tr>
-    ${p.matches.map((m, i) => `<tr><td>${i + 1}</td><td>${m.scheduled}</td>${bySide((a) => `<td class="t${a}">${m[a].map((t) => t + (m.surrogates.includes(t) ? "*" : "")).join(" ")}</td>`)}</tr>`).join("")}
+    ${p.matches.map((m, i) => `${lunchRow(p, i) ? `<tr><td></td><td colspan="3" class="muted"><b>Lunch</b> ${p.lunch.start}–${p.lunch.end}</td></tr>` : ""}<tr><td>${i + 1}</td><td>${m.scheduled}</td>${bySide((a) => `<td class="t${a}">${m[a].map((t) => t + (m.surrogates.includes(t) ? "*" : "")).join(" ")}</td>`)}</tr>`).join("")}
     </table></div>
     <button class="primary" id="bsave" style="margin-top:.8rem">Save this schedule</button>`;
   lastPreviewSides = sides().join();
@@ -618,6 +636,8 @@ FMS.on((s) => {
   $("#evname").textContent = s.event.name;
   if (first) {
     $("#sstart").value = s.event.qual_start; $("#scycle").value = s.event.cycle_min; first = false;
+    $("#slunch").value = s.event.lunch; $("#slunchend").value = s.event.lunch_end; $("#sdayend").value = s.event.day_end;
+    $("#safter").checked = s.event.quals_after_lunch;
     $("#mpt").value = suggestMpt(s);
   }
   if (preview && lastPreviewSides !== sides().join()) renderPreview();

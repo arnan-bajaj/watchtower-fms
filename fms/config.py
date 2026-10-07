@@ -1,6 +1,7 @@
 import copy
 import os
 import pathlib
+from datetime import datetime
 
 import yaml
 
@@ -15,7 +16,10 @@ DEFAULTS = {
         "teams": [],
         "qual_start": "09:30",
         "cycle_min": 8,
-        "lunch": "12:00",
+        "lunch": "12:00",             # lunch starts; quals must end by then unless quals_after_lunch
+        "lunch_end": "13:00",
+        "quals_after_lunch": False,   # True: schedule times skip lunch and quals continue until day_end
+        "day_end": "17:00",
     },
     "display": {
         "red_side": "right",      # which side of every screen red is drawn on; /control -> Setup overrides it live
@@ -77,6 +81,14 @@ RED_SIDES = ("left", "right")
 
 def validate(cfg, path="config/event.yaml"):
     """Refuse to serve with placeholder or shared PINs: anyone on the venue WiFi can open the pages."""
+    ev = cfg["event"]
+    for k in ("qual_start", "lunch", "lunch_end", "day_end"):
+        try:
+            datetime.strptime(str(ev[k]).strip(), "%H:%M")
+        except ValueError:
+            raise SystemExit(f"event.{k} in {path} must be a time like \"13:00\" (got {ev[k]!r}).")
+    if datetime.strptime(str(ev["lunch_end"]).strip(), "%H:%M") <= datetime.strptime(str(ev["lunch"]).strip(), "%H:%M"):
+        raise SystemExit(f"event.lunch_end in {path} must be after event.lunch.")
     if cfg["display"]["red_side"] not in RED_SIDES:
         raise SystemExit(f"display.red_side in {path} must be left or right.")
     pins = {r: str(v).strip() for r, v in cfg["server"]["pins"].items()}

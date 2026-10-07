@@ -339,3 +339,51 @@ def test_red_side_defaults_from_event_yaml_and_setup_overrides_it(tmp_path, monk
     bad = {**config.DEFAULTS, "display": {"red_side": "up"}}
     with pytest.raises(SystemExit, match="red_side"):
         config.validate(bad)
+
+
+def test_schedule_times_skip_lunch():
+    times = lambda n, start, cyc, lunch=None: [m["scheduled"] for m in schedule.add_times([{} for _ in range(n)], start, cyc, lunch)]
+    # no lunch: straight through, as before
+    assert times(6, "11:30", 8) == ["11:30", "11:38", "11:46", "11:54", "12:02", "12:10"]
+    # 11:54 + 8 = 12:02 would run into a 12:00 lunch, so it moves to 13:00
+    assert times(6, "11:30", 8, ("12:00", "13:00")) == ["11:30", "11:38", "11:46", "13:00", "13:08", "13:16"]
+    # 11:52 + 8 = 12:00 ends exactly at lunch: it stays
+    assert times(4, "11:44", 8, ("12:00", "13:00")) == ["11:44", "11:52", "13:00", "13:08"]
+    # starting inside lunch waits for its end; starting after lunch ignores it
+    assert times(2, "12:30", 10, ("12:00", "12:45")) == ["12:45", "12:55"]
+    assert times(2, "14:00", 10, ("12:00", "12:45")) == ["14:00", "14:10"]
+    # half-minute cycle across lunch: 11:45, 11:52:30 (ends 12:00), then 12:30
+    assert times(3, "11:45", 7.5, ("12:00", "12:30")) == ["11:45", "11:52", "12:30"]
+
+
+def test_schedule_preview_quals_after_lunch(tmp_path, monkeypatch):
+    import pytest
+    from fastapi.testclient import TestClient
+    from fms import config
+    srv, ev = _server(tmp_path, monkeypatch)
+    assert (ev["event"]["lunch"], ev["event"]["lunch_end"], ev["event"]["quals_after_lunch"], ev["event"]["day_end"]) \
+        == ("12:00", "13:00", False, "17:00")
+    c = TestClient(srv.app)
+    ctl = {"X-FMS-Token": srv.token_for("control")}
+    csv = "\n".join(f"{i},1,2,3,4,5,6" for i in range(1, 7))
+    body = {"csv": csv, "start": "11:30", "cycle_min": 8}
+    off = c.post("/api/schedule/import", json=body, headers=ctl).json()      # event.yaml default: off
+    assert [m["scheduled"] for m in off["matches"]] == ["11:30", "11:38", "11:46", "11:54", "12:02", "12:10"]
+    assert (off["quals_end"], off["fits"], off["limit"], off["lunch"]) == ("12:18", False, "12:00", None)
+    on = c.post("/api/schedule/import", json={**body, "after_lunch": True}, headers=ctl).json()
+    assert [m["scheduled"] for m in on["matches"]] == ["11:30", "11:38", "11:46", "13:00", "13:08", "13:16"]
+    assert (on["quals_end"], on["fits"], on["limit"], on["after_lunch"]) == ("13:24", True, "17:00", 3)
+    assert on["lunch"] == {"start": "12:00", "end": "13:00"}
+    late = c.post("/api/schedule/import", json={**body, "after_lunch": True, "day_end": "13:20"}, headers=ctl).json()
+    assert (late["fits"], late["limit"]) == (False, "13:20")
+    assert c.post("/api/schedule/import", json={**body, "lunch_end": "11:00"}, headers=ctl).status_code == 400
+    assert c.post("/api/schedule/import", json={**body, "lunch": "noon"}, headers=ctl).status_code == 400
+    st = c.get("/api/state").json()["event"]
+    assert (st["lunch_end"], st["quals_after_lunch"], st["day_end"]) == ("13:00", False, "17:00")
+
+    bad = {**config.DEFAULTS, "event": {**config.DEFAULTS["event"], "lunch_end": "11:30"}}
+    with pytest.raises(SystemExit, match="lunch_end"):
+        config.validate(bad)
+    bad["event"]["lunch_end"] = "1pm"
+    with pytest.raises(SystemExit, match="lunch_end"):
+        config.validate(bad)

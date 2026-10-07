@@ -10,7 +10,11 @@ event:
   teams: []                     # team numbers, e.g. [254, 1678, 971, ...]; at least 12 for alliance selection
   qual_start: "09:30"
   cycle_min: 8                  # match-to-match time; drives the schedule clock
-  lunch: "12:00"                # schedule preview warns if quals run past this
+  lunch: "12:00"                # lunch break start
+  lunch_end: "13:00"            # lunch break end
+  quals_after_lunch: false      # false: quals should finish by lunch (the preview warns if they don't)
+                                # true: match times skip the lunch break and quals continue until day_end
+  day_end: "17:00"              # with quals_after_lunch, the preview warns if quals run past this
 
 # ---------------------------------------------------------------- display
 display:
