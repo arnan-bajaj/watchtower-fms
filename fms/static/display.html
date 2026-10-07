@@ -38,6 +38,11 @@
   .avail { text-align: center; font-size: 3vh; color: #c9ccc4; }
   .avail span { display: inline-block; margin: .6vh .5vw; padding: .5vh 1vw; border-radius: 99px; background: rgba(255,255,255,.1); color: #fff; font-weight: 700; }
   .avail span small { color: #c9ccc4; font-weight: 500; margin-right: .4vw; }
+  /* only shows while a mouse moves over the page, so it never appears in OBS or on an idle TV */
+  #flip { position: fixed; right: 1.5vw; bottom: 1.5vh; z-index: 5; color: #fff; border-color: rgba(255,255,255,.35);
+    opacity: 0; pointer-events: none; transition: opacity .3s; }
+  body.mouse #flip { opacity: 1; pointer-events: auto; }
+  #flip.sel { background: #fff; color: var(--ink); }
 </style>
 </head><body>
 <div class="sel" id="selstage" hidden>
@@ -55,10 +60,17 @@
   </div>
   <div id="foot"></div>
 </div>
+<button class="ghost small flip" id="flip">⇄ Flip sides</button>
 <script src="/static/common.js"></script>
 <script>
 const { $ } = FMS;
 FMS.connect();
+FMS.flipToggle($("#flip"));
+let mouseT;
+document.addEventListener("mousemove", () => {
+  document.body.classList.add("mouse");
+  clearTimeout(mouseT); mouseT = setTimeout(() => document.body.classList.remove("mouse"), 3000);
+});
 const rows = [["Auto", "auto_points"], ["Fuel", "fuel_points"], ["Tower", "tower_points"], ["Penalty", "foul_points"]];
 let lastPicks = -1;
 function renderSel(s) {

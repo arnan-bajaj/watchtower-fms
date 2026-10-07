@@ -371,8 +371,12 @@ alliance, and nothing about the data, scoring or TBA changes.
 - The default comes from `display.red_side` in `config/event.yaml` (`right` unless you set it).
 - `/control` → Setup → **Field sides** changes it for every screen at once, live, without a restart. That choice is
   stored in the database and wins over `event.yaml`; **Use event.yaml** goes back to the file's value. Wipe everything also resets it.
-- On `/ref` and `/emcee`, **⇄ Flip sides** mirrors that one phone on top of the global setting (for a ref on the
-  far side of the field). It's saved on the phone and survives reloads.
+- Every page also has **⇄ Flip sides**, which mirrors that one device on top of the global setting (a ref on the
+  far side of the field, or a scoreboard TV facing the other way). It's saved in that browser, per page, and survives reloads.
+  - `/ref`, `/emcee`: above the foul buttons / hub tiles.
+  - `/control`: next to the match status on the Match tab. Setup → Field sides says when this device is flipped.
+  - `/display`: bottom-right corner, shown only while a mouse moves over the page, so it never appears in an OBS
+    Browser Source or on an idle TV. Each OBS source has its own storage, so flipping it there means interacting with the source.
 
 ### Emcee (`/emcee`)
 
@@ -406,7 +410,7 @@ alliance, and nothing about the data, scoring or TBA changes.
 
 ### Field display (`/display`)
 
-Full-screen scoreboard for a TV, or add it as a **Browser Source** in OBS for the stream overlay. It shows live provisional scores, the clock, and hub-active indicators, then the final breakdown with the winner after commit. No PIN.
+Full-screen scoreboard for a TV, or add it as a **Browser Source** in OBS for the stream overlay. It shows live provisional scores, the clock, and hub-active indicators, then the final breakdown with the winner after commit. No PIN. Move the mouse to reveal **⇄ Flip sides** for this screen only.
 
 ### Scoring rules as implemented
 

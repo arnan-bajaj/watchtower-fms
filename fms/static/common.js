@@ -71,9 +71,9 @@ const FMS = (() => {
 
   // Screen order of the alliances, left to right (or top to bottom). Presentation only: alliance keys,
   // colours and data never change. state.red_side comes from Setup (else event.yaml); pages that call
-  // flipToggle() also apply this phone's own "Flip sides" choice on top.
+  // flipToggle() also apply this device's own "Flip sides" choice on top (saved per page: /display has no role).
   let flippable = false;
-  const flipKey = () => "fms_flip_" + role;
+  const flipKey = () => "fms_flip_" + (location.pathname.replace(/\W/g, "") || role);
   function flipped() {
     if (!flippable) return false;
     try { return localStorage.getItem(flipKey()) === "1"; } catch { return false; }
@@ -88,7 +88,7 @@ const FMS = (() => {
     a.parentNode.insertBefore(a, a.parentNode.firstElementChild);
     b.parentNode.appendChild(b);
   }
-  // Wire a per-phone "Flip sides" button (ref/emcee: the far side of the field sees it mirrored).
+  // Wire a per-device "Flip sides" button (e.g. a ref on the far side of the field sees it mirrored).
   function flipToggle(btn) {
     flippable = true;
     const show = () => { btn.classList.toggle("sel", flipped()); btn.setAttribute("aria-pressed", flipped()); };

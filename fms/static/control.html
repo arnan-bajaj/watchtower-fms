@@ -65,7 +65,8 @@
     <div class="panel">
       <div class="matchbar">
         <select id="msel" aria-label="Match"></select>
-        <div class="row"><span id="mstatus" class="pill">–</span><span id="msched" class="muted small"></span></div>
+        <div class="row"><span id="mstatus" class="pill">–</span><span id="msched" class="muted small"></span>
+          <button class="ghost small flip" id="flip" title="Mirror this device only">⇄ Flip sides</button></div>
       </div>
       <div class="board">
         <div class="side red"><div class="teams" id="rteams"></div><div class="score" id="rscore">0</div></div>
@@ -152,7 +153,7 @@
         <div class="row"><label>Red is on the <select id="redside" aria-label="Red side"><option value="left">left</option><option value="right">right</option></select></label>
           <button class="ghost small" id="bredside">Use event.yaml</button></div>
         <div class="muted small" style="margin-top:.4rem" id="redsrc"></div>
-        <div class="muted small" style="margin-top:.3rem">Screen order only, on every page. Scores, data and TBA don't change. Refs and the emcee can also flip their own phone.</div></div>
+        <div class="muted small" style="margin-top:.3rem">Screen order only, on every page. Scores, data and TBA don't change. Any page's <b>⇄ Flip sides</b> mirrors just that device on top of this.</div></div>
       <div class="panel"><h2>The Blue Alliance</h2><table class="kv" id="ttable"></table>
         <div class="row" style="margin-top:.6rem"><button id="bpushall">Push everything</button><button class="ghost" id="bretry">Retry failed</button></div>
         <div class="row" style="margin-top:.6rem"><button class="ghost danger" id="btbadelall">Take all matches and rankings off TBA</button></div>
@@ -189,6 +190,7 @@ const bySide = (f) => sides().map(f).join("");
 const vs = (x) => sides().map((a) => `<span class="t${a}">${x[a]}</span>`).join("–");   // "12–8" in screen order
 
 FMS.gate("control").then(() => { $("#app").hidden = false; FMS.connect(); });
+FMS.flipToggle($("#flip"));
 
 // ---- tabs
 $("#tabs").onclick = (e) => {
@@ -591,7 +593,8 @@ function renderSetup(s) {
   if (document.activeElement !== $("#vod")) $("#vod").value = s.webcast.vod_id || "";
   $("#redside").value = s.red_side;
   $("#bredside").disabled = s.red_side_source !== "setup";
-  $("#redsrc").textContent = s.red_side_source === "setup" ? `Set here (event.yaml says ${s.red_side_default}).` : "From event.yaml (display.red_side).";
+  $("#redsrc").textContent = (s.red_side_source === "setup" ? `Set here (event.yaml says ${s.red_side_default}).` : "From event.yaml (display.red_side).")
+    + ($("#flip").classList.contains("sel") ? " This device is flipped." : "");
   $("#livets").textContent = s.webcast.stream_start ? "live since " + new Date(s.webcast.stream_start * 1000).toLocaleTimeString() : "";
 }
 

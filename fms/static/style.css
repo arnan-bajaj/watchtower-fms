@@ -128,7 +128,7 @@ td.r, th.r { text-align: right; }
 .phase { font-weight: 650; color: var(--muted); }
 .score { font-size: 2.8rem; font-weight: 850; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .teams { font-weight: 650; }
-/* per-phone "Flip sides" on /ref and /emcee */
+/* per-device "Flip sides" (ref, emcee, control; display styles its own) */
 .flipbar { justify-content: flex-end; margin-bottom: .6rem; }
 button.flip.sel { background: var(--ink); border-color: var(--ink); color: #fff; }
 
