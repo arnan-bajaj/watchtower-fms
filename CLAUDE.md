@@ -34,6 +34,10 @@ then a 4-alliance double-elimination playoff. Runs on one laptop on the event Wi
 - Committed matches are read-only until reopened. Playoff matches cannot commit while tied (scorekeeper picks).
 - Every TBA write goes through the SQLite outbox (`fms/tba.py`); never call TBA directly from a request handler.
   Takedowns (`matches/delete`, `matches/delete_all`) go through it too.
+- Alliance screen order is presentation only. Pages draw every red/blue pair in `FMS.sides()` order
+  (`fms/static/common.js`; `FMS.placeSides` for static layouts). State `red_side` = Setup's override (kv `red_side`,
+  `POST /api/red_side`) else `display.red_side` (default `right`); `/ref` and `/emcee` add a per-phone flip in
+  localStorage. Never hardcode red-then-blue in a page; data, API payloads, CSV and TBA keep their red/blue keys.
 - Live alliance selection stores only the frozen rank order and the pick list; `bracket.selection` replays
   it (serpentine, captain promotion), so undo is dropping the last pick.
 

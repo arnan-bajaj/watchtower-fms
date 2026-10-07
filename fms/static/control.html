@@ -17,7 +17,8 @@
   .board .side { border-radius: 14px; padding: .9rem 1rem; min-height: 7.5rem; display: flex; flex-direction: column;
     justify-content: space-between; gap: .5rem; border: 1px solid transparent; }
   .board .side.red { background: var(--red-soft); border-color: var(--red-line); color: var(--red); }
-  .board .side.blue { background: var(--blue-soft); border-color: var(--blue-line); color: var(--blue); text-align: right; }
+  .board .side.blue { background: var(--blue-soft); border-color: var(--blue-line); color: var(--blue); }
+  .board .side:last-child { text-align: right; }
   .board .teams { font-size: .95rem; overflow-wrap: anywhere; }
   .board .score { font-size: 3.8rem; }
   .board .center { text-align: center; align-self: center; padding: 0 .75rem; min-width: 9rem; }
@@ -147,6 +148,11 @@
       <div class="panel"><h2>Phone pages</h2><table class="kv" id="urls"></table>
         <div class="muted small" style="margin-top:.5rem">Open on the phone, then Share → Add to Home Screen.</div></div>
       <div class="panel"><h2>Vision</h2><table class="kv" id="vtable"></table></div>
+      <div class="panel"><h2>Field sides</h2>
+        <div class="row"><label>Red is on the <select id="redside" aria-label="Red side"><option value="left">left</option><option value="right">right</option></select></label>
+          <button class="ghost small" id="bredside">Use event.yaml</button></div>
+        <div class="muted small" style="margin-top:.4rem" id="redsrc"></div>
+        <div class="muted small" style="margin-top:.3rem">Screen order only, on every page. Scores, data and TBA don't change. Refs and the emcee can also flip their own phone.</div></div>
       <div class="panel"><h2>The Blue Alliance</h2><table class="kv" id="ttable"></table>
         <div class="row" style="margin-top:.6rem"><button id="bpushall">Push everything</button><button class="ghost" id="bretry">Retry failed</button></div>
         <div class="row" style="margin-top:.6rem"><button class="ghost danger" id="btbadelall">Take all matches and rankings off TBA</button></div>
@@ -176,6 +182,11 @@ const { $, esc } = FMS;
 const S = () => FMS.state;
 const api = async (p, b, m) => { try { return await FMS.api(p, b, m); } catch (e) { FMS.toast(e.message, true); throw e; } };
 let preview = null, reviewPending = false, lastReviewSig = "";
+// Alliance screen order (Setup → Field sides). Every red/blue pair below is drawn in this order.
+const sides = () => FMS.sides();
+const Cap = (a) => (a === "red" ? "Red" : "Blue");
+const bySide = (f) => sides().map(f).join("");
+const vs = (x) => sides().map((a) => `<span class="t${a}">${x[a]}</span>`).join("–");   // "12–8" in screen order
 
 FMS.gate("control").then(() => { $("#app").hidden = false; FMS.connect(); });
 
@@ -205,8 +216,9 @@ document.querySelectorAll("[data-off]").forEach((b) => b.onclick = () => {
 function renderMatch(s) {
   const cur = s.current;
   const open = s.matches.filter((m) => m.status !== "committed" || (cur && m.key === cur.key));
-  $("#msel").innerHTML = open.map((m) => `<option value="${m.key}" ${cur && m.key === cur.key ? "selected" : ""}>${m.key} · ${m.red.join(" ")} v ${m.blue.join(" ")}</option>`).join("");
+  $("#msel").innerHTML = open.map((m) => `<option value="${m.key}" ${cur && m.key === cur.key ? "selected" : ""}>${m.key} · ${sides().map((a) => m[a].join(" ")).join(" v ")}</option>`).join("");
   $("#curkey").textContent = cur ? cur.key : "";
+  FMS.placeSides({ red: $(".board .side.red"), blue: $(".board .side.blue") });
   if (!cur) {
     ["#rteams", "#bteams", "#msched"].forEach((id) => $(id).textContent = "");
     $("#rscore").textContent = $("#bscore").textContent = 0; $("#mstatus").textContent = "–";
@@ -227,7 +239,7 @@ function renderMatch(s) {
   $("#breset").disabled = cur.status === "committed" || cur.status === "scheduled";
   $("#offv").textContent = (cur.offset || 0).toFixed(1) + " s";
   renderAuto(s);
-  const sig = JSON.stringify([cur.key, cur.status, cur.score, cur.climbs, cur.fouls, cur.video, cur.winner_override, cur.suggested_video]);
+  const sig = JSON.stringify([sides(), cur.key, cur.status, cur.score, cur.climbs, cur.fouls, cur.video, cur.winner_override, cur.suggested_video]);
   const ae = document.activeElement;
   if ($("#review").contains(ae) && ae.matches("input,select")) { reviewPending = true; return; }
   if (sig !== lastReviewSig) { lastReviewSig = sig; renderReview(s); }
@@ -242,11 +254,11 @@ function renderAuto(s) {
   const ra = cur.score.red.auto_fuel, ba = cur.score.blue.auto_fuel;
   const close = Math.abs(ra - ba) <= g.close_auto_margin;
   box.innerHTML = `<h2>Auto result</h2>
-    <div class="row"><span class="num">Auto fuel <b class="tred">${ra}</b> – <b class="tblue">${ba}</b></span>
+    <div class="row"><span class="num">Auto fuel ${sides().map((a) => `<b class="t${a}">${cur.score[a].auto_fuel}</b>`).join(" – ")}</span>
       <span>Hub off first: <b class="t${cur.first_inactive}">${cur.first_inactive}</b>${cur.fi_coin ? " (tie, coin flip)" : ""}</span>
       <span class="pill ${cur.fi_locked ? "ok" : "bad"}">${cur.fi_locked ? "locked" : "not locked"}</span></div>
     ${close ? `<div class="warnbox" style="margin-top:.6rem">Within ${g.close_auto_margin} fuel. Vision error could flip this; confirm with the head ref.</div>` : ""}
-    <div class="row" style="margin-top:.6rem"><button class="red" data-fi="red">Red off first · lock</button><button class="blue" data-fi="blue">Blue off first · lock</button></div>
+    <div class="row" style="margin-top:.6rem">${bySide((a) => `<button class="${a}" data-fi="${a}">${Cap(a)} off first · lock</button>`)}</div>
     <div class="muted small" style="margin-top:.4rem">Shift scoring follows whatever the hub lights actually showed. Lock the call that was used on the field.</div>`;
   box.querySelectorAll("[data-fi]").forEach((b) => b.onclick = () => api("/api/match/first_inactive", { key: cur.key, alliance: b.dataset.fi, lock: true }));
 }
@@ -259,15 +271,14 @@ function renderReview(s) {
   const dis = locked ? "disabled" : "";
   const inp = (a, p) => `<input type="number" min="0" data-id="f-${a}-${p}" data-a="${a}" data-p="${p}" value="${sc[a].fuel[p]}" ${dis}>`;
   const fuelRows = names.map((p) => `<tr><td>${FMS.LABEL[p]}</td>
-      <td class="r num muted">${sc.red.vision_fuel[p]}</td><td>${inp("red", p)}</td>
-      <td class="r num muted">${sc.blue.vision_fuel[p]}</td><td>${inp("blue", p)}</td></tr>`).join("");
+      ${bySide((a) => `<td class="r num muted">${sc[a].vision_fuel[p]}</td><td>${inp(a, p)}</td>`)}</tr>`).join("");
   const climbs = (a) => cur[a].map((t, i) => {
     const r = ((cur.climbs || {})[a] || [])[i] || { auto_l1: false, level: 0 };
     return `<tr><td class="t${a}"><b>${t}</b></td>
       <td><label><input type="checkbox" data-id="c-${a}-${i}-a" data-ca="${a}" data-ci="${i}" data-auto ${r.auto_l1 ? "checked" : ""} ${dis}> L1 in auto</label></td>
       <td><select data-id="c-${a}-${i}-l" data-ca="${a}" data-ci="${i}" ${dis}>${[0, 1, 2, 3].map((l) => `<option value="${l}" ${r.level === l ? "selected" : ""}>${l ? "Level " + l : "No climb"}</option>`).join("")}</select></td></tr>`;
   }).join("");
-  const sumRow = (label, k) => `<tr><td>${label}</td><td class="r num">${sc.red[k]}</td><td class="r num">${sc.blue[k]}</td></tr>`;
+  const sumRow = (label, k) => `<tr><td>${label}</td>${bySide((a) => `<td class="r num">${sc[a][k]}</td>`)}</tr>`;
   const bonus = (a) => ["energized", "supercharged", "traversal"].filter((k) => sc[a][k]).join(", ") || "–";
   const t0 = cur.periods[0].start;
   const fouls = cur.fouls.length ? cur.fouls.map((f) => `<tr><td class="t${f.committed_by}">${f.committed_by} ${f.kind}</td><td>${f.team || ""}</td>
@@ -277,24 +288,24 @@ function renderReview(s) {
   box.innerHTML = `
     <div class="panel-head"><h2>Score review · ${cur.key}</h2><span class="pill">${cur.status}</span></div>
     <div class="grid2 review-grid">
-      <div><div class="scroll"><table><tr><th>Period</th><th class="r">Red vision</th><th>Red final</th><th class="r">Blue vision</th><th>Blue final</th></tr>${fuelRows}
-        <tr><td class="muted small">Inactive-hub fuel seen</td><td class="r num muted">${sc.red.uncounted_fuel}</td><td></td><td class="r num muted">${sc.blue.uncounted_fuel}</td><td></td></tr></table></div>
+      <div><div class="scroll"><table><tr><th>Period</th>${bySide((a) => `<th class="r">${Cap(a)} vision</th><th>${Cap(a)} final</th>`)}</tr>${fuelRows}
+        <tr><td class="muted small">Inactive-hub fuel seen</td>${bySide((a) => `<td class="r num muted">${sc[a].uncounted_fuel}</td><td></td>`)}</tr></table></div>
         <div class="muted small" style="margin-top:.3rem">Type the real count in "final" to override vision for that period. Vision data is never deleted.</div></div>
-      <div><table><tr><th></th><th class="r tred">Red</th><th class="r tblue">Blue</th></tr>
+      <div><table><tr><th></th>${bySide((a) => `<th class="r t${a}">${Cap(a)}</th>`)}</tr>
         ${sumRow("Fuel", "total_fuel")}${sumRow("Auto points", "auto_points")}${sumRow("Teleop points", "teleop_points")}
         ${sumRow("Tower points", "tower_points")}${sumRow("Penalty points drawn", "foul_points")}
-        <tr><td><b>Total</b></td><td class="r num"><b>${sc.red.total}</b></td><td class="r num"><b>${sc.blue.total}</b></td></tr>
-        ${playoff ? "" : `<tr><td>Bonus RP</td><td class="r small">${bonus("red")}</td><td class="r small">${bonus("blue")}</td></tr>${sumRow("Ranking points", "rp")}`}
+        <tr><td><b>Total</b></td>${bySide((a) => `<td class="r num"><b>${sc[a].total}</b></td>`)}</tr>
+        ${playoff ? "" : `<tr><td>Bonus RP</td>${bySide((a) => `<td class="r small">${bonus(a)}</td>`)}</tr>${sumRow("Ranking points", "rp")}`}
         </table>
         <div style="margin-top:.6rem">Winner: <b class="t${sc.winner}">${sc.winner}</b>
-        ${playoff ? `<select id="wo" data-id="wo" ${dis}><option value="">by score</option><option value="red" ${cur.winner_override === "red" ? "selected" : ""}>Red advances</option><option value="blue" ${cur.winner_override === "blue" ? "selected" : ""}>Blue advances</option></select>` : ""}</div>
+        ${playoff ? `<select id="wo" data-id="wo" ${dis}><option value="">by score</option>${bySide((a) => `<option value="${a}" ${cur.winner_override === a ? "selected" : ""}>${Cap(a)} advances</option>`)}</select>` : ""}</div>
         ${playoff && sc.tied_on_points && !cur.winner_override ? `<div class="warnbox" style="margin-top:.5rem">Playoff tie. Pick who advances (apply your tiebreaker) or reset and replay.</div>` : ""}
       </div>
     </div>
     <div class="grid2" style="margin-top:1rem">
-      <div><h2>Tower</h2><table>${climbs("red")}${climbs("blue")}</table></div>
+      <div><h2>Tower</h2><table>${bySide(climbs)}</table></div>
       <div><h2>Fouls</h2><table>${fouls}</table>
-        ${locked ? "" : `<div class="row" style="margin-top:.5rem"><button class="red small" data-fadd="red:minor">Red minor</button><button class="red small" data-fadd="red:major">Red major</button><button class="blue small" data-fadd="blue:minor">Blue minor</button><button class="blue small" data-fadd="blue:major">Blue major</button></div>`}</div>
+        ${locked ? "" : `<div class="row" style="margin-top:.5rem">${bySide((a) => ["minor", "major"].map((k) => `<button class="${a} small" data-fadd="${a}:${k}">${Cap(a)} ${k}</button>`).join(""))}</div>`}</div>
     </div>
     <div class="row" style="margin-top:1rem">
       <input id="vid" data-id="vid" placeholder="${esc(cur.suggested_video || "YouTube ID (optional)")}" value="${esc(cur.video || "")}" style="flex:1;min-width:14rem">
@@ -352,6 +363,7 @@ $("#bgen").onclick = async () => {
     renderPreview();
   } finally { $("#bgen").disabled = false; $("#bgen").textContent = "Generate"; }
 };
+let lastPreviewSides = "";
 $("#bimp").onclick = async () => { preview = await api("/api/schedule/import", { csv: $("#csv").value }); renderPreview(); };
 function renderPreview() {
   const p = preview, st = p.stats;
@@ -361,10 +373,11 @@ function renderPreview() {
       <span class="pill">max partner repeat ${st.max_partner_repeat}</span><span class="pill">max opponent repeat ${st.max_opp_repeat}</span></div>` : ""}
     ${p.unknown_teams && p.unknown_teams.length ? `<div class="warnbox">Teams not in config: ${p.unknown_teams.join(", ")}</div>` : ""}
     <div class="${p.fits_before_lunch ? "" : "warnbox"}" style="margin:.5rem 0">Quals end at <b>${p.quals_end}</b>${p.fits_before_lunch ? "" : " — past lunch"}</div>
-    <div class="scroll"><table><tr><th>#</th><th>Time</th><th>Red</th><th>Blue</th></tr>
-    ${p.matches.map((m, i) => `<tr><td>${i + 1}</td><td>${m.scheduled}</td><td class="tred">${m.red.map((t) => t + (m.surrogates.includes(t) ? "*" : "")).join(" ")}</td><td class="tblue">${m.blue.map((t) => t + (m.surrogates.includes(t) ? "*" : "")).join(" ")}</td></tr>`).join("")}
+    <div class="scroll"><table><tr><th>#</th><th>Time</th>${bySide((a) => `<th>${Cap(a)}</th>`)}</tr>
+    ${p.matches.map((m, i) => `<tr><td>${i + 1}</td><td>${m.scheduled}</td>${bySide((a) => `<td class="t${a}">${m[a].map((t) => t + (m.surrogates.includes(t) ? "*" : "")).join(" ")}</td>`)}</tr>`).join("")}
     </table></div>
     <button class="primary" id="bsave" style="margin-top:.8rem">Save this schedule</button>`;
+  lastPreviewSides = sides().join();
   $("#bsave").onclick = async () => {
     if (!confirm("Replace the qualification schedule?")) return;
     await api("/api/schedule/save", { matches: preview.matches });
@@ -374,10 +387,10 @@ function renderPreview() {
 $("#btbasched").onclick = async () => { const j = await api("/api/tba/schedule"); FMS.toast(`Queued ${j.queued} matches for TBA`); };
 function renderAll(s) {
   const cur = s.current;
-  $("#alltable").innerHTML = `<table><tr><th>Match</th><th>Time</th><th>Red</th><th>Blue</th><th class="r">Score</th><th>Status</th><th></th></tr>
+  $("#alltable").innerHTML = `<table><tr><th>Match</th><th>Time</th>${bySide((a) => `<th>${Cap(a)}</th>`)}<th class="r">Score</th><th>Status</th><th></th></tr>
     ${s.matches.map((m) => `<tr class="${cur && m.key === cur.key ? "cur" : ""}"><td>${m.key}</td><td>${m.scheduled || ""}</td>
-      <td class="tred">${m.red.join(" ")}</td><td class="tblue">${m.blue.join(" ")}</td>
-      <td class="r num">${m.red_score != null ? `<span class="tred">${m.red_score}</span>–<span class="tblue">${m.blue_score}</span>` : ""}</td>
+      ${bySide((a) => `<td class="t${a}">${m[a].join(" ")}</td>`)}
+      <td class="r num">${m.red_score != null ? vs({ red: m.red_score, blue: m.blue_score }) : ""}</td>
       <td><span class="pill">${m.status}</span></td><td><button class="ghost small" data-sel="${m.key}">Open</button>
       <button class="ghost small danger" data-tbadel="${m.key}" title="Remove this match from the TBA event page">Off TBA</button></td></tr>`).join("")}</table>`;
   $("#alltable").querySelectorAll("[data-tbadel]").forEach((b) => b.onclick = async () => {
@@ -397,16 +410,16 @@ function renderAll(s) {
 let resKey = null, resSig = "";
 function renderResults(s) {
   const played = s.matches.filter((m) => m.status === "committed" || m.status === "review");
-  $("#restable").innerHTML = played.length ? `<div class="scroll"><table><tr><th>Match</th><th class="r">Score</th><th>Winner</th><th>Red</th><th>Blue</th><th>Status</th></tr>
+  $("#restable").innerHTML = played.length ? `<div class="scroll"><table><tr><th>Match</th><th class="r">Score</th><th>Winner</th>${bySide((a) => `<th>${Cap(a)}</th>`)}<th>Status</th></tr>
     ${played.map((m) => `<tr class="click ${m.key === resKey ? "cur" : ""}" data-res="${m.key}"><td><b>${m.key}</b></td>
-      <td class="r num"><b>${m.red_score != null ? `<span class="tred">${m.red_score}</span>–<span class="tblue">${m.blue_score}</span>` : ""}</b></td>
+      <td class="r num"><b>${m.red_score != null ? vs({ red: m.red_score, blue: m.blue_score }) : ""}</b></td>
       <td class="t${m.winner || ""}">${m.winner || ""}</td>
-      <td class="tred">${m.red.join(" ")}${m.red_alliance ? ` (A${m.red_alliance})` : ""}</td><td class="tblue">${m.blue.join(" ")}${m.blue_alliance ? ` (A${m.blue_alliance})` : ""}</td>
+      ${bySide((a) => `<td class="t${a}">${m[a].join(" ")}${m[a + "_alliance"] ? ` (A${m[a + "_alliance"]})` : ""}</td>`)}
       <td><span class="pill">${m.status}</span></td></tr>`).join("")}</table></div>`
     : `<div class="muted">No matches played yet.</div>`;
   $("#restable").querySelectorAll("[data-res]").forEach((tr) => tr.onclick = () => { resKey = tr.dataset.res; resSig = ""; renderResults(S()); });
   const m = resKey && s.matches.find((x) => x.key === resKey);
-  const sig = m ? JSON.stringify([m.status, m.red_score, m.blue_score, m.video]) : "";
+  const sig = m ? JSON.stringify([sides(), m.status, m.red_score, m.blue_score, m.video]) : "";
   if (m && sig !== resSig) { resSig = sig; loadResult(m.key); }
 }
 async function loadResult(key) {
@@ -416,10 +429,9 @@ async function loadResult(key) {
   box.hidden = false;
   if (!sc) { box.innerHTML = `<h2>${d.key}</h2><div class="muted">No score.</div>`; return; }
   const names = d.periods.map((p) => p.name), playoff = d.comp_level !== "qm";
-  const row = (l, k) => `<tr><td>${l}</td><td class="r num">${sc.red[k]}</td><td class="r num">${sc.blue[k]}</td></tr>`;
-  const fuel = names.map((p) => `<tr><td>${FMS.LABEL[p]}</td><td class="r num">${sc.red.fuel[p]}${sc.red.fuel[p] !== sc.red.vision_fuel[p] ? ` <span class="muted small">(vision ${sc.red.vision_fuel[p]})</span>` : ""}</td>
-    <td class="r num">${sc.blue.fuel[p]}${sc.blue.fuel[p] !== sc.blue.vision_fuel[p] ? ` <span class="muted small">(vision ${sc.blue.vision_fuel[p]})</span>` : ""}</td></tr>`).join("");
-  const climbs = ["red", "blue"].map((a) => d[a].map((t, i) => {
+  const row = (l, k) => `<tr><td>${l}</td>${bySide((a) => `<td class="r num">${sc[a][k]}</td>`)}</tr>`;
+  const fuel = names.map((p) => `<tr><td>${FMS.LABEL[p]}</td>${bySide((a) => `<td class="r num">${sc[a].fuel[p]}${sc[a].fuel[p] !== sc[a].vision_fuel[p] ? ` <span class="muted small">(vision ${sc[a].vision_fuel[p]})</span>` : ""}</td>`)}</tr>`).join("");
+  const climbs = sides().map((a) => d[a].map((t, i) => {
     const r = ((d.climbs || {})[a] || [])[i] || { auto_l1: false, level: 0 };
     return `<tr><td class="t${a}"><b>${t}</b></td><td>${r.auto_l1 ? "L1 in auto" : ""}</td><td>${r.level ? "Level " + r.level : "No climb"}</td></tr>`;
   }).join("")).join("");
@@ -427,16 +439,16 @@ async function loadResult(key) {
   const fouls = d.fouls.length ? d.fouls.map((f) => `<tr><td class="t${f.committed_by}">${f.committed_by} ${f.kind}</td><td>${f.team || ""}</td><td class="muted small">${FMS.mmss(f.t - t0)} · ${esc(f.ref)}</td></tr>`).join("")
     : `<tr><td class="muted">No fouls</td></tr>`;
   const bonus = (a) => ["energized", "supercharged", "traversal"].filter((k) => sc[a][k]).join(", ") || "–";
-  box.innerHTML = `<div class="row" style="justify-content:space-between"><h2>${d.key} · <span class="tred">${sc.red.total}</span>–<span class="tblue">${sc.blue.total}</span> · winner <span class="t${sc.winner}">${sc.winner}</span></h2>
+  box.innerHTML = `<div class="row" style="justify-content:space-between"><h2>${d.key} · ${vs({ red: sc.red.total, blue: sc.blue.total })} · winner <span class="t${sc.winner}">${sc.winner}</span></h2>
       <div class="row"><span class="pill">${d.status}</span><button class="ghost small" id="resopen">Open in Match tab</button></div></div>
     <div class="grid2">
-      <div><table><tr><th>Fuel</th><th class="r tred">Red</th><th class="r tblue">Blue</th></tr>${fuel}</table>
+      <div><table><tr><th>Fuel</th>${bySide((a) => `<th class="r t${a}">${Cap(a)}</th>`)}</tr>${fuel}</table>
         <h2 style="margin-top:1rem">Tower</h2><table>${climbs}</table></div>
-      <div><table><tr><th></th><th class="r tred">Red</th><th class="r tblue">Blue</th></tr>
+      <div><table><tr><th></th>${bySide((a) => `<th class="r t${a}">${Cap(a)}</th>`)}</tr>
         ${row("Fuel", "total_fuel")}${row("Auto points", "auto_points")}${row("Teleop points", "teleop_points")}
         ${row("Tower points", "tower_points")}${row("Penalty points drawn", "foul_points")}
-        <tr><td><b>Total</b></td><td class="r num"><b>${sc.red.total}</b></td><td class="r num"><b>${sc.blue.total}</b></td></tr>
-        ${playoff ? "" : `<tr><td>Bonus RP</td><td class="r small">${bonus("red")}</td><td class="r small">${bonus("blue")}</td></tr>${row("Ranking points", "rp")}`}</table>
+        <tr><td><b>Total</b></td>${bySide((a) => `<td class="r num"><b>${sc[a].total}</b></td>`)}</tr>
+        ${playoff ? "" : `<tr><td>Bonus RP</td>${bySide((a) => `<td class="r small">${bonus(a)}</td>`)}</tr>${row("Ranking points", "rp")}`}</table>
         <div class="muted small" style="margin-top:.4rem">Hub off first: ${d.first_inactive || "–"}${d.fi_coin ? " (coin flip)" : ""} · start offset ${(d.offset || 0).toFixed(1)} s${d.winner_override ? " · winner picked by scorekeeper" : ""}</div>
         <h2 style="margin-top:1rem">Fouls</h2><table>${fouls}</table>
         ${d.video ? `<div style="margin-top:.6rem">Video: <a href="https://youtu.be/${esc(d.video)}" target="_blank" rel="noopener">${esc(d.video)}</a></div>` : ""}</div>
@@ -466,9 +478,9 @@ function renderAlli(s, force) {
     alliRendered = true;
   }
   const po = s.matches.filter((m) => m.comp_level !== "qm");
-  $("#bracket").innerHTML = (po.length ? `<div class="scroll"><table><tr><th>Match</th><th>Red</th><th>Blue</th><th class="r">Score</th><th>Status</th></tr>
-    ${po.map((m) => `<tr><td>${m.key}</td><td class="tred">A${m.red_alliance}</td><td class="tblue">A${m.blue_alliance}</td>
-      <td class="r num">${m.red_score != null ? m.red_score + "–" + m.blue_score : ""}</td><td><span class="pill">${m.status}</span></td></tr>`).join("")}</table></div>`
+  $("#bracket").innerHTML = (po.length ? `<div class="scroll"><table><tr><th>Match</th>${bySide((a) => `<th>${Cap(a)}</th>`)}<th class="r">Score</th><th>Status</th></tr>
+    ${po.map((m) => `<tr><td>${m.key}</td>${bySide((a) => `<td class="t${a}">A${m[a + "_alliance"]}</td>`)}
+      <td class="r num">${m.red_score != null ? vs({ red: m.red_score, blue: m.blue_score }) : ""}</td><td><span class="pill">${m.status}</span></td></tr>`).join("")}</table></div>`
     : `<div class="muted">Save alliances to create the first two matches. Later matches appear as results come in.</div>`)
     + (s.champion ? `<h2 style="margin-top:1rem">Winners: Alliance ${s.champion}</h2>` : "");
 }
@@ -545,6 +557,8 @@ $("#btbadelall").onclick = async () => {
 $("#bvod").onclick = () => api("/api/webcast", { vod_id: $("#vod").value });
 $("#blive").onclick = () => api("/api/webcast", { stream_start_now: true });
 $("#bwurl").onclick = () => api("/api/webcast", { url: $("#wurl").value });
+$("#redside").onchange = (e) => api("/api/red_side", { side: e.target.value });
+$("#bredside").onclick = () => api("/api/red_side", { side: null });
 document.querySelectorAll("[data-wipe]").forEach((b) => b.onclick = async () => {
   const scope = b.dataset.wipe, pin = $("#wpin").value;
   if (!pin) return FMS.toast("Enter the scorekeeper PIN first", true);
@@ -561,7 +575,7 @@ function renderSetup(s) {
   const base = location.host;
   $("#urls").innerHTML = ["ref", "emcee", "display", "control"].map((p) => `<tr><td>${p}</td><td><a href="/${p}">http://${base}/${p}</a></td></tr>`).join("");
   const v = s.vision;
-  $("#vtable").innerHTML = ["red", "blue"].map((h) => {
+  $("#vtable").innerHTML = sides().map((h) => {
     const x = v[h];
     return `<tr><td>${h} hub</td><td>${!x ? `<span class="pill bad">never connected</span>` :
       x.age > 3 ? `<span class="pill bad">silent ${x.age}s</span>` :
@@ -575,6 +589,9 @@ function renderSetup(s) {
     <tr><td>Pending / sent / failed</td><td class="num">${t.pending || 0} / ${t.sent || 0} / ${t.dead || 0}</td></tr>
     ${t.last_error ? `<tr><td>Last error</td><td class="small">${esc(t.last_error.last_error)}</td></tr>` : ""}`;
   if (document.activeElement !== $("#vod")) $("#vod").value = s.webcast.vod_id || "";
+  $("#redside").value = s.red_side;
+  $("#bredside").disabled = s.red_side_source !== "setup";
+  $("#redsrc").textContent = s.red_side_source === "setup" ? `Set here (event.yaml says ${s.red_side_default}).` : "From event.yaml (display.red_side).";
   $("#livets").textContent = s.webcast.stream_start ? "live since " + new Date(s.webcast.stream_start * 1000).toLocaleTimeString() : "";
 }
 
@@ -600,6 +617,7 @@ FMS.on((s) => {
     $("#sstart").value = s.event.qual_start; $("#scycle").value = s.event.cycle_min; first = false;
     $("#mpt").value = suggestMpt(s);
   }
+  if (preview && lastPreviewSides !== sides().join()) renderPreview();
   renderPills(s); renderMatch(s); renderAll(s); renderResults(s); renderRank(s); renderAlli(s); renderLiveSel(s); renderSetup(s);
 });
 everyFrame(() => {

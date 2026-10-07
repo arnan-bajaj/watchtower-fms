@@ -135,7 +135,15 @@ def build_state():
         "webcast": store.get("webcast") or {},
         "selection": selection_public(),
         "display": store.get("display") or "match",
+        "red_side": red_side(),
+        "red_side_default": CFG["display"]["red_side"],
+        "red_side_source": "setup" if store.get("red_side") else "event.yaml",
     }
+
+
+def red_side():
+    """Screen order only: Setup's live choice, else display.red_side from event.yaml."""
+    return store.get("red_side") or CFG["display"]["red_side"]
 
 
 def selection_public():
@@ -723,6 +731,21 @@ async def display_mode(body: dict = Body(...), x_fms_token: str = Header(None)):
     store.set("display", mode)
     mark_dirty()
     return {"ok": True}
+
+
+@app.post("/api/red_side")
+async def set_red_side(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """side: left | right, or null to fall back to event.yaml. Presentation only; no data changes."""
+    need(x_fms_token)
+    side = body.get("side")
+    if side is None:
+        store.delete("red_side")
+    elif side in config.RED_SIDES:
+        store.set("red_side", side)
+    else:
+        raise HTTPException(400, "side must be left, right or null")
+    mark_dirty()
+    return {"red_side": red_side(), "override": store.get("red_side")}
 
 
 # ------------------------------------------------------------------ wipe

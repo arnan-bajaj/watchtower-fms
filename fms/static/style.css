@@ -128,6 +128,9 @@ td.r, th.r { text-align: right; }
 .phase { font-weight: 650; color: var(--muted); }
 .score { font-size: 2.8rem; font-weight: 850; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .teams { font-weight: 650; }
+/* per-phone "Flip sides" on /ref and /emcee */
+.flipbar { justify-content: flex-end; margin-bottom: .6rem; }
+button.flip.sel { background: var(--ink); border-color: var(--ink); color: #fff; }
 
 /* login gate */
 .gate { max-width: 380px; margin: 12vh auto 0; padding: 1.6rem; width: calc(100% - 2rem); }

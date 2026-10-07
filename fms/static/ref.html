@@ -37,6 +37,7 @@
 <div class="bar"><span><span class="conn"></span> <b id="mk">–</b></span><span class="num" id="clk">–:––</span><span id="me" class="small"></span></div>
 <main class="wrap" id="app" hidden>
   <div class="panel status"><span id="ph" class="phase">–</span><span id="st" class="pill">–</span></div>
+  <div class="row flipbar"><button class="ghost small flip" id="flip">⇄ Flip sides</button></div>
   <div class="fouls">
     <div class="side red"><h3 class="tred">Red fouled</h3><div class="teams" id="rt"></div>
       <button class="fbtn red" data-a="red" data-k="minor">Minor<small>+<span class="pmin"></span> to Blue</small></button>
@@ -59,6 +60,7 @@ FMS.gate("ref", "Your name (e.g. Head ref)").then(() => {
   $("#me").textContent = localStorage.getItem("fms_name") || "";
   FMS.connect();
 });
+FMS.flipToggle($("#flip"));
 document.querySelectorAll(".fbtn").forEach((b) => b.onclick = async () => {
   const cur = FMS.state && FMS.state.current;
   if (!cur) return FMS.toast("No match selected", true);
@@ -85,6 +87,7 @@ function showTag() {
 }
 FMS.on((s) => {
   const cur = s.current, g = s.game;
+  FMS.placeSides({ red: $(".side.red"), blue: $(".side.blue") });
   document.querySelectorAll(".pmin").forEach((e) => e.textContent = g.fouls.minor);
   document.querySelectorAll(".pmaj").forEach((e) => e.textContent = g.fouls.major);
   $("#mk").textContent = cur ? cur.key : "–";

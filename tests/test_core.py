@@ -289,3 +289,53 @@ def test_vision_key_falls_back_to_event_config(tmp_path):
     assert vconfig.load(tmp_path / "v.yaml")["vision_key"] == "abc123"
     (tmp_path / "v.yaml").write_text('fms_url: http://x\nvision_key: "own"\n')
     assert vconfig.load(tmp_path / "v.yaml")["vision_key"] == "own"
+
+
+def _server(tmp_path, monkeypatch, red_side=None):
+    """A fresh fms.server on a scratch config and database (no lifespan: no TBA thread, no tick loop)."""
+    import importlib
+    import sys
+    import yaml
+    from fms import init
+    d = _example_config(tmp_path)
+    init.init(d)
+    ev = yaml.safe_load((d / "event.yaml").read_text())
+    ev["server"]["db"] = str(tmp_path / "fms.sqlite3")
+    if red_side:
+        ev["display"]["red_side"] = red_side
+    (d / "event.yaml").write_text(yaml.safe_dump(ev))
+    monkeypatch.setenv("FMS_CONFIG", str(d / "event.yaml"))
+    monkeypatch.delitem(sys.modules, "fms.server", raising=False)
+    srv = importlib.import_module("fms.server")
+    monkeypatch.delitem(sys.modules, "fms.server")   # the next import gets its own config again
+    return srv, ev
+
+
+def test_red_side_defaults_from_event_yaml_and_setup_overrides_it(tmp_path, monkeypatch):
+    import pytest
+    from fastapi.testclient import TestClient
+    from fms import config
+    srv, ev = _server(tmp_path, monkeypatch)
+    assert ev["display"]["red_side"] == "right"             # example config / fms.init default
+    c = TestClient(srv.app)
+    st = c.get("/api/state").json()                        # what every page reads (also the /ws payload)
+    assert (st["red_side"], st["red_side_default"], st["red_side_source"]) == ("right", "right", "event.yaml")
+
+    ctl = {"X-FMS-Token": srv.token_for("control")}
+    assert c.post("/api/red_side", json={"side": "left"}).status_code == 401
+    assert c.post("/api/red_side", json={"side": "left"}, headers={"X-FMS-Token": srv.token_for("ref")}).status_code == 401
+    assert c.post("/api/red_side", json={"side": "middle"}, headers=ctl).status_code == 400
+    assert c.post("/api/red_side", json={"side": "left"}, headers=ctl).json() == {"red_side": "left", "override": "left"}
+    st = c.get("/api/state").json()
+    assert (st["red_side"], st["red_side_default"], st["red_side_source"]) == ("left", "right", "setup")
+    assert srv.store.get("red_side") == "left"              # survives a restart: kept in SQLite like webcast
+    assert c.post("/api/red_side", json={"side": None}, headers=ctl).json() == {"red_side": "right", "override": None}
+    assert c.get("/api/state").json()["red_side"] == "right"
+
+    (tmp_path / "b").mkdir()
+    srv2, _ = _server(tmp_path / "b", monkeypatch, red_side="left")
+    assert TestClient(srv2.app).get("/api/state").json()["red_side"] == "left"
+
+    bad = {**config.DEFAULTS, "display": {"red_side": "up"}}
+    with pytest.raises(SystemExit, match="red_side"):
+        config.validate(bad)

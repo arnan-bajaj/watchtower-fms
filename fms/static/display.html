@@ -82,6 +82,7 @@ FMS.on((s) => {
   $("#matchstage").hidden = !!showSel;
   if (showSel) renderSel(s); else lastPicks = -1;
   const cur = s.current;
+  FMS.placeSides({ red: $(".al.red"), blue: $(".al.blue") });
   $("#ev").textContent = s.event.name;
   $("#mk").textContent = cur ? cur.key.toUpperCase() : "";
   $("#rt").textContent = cur ? cur.red.join("  ") : "";
@@ -93,7 +94,7 @@ FMS.on((s) => {
     const w = sc.winner === "tie" ? "Tie" : (sc.winner === "red" ? "Red" : "Blue") + " wins";
     const col = (a) => `<table>${rows.map(([l, k]) => `<tr><td>${l}</td><td class="r num">${sc[a][k]}</td></tr>`).join("")}
       ${cur.comp_level === "qm" ? `<tr><td>Ranking points</td><td class="r num">${sc[a].rp}</td></tr>` : ""}</table>`;
-    $("#foot").innerHTML = `<div class="win">${w}</div><div class="bd">${col("red")}${col("blue")}</div>`;
+    $("#foot").innerHTML = `<div class="win">${w}</div><div class="bd">${FMS.sides().map(col).join("")}</div>`;
   } else {
     $("#foot").innerHTML = cur && cur.status !== "scheduled" ? `<div class="c phase">Scores are provisional until reviewed</div>` : "";
   }
@@ -103,7 +104,7 @@ everyFrame(() => {
   $("#clk").textContent = FMS.mmss(p.clock);
   $("#ph").textContent = p.label;
   const live = p.active && !["pre", "post", "pause"].includes(p.name);
-  for (const a of ["red", "blue"]) {
+  for (const a of FMS.sides()) {
     const el = $(a === "red" ? "#rh" : "#bh");
     el.classList.toggle("on", !!(live && p.active[a]));
     el.textContent = live ? (p.active[a] ? "Hub active" : "Hub inactive") : "";

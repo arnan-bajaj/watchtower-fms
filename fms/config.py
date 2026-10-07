@@ -17,6 +17,9 @@ DEFAULTS = {
         "cycle_min": 8,
         "lunch": "12:00",
     },
+    "display": {
+        "red_side": "right",      # which side of every screen red is drawn on; /control -> Setup overrides it live
+    },
     "server": {
         "host": "0.0.0.0",
         "port": 8000,
@@ -69,8 +72,13 @@ def load(path: str | None = None) -> dict:
     return cfg
 
 
+RED_SIDES = ("left", "right")
+
+
 def validate(cfg, path="config/event.yaml"):
     """Refuse to serve with placeholder or shared PINs: anyone on the venue WiFi can open the pages."""
+    if cfg["display"]["red_side"] not in RED_SIDES:
+        raise SystemExit(f"display.red_side in {path} must be left or right.")
     pins = {r: str(v).strip() for r, v in cfg["server"]["pins"].items()}
     bad = [r for r, v in pins.items() if not v or v == PLACEHOLDER]
     if bad:

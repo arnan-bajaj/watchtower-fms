@@ -69,6 +69,37 @@ const FMS = (() => {
     setTimeout(() => el.remove(), err ? 4000 : 2200);
   }
 
+  // Screen order of the alliances, left to right (or top to bottom). Presentation only: alliance keys,
+  // colours and data never change. state.red_side comes from Setup (else event.yaml); pages that call
+  // flipToggle() also apply this phone's own "Flip sides" choice on top.
+  let flippable = false;
+  const flipKey = () => "fms_flip_" + role;
+  function flipped() {
+    if (!flippable) return false;
+    try { return localStorage.getItem(flipKey()) === "1"; } catch { return false; }
+  }
+  function sides() {
+    const redLeft = (state && state.red_side === "left") !== flipped();
+    return redLeft ? ["red", "blue"] : ["blue", "red"];
+  }
+  // Put the two alliance elements of a static layout in screen order; anything between them stays put.
+  function placeSides(els) {
+    const [a, b] = sides().map((s) => els[s]);
+    a.parentNode.insertBefore(a, a.parentNode.firstElementChild);
+    b.parentNode.appendChild(b);
+  }
+  // Wire a per-phone "Flip sides" button (ref/emcee: the far side of the field sees it mirrored).
+  function flipToggle(btn) {
+    flippable = true;
+    const show = () => { btn.classList.toggle("sel", flipped()); btn.setAttribute("aria-pressed", flipped()); };
+    btn.onclick = () => {
+      try { localStorage.setItem(flipKey(), flipped() ? "0" : "1"); } catch {}
+      show();
+      if (state) subs.forEach((f) => f(state));
+    };
+    show();
+  }
+
   // Gate a page behind a PIN. Resolves once logged in.
   function gate(r, extraField) {
     role = r;
@@ -96,6 +127,7 @@ const FMS = (() => {
   }
 
   return { connect, on: (f) => subs.push(f), api, phase, mmss, now, toast, gate, $, esc, LABEL,
+           sides, placeSides, flipToggle,
            get state() { return state; }, setRole: (r) => (role = r) };
 })();
 

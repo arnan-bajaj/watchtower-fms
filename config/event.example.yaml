@@ -12,6 +12,11 @@ event:
   cycle_min: 8                  # match-to-match time; drives the schedule clock
   lunch: "12:00"                # schedule preview warns if quals run past this
 
+# ---------------------------------------------------------------- display
+display:
+  red_side: right               # left | right: where red is drawn on every page (screen order only).
+                                # /control -> Setup can change it live; that setting wins over this one.
+
 # ---------------------------------------------------------------- server
 server:
   host: 0.0.0.0

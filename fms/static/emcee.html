@@ -29,16 +29,17 @@
 <div class="bar"><span><span class="conn"></span> <b id="mk">–</b></span><span id="st" class="pill">–</span></div>
 <main class="wrap" id="app" hidden>
   <div class="panel big"><div class="clock num" id="clk">–:––</div><div class="phase" id="ph">–</div></div>
+  <div class="row flipbar"><button class="ghost small flip" id="flip">⇄ Flip sides</button></div>
   <div class="hubs">
     <div class="hub red" id="hr"><div class="name tred">Red hub</div><div class="state" id="hrs">–</div></div>
     <div class="hub blue" id="hb"><div class="name tblue">Blue hub</div><div class="state" id="hbs">–</div></div>
   </div>
   <div class="next" id="nx"></div>
   <div class="panel auto" id="auto" style="margin-top:1rem"></div>
-  <div class="panel"><div class="scoreline">
+  <div class="panel"><div id="lines"><div class="scoreline" id="rline">
     <span class="teams tred" id="rt">Red</span><span class="score num tred" id="rs">0</span></div>
-    <div class="scoreline">
-    <span class="teams tblue" id="bt">Blue</span><span class="score num tblue" id="bs">0</span></div>
+    <div class="scoreline" id="bline">
+    <span class="teams tblue" id="bt">Blue</span><span class="score num tblue" id="bs">0</span></div></div>
     <div class="hint">Live score is provisional until the scorekeeper commits it.</div></div>
 </main>
 <script src="/static/common.js"></script>
@@ -46,11 +47,14 @@
 const { $, esc } = FMS;
 let buzzed = null;
 FMS.gate("emcee").then(() => { $("#app").hidden = false; FMS.connect(); });
+FMS.flipToggle($("#flip"));
 
 function side(a) { return a === "red" ? "Red" : "Blue"; }
 
 FMS.on((s) => {
   const cur = s.current, g = s.game;
+  FMS.placeSides({ red: $("#hr"), blue: $("#hb") });
+  FMS.placeSides({ red: $("#rline"), blue: $("#bline") });
   $("#mk").textContent = cur ? cur.key : "–";
   $("#st").textContent = cur ? cur.status : "–";
   $("#rt").textContent = cur ? cur.red.join(" · ") : "Red";
@@ -62,13 +66,14 @@ FMS.on((s) => {
     box.innerHTML = `<h3>Auto result</h3><div class="muted">Shows here ${g.score_grace_s}s after auto ends.</div>`;
     return;
   }
-  const sc = cur.score, fi = cur.first_inactive, on = fi === "red" ? "blue" : "red";
+  const sc = cur.score, fi = cur.first_inactive;
   const ra = sc.red.auto_fuel, ba = sc.blue.auto_fuel;
   const close = Math.abs(ra - ba) <= g.close_auto_margin;
+  const order = FMS.sides();
   box.innerHTML = `
     <h3 class="t${fi}">${cur.fi_coin ? "Auto tied — coin flip: " + side(fi) : side(fi) + " won auto"}</h3>
-    <div class="num">Auto fuel: <b class="tred">${ra}</b> red, <b class="tblue">${ba}</b> blue</div>
-    <div style="margin-top:.5rem"><b>Shift 1:</b> ${side(fi)} hub OFF, ${side(on)} hub ON</div>
+    <div class="num">Auto fuel: ${order.map((a) => `<b class="t${a}">${sc[a].auto_fuel}</b> ${a}`).join(", ")}</div>
+    <div style="margin-top:.5rem"><b>Shift 1:</b> ${order.map((a) => `${side(a)} hub ${a === fi ? "OFF" : "ON"}`).join(", ")}</div>
     ${close && !cur.fi_locked ? `<div class="warnbox" style="margin-top:.6rem">Close auto (within ${g.close_auto_margin}). Get the head ref's call before setting lights.</div>` : ""}
     ${cur.fi_locked ? `<div class="pill ok" style="margin-top:.7rem">Lights set · locked</div>`
       : `<button class="lock primary" id="lk">Lights set: ${side(fi)} off first</button>`}`;
@@ -95,7 +100,7 @@ everyFrame(() => {
   const n = p.next;
   if (live && n && cur.first_inactive) {
     const dt = n.start - FMS.now();
-    const txt = `In ${Math.ceil(dt)}s → ${FMS.LABEL[n.name]}: Red ${n.active.red ? "ON" : "OFF"}, Blue ${n.active.blue ? "ON" : "OFF"}`;
+    const txt = `In ${Math.ceil(dt)}s → ${FMS.LABEL[n.name]}: ` + FMS.sides().map((a) => `${side(a)} ${n.active[a] ? "ON" : "OFF"}`).join(", ");
     nx.textContent = txt;
     nx.classList.toggle("soon", dt <= 5);
     const tag = cur.key + n.name;
