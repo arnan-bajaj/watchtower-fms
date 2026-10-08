@@ -117,7 +117,8 @@
     </div>
     <div class="panel">
       <div class="panel-head"><h2>All matches</h2>
-        <div class="row"><button id="btbasched" class="small">Send schedule to TBA</button><a href="/api/export.csv" download="fms-results.csv"><button class="ghost small">Download CSV</button></a></div></div>
+        <div class="row"><button id="bsreport" class="ghost small">Quality report</button><button id="btbasched" class="small">Send schedule to TBA</button><a href="/api/export.csv" download="fms-results.csv"><button class="ghost small">Download CSV</button></a></div></div>
+      <div id="sreport" hidden></div>
       <div class="scroll" id="alltable"></div>
     </div>
   </section>
@@ -384,15 +385,34 @@ let lastPreviewSides = "";
 $("#bimp").onclick = async () => { preview = await api("/api/schedule/import", { ...dayForm(), csv: $("#csv").value }); renderPreview(); };
 // True where match i is the first one after the lunch break.
 const lunchRow = (p, i) => p.lunch && i > 0 && hhmm(p.matches[i].scheduled) >= hhmm(p.lunch.end) && hhmm(p.matches[i - 1].scheduled) < hhmm(p.lunch.end);
+// Schedule quality: back-to-backs vs the lower bound, per-team load, repeats, rule violations.
+function reportHtml(r) {
+  if (!r) return "";
+  const v = r.violations || [], over = r.back_to_back - r.lower_bound;
+  return `<div class="row small" style="margin:.5rem 0">
+      <span class="pill ${over ? "bad" : "ok"}">${r.back_to_back} back-to-back · lower bound ${r.lower_bound}</span>
+      <span class="pill">most for one team ${r.max_team_back_to_back}</span>
+      <span class="pill">max partner repeat ${r.max_partner_repeat}</span><span class="pill">max opponent repeat ${r.max_opp_repeat}</span>
+      ${r.surrogates ? `<span class="pill">${r.surrogates} surrogate${r.surrogates === 1 ? "" : "s"} (*)</span>` : ""}
+      ${r.seed ? `<span class="pill">seed ${esc(r.seed)}</span>` : ""}
+      ${r.breaks.length ? `<span class="muted">break after ${r.breaks.map((b) => "qm" + b).join(", ")}; back-to-backs don't count across it</span>` : ""}</div>
+    ${v.length ? `<div class="warnbox"><b>Rule violations</b><br>${v.map(esc).join("<br>")}</div>` : `<div class="muted small">No rule violations.</div>`}
+    ${(r.notes || []).map((n) => `<div class="muted small">${esc(n)}</div>`).join("")}
+    <details style="margin:.5rem 0"><summary class="small">Per team</summary><div class="scroll"><table class="small">
+      <tr><th>Team</th><th class="r">Matches</th><th>Surrogate</th><th class="r">Back-to-back</th><th class="r">Min gap</th><th class="r">Red/blue</th><th class="r">Stations 1/2/3</th></tr>
+      ${r.per_team.map((t) => `<tr><td>${t.team}</td><td class="r num">${t.matches}</td><td>${t.surrogate || ""}</td>
+        <td class="r num">${t.back_to_back}</td><td class="r num">${t.min_gap ?? ""}</td><td class="r num">${t.red}/${t.blue}</td>
+        <td class="r num">${t.stations.join("/")}</td></tr>`).join("")}</table></div></details>`;
+}
 function renderPreview() {
-  const p = preview, st = p.stats;
+  const p = preview;
   $("#spreview").innerHTML = `
-    ${st ? `<div class="row small"><span class="pill">${p.matches.length} matches</span>
-      <span class="pill ${st.back_to_back ? "bad" : "ok"}">${st.back_to_back} back-to-back</span>
-      <span class="pill">max partner repeat ${st.max_partner_repeat}</span><span class="pill">max opponent repeat ${st.max_opp_repeat}</span></div>` : ""}
+    <div class="row small"><span class="pill">${p.matches.length} matches</span></div>
+    ${reportHtml(p.report && { ...p.report, seed: p.seed })}
     ${p.unknown_teams && p.unknown_teams.length ? `<div class="warnbox">Teams not in config: ${p.unknown_teams.join(", ")}</div>` : ""}
     <div class="${p.fits ? "" : "warnbox"}" style="margin:.5rem 0">Quals end at <b>${p.quals_end}</b>${p.fits ? "" : ` — past ${p.limit_name} (${p.limit})`}
       ${p.lunch ? `<span class="muted small"> · lunch ${p.lunch.start}–${p.lunch.end}, ${p.after_lunch} match${p.after_lunch === 1 ? "" : "es"} after it</span>` : ""}</div>
+    ${p.seed ? `<div class="muted small">Seed <b>${esc(p.seed)}</b>: type it in Seed to get this exact schedule again.</div>` : ""}
     <div class="scroll"><table><tr><th>#</th><th>Time</th>${bySide((a) => `<th>${Cap(a)}</th>`)}</tr>
     ${p.matches.map((m, i) => `${lunchRow(p, i) ? `<tr><td></td><td colspan="3" class="muted"><b>Lunch</b> ${p.lunch.start}–${p.lunch.end}</td></tr>` : ""}<tr><td>${i + 1}</td><td>${m.scheduled}</td>${bySide((a) => `<td class="t${a}">${m[a].map((t) => t + (m.surrogates.includes(t) ? "*" : "")).join(" ")}</td>`)}</tr>`).join("")}
     </table></div>
@@ -400,16 +420,22 @@ function renderPreview() {
   lastPreviewSides = sides().join();
   $("#bsave").onclick = async () => {
     if (!confirm("Replace the qualification schedule?")) return;
-    await api("/api/schedule/save", { matches: preview.matches });
+    await api("/api/schedule/save", { matches: preview.matches, seed: preview.seed || null, breaks: preview.breaks || [],
+                                      matches_per_team: preview.matches_per_team || null });
     FMS.toast("Schedule saved. Send it to TBA when ready.");
   };
 }
+$("#bsreport").onclick = async () => {
+  const box = $("#sreport");
+  if (!box.hidden) { box.hidden = true; return; }
+  box.innerHTML = reportHtml(await api("/api/schedule/report", undefined, "GET")); box.hidden = false;
+};
 $("#btbasched").onclick = async () => { const j = await api("/api/tba/schedule"); FMS.toast(`Queued ${j.queued} matches for TBA`); };
 function renderAll(s) {
   const cur = s.current;
   $("#alltable").innerHTML = `<table><tr><th>Match</th><th>Time</th>${bySide((a) => `<th>${Cap(a)}</th>`)}<th class="r">Score</th><th>Status</th><th></th></tr>
     ${s.matches.map((m) => `<tr class="${cur && m.key === cur.key ? "cur" : ""}"><td>${m.key}</td><td>${m.scheduled || ""}</td>
-      ${bySide((a) => `<td class="t${a}">${m[a].join(" ")}</td>`)}
+      ${bySide((a) => `<td class="t${a}">${m[a].map((t) => t + ((m.surrogates || []).includes(t) ? "*" : "")).join(" ")}</td>`)}
       <td class="r num">${m.red_score != null ? vs({ red: m.red_score, blue: m.blue_score }) : ""}</td>
       <td><span class="pill">${m.status}</span></td><td><button class="ghost small" data-sel="${m.key}">Open</button>
       <button class="ghost small danger" data-tbadel="${m.key}" title="Remove this match from the TBA event page">Off TBA</button></td></tr>`).join("")}</table>`;

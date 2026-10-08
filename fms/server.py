@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import pathlib
+import random
 import secrets
 import threading
 import time
@@ -339,17 +340,27 @@ def _preview(matches, day):
             "after_lunch": sum(schedule.hm(m["scheduled"]) >= schedule.hm(le) for m in matches)}
 
 
+def _lunch_breaks(m_count, day):
+    """Match numbers the lunch break follows, for a schedule of m_count matches on this day's clock."""
+    if not day["after_lunch"]:
+        return []
+    ms = schedule.add_times([{} for _ in range(m_count)], day["start"], day["cycle"], day["lunch"])
+    return schedule.breaks_from_times(ms, day["cycle"])
+
+
 @app.post("/api/schedule/preview")
 def schedule_preview(body: dict = Body(...), x_fms_token: str = Header(None)):
     need(x_fms_token)
     mpt = int(body.get("matches_per_team", 6))
     day = _day(body)
-    seed = body.get("seed")
-    if len(CFG["event"]["teams"]) < 6:
+    seed = str(body.get("seed") or "").strip() or str(random.SystemRandom().randrange(1, 1_000_000))
+    teams = CFG["event"]["teams"]
+    if len(teams) < 6:
         raise HTTPException(400, "Add at least 6 team numbers to event.teams in config/event.yaml, then restart the server")
-    matches, st = schedule.generate(CFG["event"]["teams"], mpt, seed=seed)
+    breaks = _lunch_breaks(schedule.match_count(len(teams), mpt), day)
+    matches, rep = schedule.generate(teams, mpt, breaks=breaks, seed=seed)
     out = _preview(matches, day)
-    out["stats"] = st
+    out.update(report=rep, seed=seed, breaks=breaks, matches_per_team=mpt)
     return out
 
 
@@ -366,6 +377,8 @@ def schedule_import(body: dict = Body(...), x_fms_token: str = Header(None)):
     except ValueError:
         raise HTTPException(400, "A time in the CSV isn't HH:MM")
     out["unknown_teams"] = unknown
+    out["breaks"] = schedule.breaks_from_times(matches, day["cycle"])
+    out["report"] = schedule.report(matches, CFG["event"]["teams"], out["breaks"])
     return out
 
 
@@ -381,9 +394,27 @@ async def schedule_save(body: dict = Body(...), x_fms_token: str = Header(None))
                             "ord": base + i, "red": m["red"], "blue": m["blue"],
                             "surrogates": m.get("surrogates", []), "scheduled": m.get("scheduled"),
                             "status": "scheduled", "adjust": {}, "climbs": {}})
+    # How it was made, so a generated schedule can be reproduced from its seed.
+    store.set("schedule_meta", {"source": "generated" if body.get("seed") else "import",
+                                "seed": body.get("seed"), "matches_per_team": body.get("matches_per_team"),
+                                "breaks": body.get("breaks") or [], "saved_at": time.time()})
     store.set("current", "qm1")
     mark_dirty()
     return {"ok": True, "count": len(body["matches"])}
+
+
+@app.get("/api/schedule/report")
+def schedule_report(x_fms_token: str = Header(None)):
+    """Quality report for the saved qualification schedule."""
+    need(x_fms_token)
+    qm = store.matches("qm")
+    meta = store.get("schedule_meta") or {}
+    breaks = meta.get("breaks")
+    if breaks is None:      # saved before schedule_meta existed: infer lunch from the clock
+        breaks = schedule.breaks_from_times(qm, float(CFG["event"]["cycle_min"]))
+    rep = schedule.report(qm, CFG["event"]["teams"], breaks)
+    rep["seed"] = meta.get("seed")
+    return rep
 
 
 @app.post("/api/tba/schedule")
@@ -878,6 +909,7 @@ def export():
     head = ["match", "status", "red1", "red2", "red3", "blue1", "blue2", "blue3", "red", "blue"]
     for a in ("red", "blue"):
         head += [f"{a}_{n}" for n in names] + [f"{a}_tower", f"{a}_fouls_drawn", f"{a}_rp"]
+    head.append("surrogates")       # last, so existing column positions don't move
     wr.writerow(head)
     for m in store.matches():
         bd = m.get("breakdown")
@@ -889,6 +921,7 @@ def export():
                                                             bd[a]["foul_points"], bd[a]["rp"]]
             else:
                 row += [""] * (len(names) + 3)
+        row.append(" ".join(str(t) for t in m.get("surrogates") or []))
         wr.writerow(row)
     return PlainTextResponse(buf.getvalue(), media_type="text/csv")
 

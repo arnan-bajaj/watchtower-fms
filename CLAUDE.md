@@ -89,8 +89,11 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
 - Count feeds to a field system (e.g. bioarena) normally run over the same venue WiFi, no wired link. The
   field accepts one source address, so its counter setting must hold the Mac's current IP, and `feeds:`
   must hold the field's IP; both change per network.
-- With few teams (e.g. 12) and 6-team matches, some back-to-backs are unavoidable; the schedule optimizer
-  minimizes them. Schedules need >= 6 teams; live alliance selection needs >= 12 (4 alliances of 3).
+- Schedule generator (`fms/schedule.py`): greedy + annealing over restarts from one seed, a fixed move count
+  (never a time budget) so a seed reproduces. Hard: back-to-backs = max(0, 12-N) per in-session pair (breaks
+  = match numbers lunch follows), no three in a row (impossible below 9 teams), counts within 1, one
+  surrogate per extra team on its 3rd match. `schedule.report` checks any schedule; kv `schedule_meta` holds
+  the seed and breaks. 12 teams => bound 0 => two fixed groups alternate per session. Schedules need >= 6 teams; live alliance selection needs >= 12 (4 alliances of 3).
 - Quals end by `lunch` by default. `quals_after_lunch` (or the Schedule tab checkbox) makes `schedule.add_times`
   skip the `lunch`–`lunch_end` break (no match's cycle overlaps it) and warn against `day_end` instead.
 

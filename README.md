@@ -335,17 +335,17 @@ Open `/control` → **Schedule**.
 1. The page suggests matches per team from your team count, start time, cycle time and lunch.
    - Tick **Quals continue after lunch** to run quals through the afternoon (e.g. an event that's only quals). Set **Lunch from / to** and **Day ends**. The suggestion then counts the slots before lunch plus the slots between the end of lunch and the end of the day.
    - The form starts from `event.yaml` (`lunch`, `lunch_end`, `quals_after_lunch`, `day_end`). Changes here only affect this schedule.
-2. Click **Generate**. It searches for about 4 s and shows a preview with stats: back-to-backs, max partner and opponent repeats, and when quals end.
+2. Click **Generate**. It searches for 1–3 s and shows a preview with a quality report: back-to-backs against the lowest number possible, max partner and opponent repeats, rule violations (there should be none), a per-team table (matches, surrogate match, back-to-backs, shortest gap, red/blue, stations), and when quals end.
    - With quals after lunch, no match runs into the break: a match that wouldn't finish its cycle before lunch starts moves to the end of lunch, and the preview shows a **Lunch** row there. It warns if quals run past **Day ends** instead of past lunch.
 3. Click **Save this schedule.**
 
-Seed is optional; the same seed gives the same schedule.
+Seed is optional. Left blank, the server picks one and shows it; the same seed, teams, matches per team and lunch give the same schedule on any machine. The seed is saved with the schedule. **Quality report** under All matches shows the same report for the saved schedule.
 
 **Import instead:** paste CSV lines `match,red1,red2,red3,blue1,blue2,blue3[,HH:MM]`. Mark a surrogate with `*`, e.g. `254*`. Rows without a time get one from the form above, lunch included. Times in the CSV are used as they are.
 
-**Surrogates:** if `teams × matches per team` isn't divisible by 6, some teams play one extra match as a surrogate. Surrogate matches don't count in their rankings.
+**Surrogates:** if `teams × matches per team` isn't divisible by 6, some teams play one extra match as a surrogate, never more than one each. As in FRC, it is the team's third match. Surrogate matches don't count in their rankings. They show with `*` in the tables, in the last column (`surrogates`) of the results CSV, and go to TBA in `alliances.*.surrogates`.
 
-**Back-to-backs:** with 12 teams and 6-team matches, some teams will play two matches in a row. Avoiding that entirely would mean the same two groups of 6 alternate all day. The generator minimizes them. Plan queueing and battery swaps around the ones it shows.
+**Back-to-backs:** two consecutive matches fill 12 slots, so with N teams at least 12 − N teams play both. The generator always reaches that minimum (counting nothing across lunch when quals continue after it), spreads the forced ones evenly (11 teams, 17 matches, lunch after qm10: 15, seven teams with 1 and four with 2), and never schedules three in a row. Below 9 teams three in a row can't be avoided; the report says so. The minimum has a price: with exactly 12 teams it is 0, which means each session alternates the same two groups of 6. Plan queueing and battery swaps around the back-to-backs the report shows.
 
 **Push to TBA:** click **Send schedule to TBA**. This sends the team list and all matches as unplayed.
 

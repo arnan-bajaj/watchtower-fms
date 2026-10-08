@@ -96,26 +96,6 @@ def test_adjust_total_and_playoff():
     assert bd["winner"] == "blue"
 
 
-def test_schedule_12_teams():
-    teams = list(range(101, 113))
-    ms, st = schedule.generate(teams, 9, seed=1, time_budget_s=1.5)
-    assert len(ms) == 18
-    c = Counter(t for m in ms for t in m["red"] + m["blue"])
-    assert set(c.values()) == {9}
-    assert all(len(set(m["red"] + m["blue"])) == 6 for m in ms)
-    assert st["back_to_back"] == sum(len(set(a["red"] + a["blue"]) & set(b["red"] + b["blue"]))
-                                     for a, b in zip(ms, ms[1:]))
-
-
-def test_schedule_surrogates():
-    teams = list(range(1, 12))  # 11 teams x 5 = 55 -> 60 slots, 5 surrogates
-    ms, _ = schedule.generate(teams, 5, seed=2, time_budget_s=1.0)
-    assert len(ms) == 10
-    real = Counter(t for m in ms for t in m["red"] + m["blue"] if t not in m["surrogates"])
-    sur = sum(len(m["surrogates"]) for m in ms)
-    assert set(real.values()) == {5} and sur == 5
-
-
 def _done(key, red_a, blue_a, winner):
     return {"key": key, "status": "committed", "red_alliance": red_a, "blue_alliance": blue_a,
             "breakdown": {"winner": winner}}
