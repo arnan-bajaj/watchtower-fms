@@ -80,8 +80,9 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
   over UDP to field systems that decide the auto winner themselves (bioarena protocol v1). Sent on every
   count, before the FMS POST. Their replies are relayed to the FMS; once a shift shows one hub dark the FMS
   adopts and locks that `first_inactive` once per match (the lights are the truth).
-  bioarena `main` (checked 2026-09-26) does NOT implement the receiver yet; it picks the winner at auto
-  start. Until it does, the emcee locks `first_inactive` to what bioarena's lights showed.
+  bioarena `main` implements the receiver and Counted mode since 2026-10-07 (read at `c95a49b`, not yet
+  run end to end). Only Counted mode uses the counts; in Random/Red/Blue the emcee locks `first_inactive`
+  to what bioarena's lights showed.
 
 ## Event constraints
 - Everyone (refs, emcee, scorekeeper) is on the venue WiFi; no hotspot. Some networks isolate clients;

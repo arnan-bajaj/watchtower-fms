@@ -609,12 +609,11 @@ Its `deploy/FRC_FMS.md` has the full steps: drawing the hubs, measuring a ball, 
 
 ### Feeding a field system (bioarena)
 
-> **Status:** the receiving side is not in bioarena yet. As of bioarena `main` (2026-09-26) there
-> is no Hub FUEL Counter receiver and no Counted mode: bioarena picks the auto winner (random, or
-> forced red/blue) at the *start* of auto and can't change it mid-match. Watchtower's side
-> implements bioarena's draft "Hub FUEL Counter Feed" spec (protocol v1) and is tested against a
-> fake receiver; it starts working once bioarena ships that spec. Until then, with bioarena
-> lighting the hubs, the emcee locks Watchtower's auto result to whatever the lights showed.
+> **Status:** bioarena `main` has the receiver and Counted mode since 2026-10-07 (checked at
+> `c95a49b`). Its receiver accepts this feed's datagrams as sent; the two have not yet been run
+> end to end, so rehearse once (see *Check before matches count*) before relying on it. In any
+> other auto-winner mode bioarena ignores the counts, and the emcee locks Watchtower's auto result
+> to whatever the lights showed.
 
 Some fields light the hubs themselves and decide the auto winner from a live count, for example
 bioarena (Team 841's practice-field FMS) in its **Counted** auto-winner mode. Such a field does not accept
@@ -645,11 +644,12 @@ result to match what the lights showed, even if its own count disagreed (logged 
 The scorekeeper can still override it afterwards. `/control` shows a **field** pill (hover for
 each feed's state).
 
-#### Setting up a bioarena field (once it has the counter feed)
+#### Setting up a bioarena field
 
 Any network works as long as the vision laptop can reach bioarena's IP; usually that's the
-venue WiFi, with no wired link needed. (These steps follow bioarena's feed spec; menu names may
-differ slightly on your version.)
+venue WiFi, with no wired link needed. (bioarena's Settings page suggests wiring the counter into the
+field switch; WiFi works as long as the source address it sees is the laptop's own IP, with no NAT
+in between.)
 
 **In bioarena** (whoever runs it):
 1. **Settings → Hub FUEL Counter:** set the counter address to the vision laptop's IP on that
