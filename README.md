@@ -293,7 +293,7 @@ In `--preview`, press `q` in a camera window to quit vision.
 
 ### Rehearse with no model
 
-`./run.sh ../config/vision.mock.yaml` emits random fuel into both hubs. Everything else is real: refs, emcee, commits, rankings, playoffs. Use it to train volunteers before the model is ready.
+`./run.sh ../config/vision.mock.yaml` emits random fuel into both hubs. Everything else is real: refs, emcee, commits, rankings, playoffs. Use it to train volunteers before the model is ready. If `config/vision.yaml` has `feeds:`, mock vision streams its fake counts to those field systems too (e.g. bioarena), so you can rehearse the field link without cameras; add `feeds: []` to `vision.mock.yaml` to keep a rehearsal off the field.
 
 ---
 
@@ -615,6 +615,9 @@ feeds:
 ```
 
 or, without editing config, `python run_vision.py --feed 192.168.1.50:8411` (repeatable).
+The same feeds are used in mock mode (`./run.sh ../config/vision.mock.yaml`): a vision config
+with no `feeds:` key takes them from `config/vision.yaml`, so you can test the field link with
+fake fuel. `feeds: []` in the mock config turns that off.
 
 **Watchtower follows the field's call.** The field's replies (match state and which hub is lit)
 are relayed to the FMS. As soon as a shift shows one hub dark, the FMS sets and locks the auto

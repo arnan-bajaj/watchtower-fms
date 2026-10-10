@@ -289,3 +289,21 @@ def test_vision_key_falls_back_to_event_config(tmp_path):
     assert vconfig.load(tmp_path / "v.yaml")["vision_key"] == "abc123"
     (tmp_path / "v.yaml").write_text('fms_url: http://x\nvision_key: "own"\n')
     assert vconfig.load(tmp_path / "v.yaml")["vision_key"] == "own"
+
+
+def test_mock_config_inherits_feeds_from_vision_yaml(tmp_path):
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "vision"))
+    import vconfig
+    (tmp_path / "event.yaml").write_text('server: {vision_key: "k"}\n')
+    (tmp_path / "vision.yaml").write_text("feeds:\n  - {name: field, host: 10.0.0.5, port: 8411}\n")
+    mock = tmp_path / "vision.mock.yaml"
+    mock.write_text("defaults: {counter: mock}\n")
+    assert vconfig.load(mock)["feeds"] == [{"name": "field", "host": "10.0.0.5", "port": 8411}]
+    mock.write_text("feeds: []\n")                        # explicit off wins
+    assert vconfig.load(mock)["feeds"] == []
+    mock.write_text("feeds: {host: 10.0.0.9}\n")          # its own feeds win
+    assert vconfig.load(mock)["feeds"] == {"host": "10.0.0.9"}
+    (tmp_path / "vision.yaml").write_text("hubs: {}\n")   # real config without feeds: none
+    mock.write_text("defaults: {counter: mock}\n")
+    assert "feeds" not in vconfig.load(mock)
