@@ -1,5 +1,6 @@
 fms_url: http://127.0.0.1:8000
 # vision_key comes from server.vision_key in config/event.yaml
+# feeds: come from config/vision.yaml (fake counts go to bioarena too); add `feeds: []` to stop that
 record_dir: ""
 defaults: {counter: mock, rate_per_s: 3, fps: 30}
 hubs:
