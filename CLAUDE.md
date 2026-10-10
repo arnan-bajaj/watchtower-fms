@@ -18,7 +18,8 @@ then a 4-alliance double-elimination playoff. Runs on one laptop on the event Wi
 - `config/event.yaml` and `config/vision.yaml` are gitignored. `python -m fms.init` creates them with random
   distinct PINs and a vision key (`run.sh` runs it on first use); it never overwrites.
 - `fms/config.py` refuses to start on a missing config, `CHANGE-ME`/blank PINs, or a control PIN shared
-  with ref/emcee. Vision takes `vision_key` from `event.yaml` when its own config omits it (`vision/vconfig.py`).
+  with ref/emcee. Vision takes `vision_key` from `event.yaml` when its own config omits it, and `feeds:` from
+  `vision.yaml` when its config has no `feeds` key (so mock runs feed bioarena too; `feeds: []` = off) (`vision/vconfig.py`).
 - Tests and docs use generic teams and event keys, never a real event's.
 
 ## Invariants: do not break
