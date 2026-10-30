@@ -75,7 +75,7 @@ class Store:
             if scope == "all":
                 for t in ("matches", "fuel", "fouls", "outbox"):
                     self.db.execute(f"DELETE FROM {t}")
-                self.db.execute("DELETE FROM kv WHERE k != 'secret'")
+                self.db.execute("DELETE FROM kv WHERE k NOT IN ('secret', 'settings', 'vision_rev')")  # Setup settings are config, not data
             else:
                 self.db.execute("DELETE FROM fouls WHERE match_key IN "
                                 "(SELECT key FROM matches WHERE comp_level != 'qm')")

@@ -173,15 +173,52 @@
   <!-- SETUP -->
   <section data-tab="setup" hidden>
     <div class="grid2">
+      <div class="panel"><h2>Event</h2>
+        <div class="form">
+          <label class="field">Name <input id="se_name" data-k="event.name" maxlength="80"></label>
+          <label class="field">Date <input id="se_date" data-k="event.date" type="date"></label>
+          <label class="field">UTC offset (h) <input id="se_utc" data-k="event.utc_offset_hours" type="number" step="0.5" min="-12" max="14"></label>
+          <label class="field">TBA event key <input id="se_key" data-k="event.tba_event_key" placeholder="e.g. 2026abcd" autocapitalize="off"></label>
+          <label class="field">First match <input id="se_start" data-k="event.qual_start" inputmode="numeric" placeholder="09:30"></label>
+          <label class="field">Cycle (min) <input id="se_cycle" data-k="event.cycle_min" type="number" step="0.5" min="1"></label>
+        </div>
+        <label class="field" style="margin-top:.75rem">Teams (any separator) <textarea id="se_teams" data-k="event.teams" spellcheck="false" style="min-height:4.5rem" placeholder="254 1678 971 604 ..."></textarea></label>
+        <div class="row" style="margin-top:.6rem"><button class="primary" data-save="event">Save event</button><span class="muted small" id="se_teamn"></span></div>
+        <div class="muted small" style="margin-top:.4rem">UTC offset on event day: PDT −7, MDT −6, CDT −5, EDT −4. Used for TBA match times. Changes apply at once; no restart.</div></div>
+      <div class="panel"><h2>Field system (bioarena)</h2>
+        <div class="muted small">Sends every ball the cameras count straight to the field over UDP, so it decides the AUTO winner and lights the hubs. Leave empty if your field doesn't take counts.</div>
+        <div class="form" style="margin-top:.6rem">
+          <label class="field">Field IP <input id="sf_host" placeholder="e.g. 192.168.1.10" inputmode="decimal" autocapitalize="off"></label>
+          <label class="field">UDP port <input id="sf_port" type="number" min="1" max="65535" placeholder="8411"></label>
+        </div>
+        <div class="row" style="margin-top:.6rem"><button class="primary" id="bfield">Save field</button><button class="ghost small" id="bfieldoff">No field</button><button class="ghost small" id="bfieldfile">Use vision's config file</button></div>
+        <table class="kv" id="ftable" style="margin-top:.6rem"></table></div>
+      <div class="panel"><h2>Vision &amp; calibration</h2><table class="kv" id="vtable"></table>
+        <div id="calib" style="margin-top:.6rem"></div>
+        <div class="muted small" style="margin-top:.4rem"><b>Counts per ball</b>: if one ball counts as 8, set 8 and each hub's count is divided by it. Or press <b>Calibrate</b>, drop some balls in that hub, and enter how many.</div></div>
+      <div class="panel"><h2>PINs</h2>
+        <div class="form">
+          <label class="field">Scorekeeper <input id="sp_control" data-k="server.pins.control" inputmode="numeric" autocomplete="off"></label>
+          <label class="field">Ref <input id="sp_ref" data-k="server.pins.ref" inputmode="numeric" autocomplete="off"></label>
+          <label class="field">Emcee <input id="sp_emcee" data-k="server.pins.emcee" inputmode="numeric" autocomplete="off"></label>
+        </div>
+        <div class="row" style="margin-top:.6rem"><button class="primary" data-save="pins">Save PINs</button><button class="ghost small" id="bpinrand">Random new PINs</button></div>
+        <div class="muted small" style="margin-top:.4rem">4–12 digits; the scorekeeper's must differ from the others. Changing a PIN logs out every device using it.</div></div>
       <div class="panel"><h2>Phone pages</h2><table class="kv" id="urls"></table>
-        <div class="muted small" style="margin-top:.5rem">Open on the phone, then Share → Add to Home Screen.</div></div>
-      <div class="panel"><h2>Vision</h2><table class="kv" id="vtable"></table></div>
+        <div class="muted small" style="margin-top:.5rem">Phones must be on the same WiFi as this computer. Open the page, then Share → Add to Home Screen.</div></div>
       <div class="panel"><h2>Field sides</h2>
         <div class="row"><label>Red is on the <select id="redside" aria-label="Red side"><option value="left">left</option><option value="right">right</option></select></label>
           <button class="ghost small" id="bredside">Use event.yaml</button></div>
         <div class="muted small" style="margin-top:.4rem" id="redsrc"></div>
         <div class="muted small" style="margin-top:.3rem">Screen order only, on every page. Scores, data and TBA don't change. Any page's <b>⇄ Flip sides</b> mirrors just that device on top of this.</div></div>
       <div class="panel"><h2>The Blue Alliance</h2><table class="kv" id="ttable"></table>
+        <div class="form" style="margin-top:.6rem">
+          <label class="field">Auth ID <input id="st_id" data-k="tba.auth_id" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+          <label class="field">Auth secret <input id="st_secret" type="password" autocomplete="new-password" spellcheck="false"></label>
+        </div>
+        <label style="margin-top:.6rem"><input type="checkbox" id="st_on" data-k="tba.enabled"> Send to TBA (leave off while rehearsing, or practice matches go to the real event)</label>
+        <div class="row" style="margin-top:.6rem"><button class="primary" data-save="tba">Save TBA</button></div>
+        <div class="muted small" style="margin-top:.3rem">Keys: sign in at thebluealliance.com → <b>Request write access</b> (thebluealliance.com/request/apiwrite) for your event key. TBA emails an Auth ID and secret per event.</div>
         <div class="row" style="margin-top:.6rem"><button id="bpushall">Push everything</button><button class="ghost" id="bretry">Retry failed</button></div>
         <div class="row" style="margin-top:.6rem"><button class="ghost danger" id="btbadelall">Take all matches and rankings off TBA</button></div>
         <div class="muted small" style="margin-top:.3rem">Removes the schedule and every result from the TBA event page. Nothing here is deleted. <b>Send schedule to TBA</b> puts it back. To remove one match, use the TBA column in Schedule → All matches.</div></div>
@@ -199,7 +236,7 @@
         <button class="ghost danger" data-wipe="playoffs">Wipe playoffs</button>
         <button class="danger" data-wipe="all">Wipe everything</button>
       </div>
-      <div class="muted small" style="margin-top:.4rem"><b>Wipe playoffs</b> removes alliances, alliance selection and playoff matches, and keeps quals. <b>Wipe everything</b> removes the schedule, all results, fuel, fouls, the TBA queue and settings. Logins stay.</div>
+      <div class="muted small" style="margin-top:.4rem"><b>Wipe playoffs</b> removes alliances, alliance selection and playoff matches, and keeps quals. <b>Wipe everything</b> removes the schedule, all results, fuel, fouls, the TBA queue, the webcast and the field sides. Setup settings (event, teams, TBA, PINs, field, calibration) and logins stay.</div>
     </div>
   </section>
 </main>
@@ -225,6 +262,7 @@ $("#tabs").onclick = (e) => {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("sel", b.dataset.t === t));
   document.querySelectorAll("section[data-tab]").forEach((s) => s.hidden = s.dataset.tab !== t);
   if (t === "alli" && S()) renderAlli(S(), true);
+  if (t === "setup") loadSettings();
 };
 
 // ---- match controls
@@ -702,9 +740,108 @@ document.querySelectorAll("[data-wipe]").forEach((b) => b.onclick = async () => 
   alliRendered = false;
   FMS.toast("Wiped. Backup: " + j.backup);
 });
+// ---- live settings (Setup): stored on this FMS, applied at once (fms/settings.py)
+let SET = null, CLOUD = null, LAN = [];
+const calibrating = {};   // hub -> raw count when Calibrate was pressed
+async function loadSettings() {
+  const j = await api("/api/settings", undefined, "GET");
+  SET = j.settings; CLOUD = j.cloud; LAN = j.lan_urls || [];
+  fillSettings();
+  if (S()) renderSetup(S());
+}
+const sv = (k) => SET && SET[k] ? SET[k].value : null;
+function fillSettings() {
+  document.querySelectorAll("[data-k]").forEach((el) => {
+    if (document.activeElement === el) return;
+    const v = sv(el.dataset.k);
+    if (el.type === "checkbox") el.checked = !!v;
+    else el.value = Array.isArray(v) ? v.join(" ") : (v ?? "");
+  });
+  $("#st_secret").value = ""; $("#st_secret").placeholder = sv("tba.auth_secret") ? "saved (type to replace)" : "not set";
+  const teams = sv("event.teams") || [];
+  $("#se_teamn").textContent = `${teams.length} teams` + (teams.length < 6 ? " (schedules need 6+)" : teams.length < 12 ? " (alliance selection needs 12+)" : "");
+  const fd = sv("field.feeds");
+  if (document.activeElement !== $("#sf_host")) $("#sf_host").value = fd && fd[0] ? fd[0].host : "";
+  if (document.activeElement !== $("#sf_port")) $("#sf_port").value = fd && fd[0] ? fd[0].port : "";
+}
+async function saveSettings(changes, msg) {
+  const j = await api("/api/settings", { changes });
+  SET = j.settings; fillSettings(); FMS.toast(msg || "Saved");
+  if (S()) renderSetup(S());
+}
+const SAVE_GROUPS = { event: ["event.name", "event.date", "event.utc_offset_hours", "event.tba_event_key", "event.qual_start", "event.cycle_min", "event.teams"],
+                      pins: ["server.pins.control", "server.pins.ref", "server.pins.emcee"],
+                      tba: ["tba.auth_id", "tba.enabled"] };
+document.querySelectorAll("[data-save]").forEach((b) => b.onclick = () => {
+  const g = b.dataset.save, changes = {};
+  SAVE_GROUPS[g].forEach((k) => {
+    const el = document.querySelector(`[data-k="${k}"]`);
+    changes[k] = el.type === "checkbox" ? el.checked : el.value;
+  });
+  if (g === "tba" && $("#st_secret").value) changes["tba.auth_secret"] = $("#st_secret").value;
+  if (g === "pins") {
+    const mine = changes["server.pins.control"] !== sv("server.pins.control");
+    saveSettings(changes, "PINs saved").then(() => { if (mine) location.reload(); });
+    return;
+  }
+  saveSettings(changes);
+});
+$("#bpinrand").onclick = () => {
+  const used = new Set();
+  ["control", "ref", "emcee"].forEach((r) => {
+    let p; do { p = String(Math.floor(Math.random() * 1e6)).padStart(6, "0"); } while (used.has(p));
+    used.add(p); $("#sp_" + r).value = p;
+  });
+  FMS.toast("New PINs filled in. Press Save PINs to use them.");
+};
+$("#bfield").onclick = () => {
+  const host = $("#sf_host").value.trim();
+  if (!host) return saveSettings({ "field.feeds": [] }, "No field system");
+  saveSettings({ "field.feeds": [{ name: "field", host, port: $("#sf_port").value || 8411 }] }, `Counts now go to ${host}`);
+};
+$("#bfieldoff").onclick = () => saveSettings({ "field.feeds": [] }, "No field system");
+$("#bfieldfile").onclick = () => saveSettings({ "field.feeds": null }, "Using the feeds in vision's config file");
+
+function renderCalib(s) {
+  const box = $("#calib");
+  if (!SET || box.contains(document.activeElement)) return;
+  box.innerHTML = sides().map((h) => {
+    const x = s.vision[h], raw = x && x.session_total != null ? x.session_total : null;
+    const sc = sv("vision.scale." + h) || 1;
+    const c = calibrating[h];
+    return `<div class="row" style="margin-top:.4rem"><b class="t${h}" style="min-width:3.5rem">${Cap(h)}</b>
+      <label>Counts per ball <input type="number" step="0.01" min="0.05" max="100" value="${sc}" data-scale="${h}" style="width:5.5rem"></label>
+      <span class="muted small">raw ${raw ?? "–"}${raw != null ? ` → ${Math.floor(raw / sc)} balls` : ""}</span>
+      ${c == null ? `<button class="ghost small" data-cal="${h}" ${raw == null ? "disabled title='Start vision first'" : ""}>Calibrate</button>`
+        : `<span class="small">Drop balls in the ${h} hub (counted so far: <b>${raw - c}</b>), then: <input type="number" min="1" data-calballs="${h}" placeholder="balls" style="width:5rem">
+           <button class="small primary" data-calok="${h}">Done</button><button class="ghost small" data-calno="${h}">Cancel</button></span>`}</div>`;
+  }).join("");
+  box.querySelectorAll("[data-scale]").forEach((el) => el.onchange = () =>
+    saveSettings({ ["vision.scale." + el.dataset.scale]: el.value }, `${Cap(el.dataset.scale)}: ${el.value} counts per ball`));
+  box.querySelectorAll("[data-cal]").forEach((b) => b.onclick = () => { calibrating[b.dataset.cal] = S().vision[b.dataset.cal].session_total; renderCalib(S()); });
+  box.querySelectorAll("[data-calno]").forEach((b) => b.onclick = () => { delete calibrating[b.dataset.calno]; renderCalib(S()); });
+  box.querySelectorAll("[data-calok]").forEach((b) => b.onclick = () => {
+    const h = b.dataset.calok, n = parseInt(box.querySelector(`[data-calballs="${h}"]`).value, 10);
+    const counted = S().vision[h].session_total - calibrating[h];
+    if (!(n > 0)) return FMS.toast("Enter how many balls you dropped", true);
+    if (counted <= 0) return FMS.toast("Nothing was counted. Check the camera and its outline.", true);
+    const per = Math.round((counted / n) * 100) / 100;
+    delete calibrating[h];
+    saveSettings({ ["vision.scale." + h]: per }, `${Cap(h)}: ${counted} counts for ${n} balls = ${per} per ball`);
+  });
+}
+
 function renderSetup(s) {
-  const base = location.host;
-  $("#urls").innerHTML = ["ref", "emcee", "display", "control"].map((p) => `<tr><td>${p}</td><td><a href="/${p}">http://${base}/${p}</a></td></tr>`).join("");
+  const local = /^(localhost|127\.)/.test(location.hostname);
+  const base = local && LAN.length ? LAN[0] : location.origin;
+  $("#urls").innerHTML = ["ref", "emcee", "display", "control"].map((p) => `<tr><td>${p}</td><td><a href="/${p}">${esc(base)}/${p}</a></td></tr>`).join("")
+    + (CLOUD && CLOUD.url ? `<tr><td>website</td><td>${CLOUD.linked ? `<span class="pill ok">synced</span>` : `<span class="pill bad">${esc(CLOUD.error || "not synced yet")}</span>`} <span class="small muted">${esc(CLOUD.url)}</span></td></tr>` : "");
+  const fd = s.feeds || [], cfgFeeds = sv("field.feeds");
+  $("#ftable").innerHTML = (cfgFeeds === null ? `<tr><td>Set by</td><td>vision's config file (feeds:)</td></tr>` : "")
+    + fd.map((f) => `<tr><td>${esc(f.dest)}</td><td>${f.link ? `<span class="pill ok">answering</span> ${esc(f.shift || f.match_state || "")}` : `<span class="pill bad">${esc(f.error || "no answer")}</span>`}</td></tr>`).join("")
+    + (!fd.length && cfgFeeds && cfgFeeds.length ? `<tr><td>${esc(cfgFeeds[0].host)}</td><td><span class="pill bad">vision not running</span></td></tr>` : "")
+    + (LAN.length ? `<tr><td>In the field's counter setting</td><td>enter <b>${esc(LAN.map((u) => u.replace(/^http:\/\/|:\d+$/g, "")).join(" or "))}</b> (this computer)</td></tr>` : "");
+  renderCalib(s);
   const v = s.vision;
   $("#vtable").innerHTML = sides().map((h) => {
     const x = v[h];
@@ -716,7 +853,7 @@ function renderSetup(s) {
   }).join("");
   const t = s.tba;
   $("#ttable").innerHTML = `<tr><td>Event key</td><td>${esc(t.key || "not set")}</td></tr>
-    <tr><td>Sending</td><td>${t.configured ? `<span class="pill ok">on</span>` : `<span class="pill bad">off (config)</span>`}</td></tr>
+    <tr><td>Sending</td><td>${t.configured ? `<span class="pill ok">on</span>` : `<span class="pill bad">off</span>`}</td></tr>
     <tr><td>Pending / sent / failed</td><td class="num">${t.pending || 0} / ${t.sent || 0} / ${t.dead || 0}</td></tr>
     ${t.last_error ? `<tr><td>Last error</td><td class="small">${esc(t.last_error.last_error)}</td></tr>` : ""}`;
   if (document.activeElement !== $("#vod")) $("#vod").value = s.webcast.vod_id || "";

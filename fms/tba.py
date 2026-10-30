@@ -25,8 +25,11 @@ class TBA:
     def __init__(self, cfg, store):
         self.cfg = cfg
         self.store = store
-        self.key = cfg["event"]["tba_event_key"]
         self._wake = threading.Event()
+
+    @property
+    def key(self):  # read live: Setup can change the event key without a restart
+        return self.cfg["event"]["tba_event_key"]
 
     @property
     def configured(self):

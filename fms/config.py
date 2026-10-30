@@ -39,6 +39,13 @@ DEFAULTS = {
         "send_score_breakdown": False,
         "retry_s": 15,
     },
+    # Field systems that take live hub counts (bioarena). None: vision uses its own config file's
+    # feeds:; a list (set in /control -> Setup) wins over that. vision/run_vision.py fetches it.
+    "field": {"feeds": None},
+    # Counts per real ball, per hub (calibration in /control -> Setup). Vision divides by it.
+    "vision": {"scale": {"red": 1, "blue": 1}},
+    # Set by the website's launch command (fms/cloud.py): settings backup and status. Empty = local only.
+    "cloud": {"url": "", "event": "", "token": ""},
     "game": {
         "auto_s": 20, "auto_teleop_gap_s": 3, "transition_s": 10, "shift_s": 25,
         "n_shifts": 4, "endgame_s": 30, "score_grace_s": 3,

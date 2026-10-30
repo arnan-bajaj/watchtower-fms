@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import csv
 import hashlib
 import io
@@ -18,15 +19,17 @@ from fastapi import Body, FastAPI, Header, HTTPException, WebSocket, WebSocketDi
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import bracket, config, game, schedule
+from . import bracket, cloud, config, game, schedule, settings
 from .store import Store
 from .tba import TBA
 
 CFG = config.load()
+BASE = copy.deepcopy(CFG)      # event.yaml as loaded; Setup's live settings go on top (fms/settings.py)
 G = CFG["game"]
 GRACE = G["score_grace_s"]
 STATIC = pathlib.Path(__file__).parent / "static"
 store = Store(CFG["server"]["db"])
+settings.apply_in_place(CFG, settings.overlay(BASE, store.get("settings") or {}))
 tba = TBA(CFG, store)
 SECRET = store.get("secret") or secrets.token_hex(16)
 store.set("secret", SECRET)
@@ -41,7 +44,9 @@ _dirty = threading.Event()  # set from any thread; tick loop broadcasts
 
 # ------------------------------------------------------------------ auth
 def token_for(role):
-    return hashlib.sha256(f"{SECRET}:{role}".encode()).hexdigest()[:32]
+    # The PIN is part of it, so changing a role's PIN in Setup logs that role out everywhere.
+    pin = str(CFG["server"]["pins"].get(role, ""))
+    return hashlib.sha256(f"{SECRET}:{role}:{pin}".encode()).hexdigest()[:32]
 
 
 def role_of(tok):
@@ -242,6 +247,8 @@ def mark_dirty():
 @asynccontextmanager
 async def lifespan(app):
     threading.Thread(target=tba.run_forever, daemon=True).start()
+    if CFG["cloud"]["url"] and CFG["cloud"]["token"]:
+        threading.Thread(target=cloud.run_forever, args=(sync_cloud,), daemon=True).start()
     task = asyncio.create_task(tick())
     yield
     task.cancel()
@@ -299,12 +306,78 @@ def api_state():
     return build_state()
 
 
+_login_fails: list = []   # times of recent wrong PINs (all roles, all devices)
+
+
 @app.post("/api/login")
 def login(body: dict = Body(...)):
+    # 6-digit PINs: after 10 wrong tries in a minute, refuse for the rest of that minute, so guessing
+    # one from a phone on the venue WiFi would take weeks. The right PIN still works between tries.
+    now = time.time()
+    _login_fails[:] = [t for t in _login_fails if now - t < 60]
+    if len(_login_fails) >= 10:
+        raise HTTPException(429, "Too many wrong PINs. Wait a minute and try again.")
     role, pin = body.get("role"), str(body.get("pin", ""))
-    if role not in CFG["server"]["pins"] or pin != str(CFG["server"]["pins"][role]):
+    if role not in CFG["server"]["pins"] or not secrets.compare_digest(pin, str(CFG["server"]["pins"][role])):
+        _login_fails.append(now)
         raise HTTPException(401, "Wrong PIN")
     return {"token": token_for(role), "role": role}
+
+
+# ------------------------------------------------------------------ live settings (Setup)
+def settings_entries():
+    return store.get("settings") or {}
+
+
+def apply_settings(entries):
+    """Store and run on new settings entries. ValueError (nothing changed) if the result is invalid."""
+    new = settings.overlay(BASE, entries)
+    settings.check(new)
+    vision_before = copy.deepcopy((CFG["field"], CFG["vision"]))
+    store.set("settings", entries)
+    settings.apply_in_place(CFG, new)
+    if (CFG["field"], CFG["vision"]) != vision_before:
+        store.set("vision_rev", (store.get("vision_rev") or 0) + 1)
+    mark_dirty()
+
+
+@app.get("/api/settings")
+def get_settings(x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    return {"settings": settings.public(CFG, settings_entries()), "vision_key": CFG["server"]["vision_key"],
+            "lan_urls": cloud.lan_urls(CFG["server"]["port"]),
+            "cloud": {"url": CFG["cloud"]["url"], "event": CFG["cloud"]["event"], **cloud.status}}
+
+
+@app.post("/api/settings")
+def post_settings(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """{"changes": {key: value}}; a value of null puts that key back to event.yaml."""
+    need(x_fms_token)
+    try:
+        changes = settings.clean(body.get("changes") or {})
+        apply_settings(settings.merge(settings_entries(), settings.stamp(changes, time.time())))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    cloud.poke()
+    return {"settings": settings.public(CFG, settings_entries())}
+
+
+def sync_cloud():
+    """One round with the website (fms/cloud.py calls this): send our settings and status, take theirs."""
+    m = current()
+    status = {"match": m["key"] if m else None, "match_status": m["status"] if m else None,
+              "played": sum(1 for x in store.matches() if x["status"] == "committed"),
+              "lan_urls": cloud.lan_urls(CFG["server"]["port"]),
+              "vision": {h: v.get("fps") for h, v in vision_status.items() if time.time() - v["seen"] < 5}}
+    theirs = cloud.exchange(CFG["cloud"], settings_entries(), status)
+    if theirs is None:
+        return
+    merged = settings.merge(settings_entries(), theirs)
+    if merged != settings_entries():
+        try:
+            apply_settings(merged)
+        except ValueError as e:
+            cloud.status["error"] = f"website settings not applied: {e}"
 
 
 # ------------------------------------------------------------------ schedule
@@ -1061,7 +1134,7 @@ def export():
 
 # ------------------------------------------------------------------ vision
 def _vision_auth(key):
-    if key != CFG["server"]["vision_key"]:
+    if not secrets.compare_digest(str(key or ""), str(CFG["server"]["vision_key"])):
         raise HTTPException(401, "bad vision key")
 
 
@@ -1089,7 +1162,16 @@ def vision_events(body: dict = Body(...), x_vision_key: str = Header(None)):
         ps = periods_of(m)
         if m["status"] == "running" or (m["status"] == "review" and time.time() < ps[-1].end + 10):
             rec = f"{m['key']}_{int(m['auto_start'])}"
-    return {"record": rec}
+    # config_rev: vision re-fetches /api/vision/config when it changes. now: its clock check.
+    return {"record": rec, "config_rev": store.get("vision_rev") or 0, "now": time.time()}
+
+
+@app.get("/api/vision/config")
+def vision_config(x_vision_key: str = Header(None)):
+    """What Setup decides for the vision process: field feeds (null = its own file's) and calibration."""
+    _vision_auth(x_vision_key)
+    return {"rev": store.get("vision_rev") or 0, "feeds": CFG["field"]["feeds"],
+            "scale": {h: float(CFG["vision"]["scale"].get(h) or 1) for h in game.ALLIANCES}}
 
 
 @app.post("/api/vision/replace")

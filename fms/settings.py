@@ -1,0 +1,240 @@
+"""Live settings: what /control -> Setup can change without editing event.yaml or restarting.
+
+event.yaml stays the starting point. Each Setup edit is stored in SQLite as
+{key: {"v": value, "t": unix time}}, and applied on top of event.yaml in place, so every handler that
+reads CFG at call time sees it at once. Reverting a key to event.yaml stores a tombstone ({"v": None,
+"t": ..., "del": True}) instead of dropping it, so a synced copy (the website, fms/cloud.py) can tell
+"reverted later" from "never set". Two copies merge per key, newest `t` wins.
+
+Pure functions only; fms/server.py owns the store and the HTTP side.
+"""
+from __future__ import annotations
+
+import copy
+import ipaddress
+import re
+from datetime import datetime
+
+from . import config
+
+_HHMM = re.compile(r"^\d{1,2}:\d{2}$")
+
+
+def _str(n):
+    def v(x):
+        x = str(x if x is not None else "").strip()
+        if len(x) > n:
+            raise ValueError(f"at most {n} characters")
+        return x
+    return v
+
+
+def _name(x):
+    x = _str(80)(x)
+    if not x:
+        raise ValueError("can't be blank")
+    return x
+
+
+def _date(x):
+    x = _str(10)(x)
+    if x:
+        datetime.strptime(x, "%Y-%m-%d")
+    return x
+
+
+def _num(lo, hi):
+    def v(x):
+        f = float(x)
+        if not lo <= f <= hi:
+            raise ValueError(f"must be {lo} to {hi}")
+        return int(f) if f == int(f) else f
+    return v
+
+
+def _bool(x):
+    if isinstance(x, bool):
+        return x
+    if str(x).lower() in ("1", "true", "yes", "on"):
+        return True
+    if str(x).lower() in ("0", "false", "no", "off", ""):
+        return False
+    raise ValueError("must be true or false")
+
+
+def _hhmm(x):
+    x = _str(5)(x)
+    if not _HHMM.match(x):
+        raise ValueError("use HH:MM, e.g. 09:30")
+    return datetime.strptime(x, "%H:%M").strftime("%H:%M")
+
+
+def _event_key(x):
+    x = _str(20)(x).lower()
+    if x and not re.match(r"^\d{4}[a-z0-9]+$", x):
+        raise ValueError("looks like 2026abcd (year, then the event code)")
+    return x
+
+
+def _teams(x):
+    if isinstance(x, str):
+        x = re.split(r"[\s,;]+", x.strip())
+    out = []
+    for t in x or []:
+        if t in ("", None):
+            continue
+        n = int(str(t).strip().lstrip("frc"))
+        if not 1 <= n <= 99999:
+            raise ValueError(f"{t} isn't a team number")
+        if n in out:
+            raise ValueError(f"{n} is listed twice")
+        out.append(n)
+    return out
+
+
+def _pin(x):
+    x = _str(12)(x)
+    if not re.match(r"^\d{4,12}$", x):
+        raise ValueError("4 to 12 digits")
+    return x
+
+
+def _host(x):
+    x = _str(253)(x)
+    try:
+        ipaddress.ip_address(x)
+    except ValueError:
+        if not re.match(r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$", x):
+            raise ValueError(f"{x!r} isn't an IP address or host name") from None
+    return x
+
+
+def _feeds(x):
+    """None = vision uses its own config file's feeds; [] = off; else [{name, host, port}]."""
+    if x is None:
+        return None
+    if isinstance(x, dict):
+        x = [x]
+    if isinstance(x, str):                           # "192.168.1.10:8411, 10.0.100.5"
+        x = [t for t in re.split(r"[\s,;]+", x) if t]
+    out = []
+    for f in x:
+        if isinstance(f, str):                       # "192.168.1.10:8411"
+            host, _, port = f.strip().rpartition(":") if ":" in f else (f.strip(), "", "")
+            f = {"host": host, "port": port}
+        host = _host(f.get("host"))
+        if not host:
+            continue
+        port = int(_num(1, 65535)(f.get("port") or 8411))
+        name = _str(40)(f.get("name")) or "field"
+        out.append({"name": name, "host": host, "port": port})
+    return out
+
+
+# key -> validator. Dotted keys are paths into the event.yaml structure.
+FIELDS = {
+    "event.name": _name,
+    "event.date": _date,
+    "event.utc_offset_hours": _num(-12, 14),
+    "event.tba_event_key": _event_key,
+    "event.teams": _teams,
+    "event.qual_start": _hhmm,
+    "event.cycle_min": _num(1, 60),
+    "event.lunch": _hhmm,
+    "event.lunch_end": _hhmm,
+    "event.quals_after_lunch": _bool,
+    "event.day_end": _hhmm,
+    "tba.enabled": _bool,
+    "tba.auth_id": _str(200),
+    "tba.auth_secret": _str(200),
+    "tba.send_score_breakdown": _bool,
+    "server.pins.control": _pin,
+    "server.pins.ref": _pin,
+    "server.pins.emcee": _pin,
+    "field.feeds": _feeds,
+    "vision.scale.red": _num(0.05, 100),
+    "vision.scale.blue": _num(0.05, 100),
+}
+SECRET = {"tba.auth_secret"}       # never sent to a browser; Setup shows only whether it's set
+
+
+def get_path(d, key):
+    for k in key.split("."):
+        d = d[k]
+    return d
+
+
+def set_path(d, key, value):
+    *head, last = key.split(".")
+    for k in head:
+        d = d.setdefault(k, {})
+    d[last] = value
+
+
+def clean(changes: dict) -> dict:
+    """Validate {key: value}; value None means 'back to event.yaml'. ValueError names the key."""
+    out = {}
+    for k, v in (changes or {}).items():
+        if k not in FIELDS:
+            raise ValueError(f"{k}: not a setting")
+        if v is None:
+            out[k] = None
+            continue
+        try:
+            out[k] = FIELDS[k](v)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"{k}: {e}") from None
+    return out
+
+
+def stamp(changes: dict, t: float) -> dict:
+    """Cleaned changes -> stored entries."""
+    return {k: ({"v": None, "t": t, "del": True} if v is None else {"v": v, "t": t}) for k, v in changes.items()}
+
+
+def merge(a: dict, b: dict) -> dict:
+    """Per key, the newer entry wins (ties: b). Unknown keys are dropped."""
+    out = {k: e for k, e in (a or {}).items() if k in FIELDS}
+    for k, e in (b or {}).items():
+        if k in FIELDS and isinstance(e, dict) and "t" in e and (k not in out or e["t"] >= out[k]["t"]):
+            out[k] = e
+    return out
+
+
+def overlay(base: dict, entries: dict) -> dict:
+    """event.yaml config + live settings -> the config the server runs on (a new dict)."""
+    cfg = copy.deepcopy(base)
+    for k, e in (entries or {}).items():
+        if k in FIELDS and not e.get("del"):
+            set_path(cfg, k, copy.deepcopy(e["v"]))
+    return cfg
+
+
+def check(cfg: dict):
+    """Whole-config rules (distinct PINs, lunch order, ...). ValueError with the reason."""
+    try:
+        config.validate(cfg, "Setup")
+    except SystemExit as e:
+        raise ValueError(str(e)) from None
+
+
+def apply_in_place(cfg: dict, new: dict):
+    """Make `cfg` equal `new` without replacing the dicts other modules hold (G = CFG["game"], tba.cfg)."""
+    for k in list(cfg):
+        if k not in new:
+            del cfg[k]
+    for k, v in new.items():
+        if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+            apply_in_place(cfg[k], v)
+        else:
+            cfg[k] = v
+
+
+def public(cfg: dict, entries: dict) -> dict:
+    """What Setup shows: every value (secrets as set/not set) and where it comes from."""
+    out = {}
+    for k in FIELDS:
+        v = get_path(cfg, k)
+        src = "setup" if k in entries and not entries[k].get("del") else "event.yaml"
+        out[k] = {"value": (bool(v) if k in SECRET else v), "source": src}
+    return out
