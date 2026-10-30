@@ -7,6 +7,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import pathlib
 import random
 import secrets
@@ -24,6 +25,8 @@ from .store import Store
 from .tba import TBA
 
 CFG = config.load()
+if os.environ.get("FMS_PORT"):   # launch.py --port; before BASE so live settings don't undo it
+    CFG["server"]["port"] = int(os.environ["FMS_PORT"])
 BASE = copy.deepcopy(CFG)      # event.yaml as loaded; Setup's live settings go on top (fms/settings.py)
 G = CFG["game"]
 GRACE = G["score_grace_s"]
@@ -1192,7 +1195,4 @@ async def vision_replace(body: dict = Body(...), x_vision_key: str = Header(None
 
 if __name__ == "__main__":
     import uvicorn
-    import os
-    port = int(os.environ.get("FMS_PORT") or CFG["server"]["port"])   # launch.py --port
-    CFG["server"]["port"] = port
-    uvicorn.run(app, host=CFG["server"]["host"], port=port, log_level="warning")
+    uvicorn.run(app, host=CFG["server"]["host"], port=CFG["server"]["port"], log_level="warning")
