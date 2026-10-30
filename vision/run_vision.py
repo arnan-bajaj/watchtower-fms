@@ -12,6 +12,10 @@ Restarting this process mid-match loses only the seconds it was down.
 Optionally every count is also sent straight to field systems over UDP (`feeds:` in the
 config, or --feed HOST:PORT), so e.g. bioarena can decide the auto winner and light the
 hubs (count_feed.py).
+
+/control -> Setup can override the feeds and set each hub's calibration (counts per ball). The
+FMS bumps `config_rev` in its reply to every POST; we then fetch /api/vision/config and apply it
+live, no restart. Feeds set there replace the config file's (and --feed); null keeps them.
 """
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ import requests
 
 import vconfig
 from count_feed import CountFeed, targets
+from scaler import Scaler
 from counters import (add_plugin, add_plugin_paths, list_counters, load_counter,
                       plugin_status, remove_plugin)
 
@@ -37,12 +42,67 @@ class Sender(threading.Thread):
     def __init__(self, url, key, period=0.25, feeds=()):
         super().__init__(daemon=True)
         self.feeds = list(feeds)
+        self.file_feeds = self.feeds        # restored if Setup goes back to "use the config file"
         self.url, self.key, self.period = url.rstrip("/"), key, period
         self.buf = {"red": [], "blue": []}
         self.status = {}
         self.lock = threading.Lock()
         self.record = None
         self.ok = False
+        self.rev = None                     # /api/vision/config revision applied
+        self.scalers = {"red": Scaler(), "blue": Scaler()}
+        self.offset = 0.0                   # FMS clock - ours (vision on another computer)
+        self._clock = []                    # (rtt, offset) samples
+
+    def _clock_sample(self, t_send, t_recv, server_now):
+        if server_now is None:
+            return
+        self._clock = (self._clock + [(t_recv - t_send, server_now - (t_send + t_recv) / 2)])[-40:]
+        rtt, off = min(self._clock)         # the fastest round trip is the most trustworthy
+        if abs(off) > 0.05 or abs(self.offset) > 0.05:   # same computer: leave it at 0
+            self.offset = off
+
+    def apply_config(self):
+        """Fetch Setup's vision settings: field feeds and calibration."""
+        r = requests.get(f"{self.url}/api/vision/config", timeout=3, headers={"X-Vision-Key": self.key})
+        r.raise_for_status()
+        c = r.json()
+        for h, sc in (c.get("scale") or {}).items():
+            if h in self.scalers and float(sc) != self.scalers[h].scale:
+                self.scalers[h].set(sc)
+                print(f"[config] {h}: {sc} counts per ball")
+        if c.get("feeds") is None:
+            if self.feeds is not self.file_feeds:
+                self.set_feeds(None)
+        else:
+            want = targets({"feeds": c["feeds"]})
+            if [(t["host"], int(t["port"])) for t in want] != [(f.host_, f.dest[1]) for f in self.feeds]:
+                self.set_feeds(want)
+        self.rev = c.get("rev")
+
+    def set_feeds(self, tgts):
+        old = self.feeds
+        if tgts is None:
+            new = self.file_feeds
+        else:
+            new = []
+            for t in tgts:
+                try:
+                    f = CountFeed.from_target(t)
+                except OSError as e:
+                    print(f"[config] feed {t.get('host')}: {e}")
+                    continue
+                if old:                       # keep cumulative totals: the field baselines per match
+                    f.counts = dict(old[0].counts)
+                f.start()
+                new.append(f)
+                print(f"[config] count feed {f.name_} -> {f.dest[0]}:{f.dest[1]} session {f.session}")
+        self.feeds = new
+        for f in old:
+            if f not in new and f not in self.file_feeds:
+                f.stop.set()
+        if not new:
+            print("[config] no field feed")
 
     def add(self, hub, t, n):
         with self.lock:
@@ -57,11 +117,20 @@ class Sender(threading.Thread):
             if self.feeds:
                 status["feeds"] = [f.status() for f in self.feeds]
             try:
+                t_send = time.time()
                 r = requests.post(f"{self.url}/api/vision/events", timeout=2,
                                   headers={"X-Vision-Key": self.key},
                                   json={"events": batch, "status": status, "source": "live"})
                 r.raise_for_status()
-                self.record = r.json().get("record")
+                j = r.json()
+                self._clock_sample(t_send, time.time(), j.get("now"))
+                self.record = j.get("record")
+                if j.get("config_rev") is not None and j["config_rev"] != self.rev:
+                    try:
+                        self.apply_config()
+                    except Exception as e:          # noqa: BLE001  keep counting on the old settings
+                        print(f"[config] couldn't apply the FMS settings: {e}")
+                        self.rev = j["config_rev"]
                 with self.lock:  # drop only what we actually sent
                     for h in batch:
                         del self.buf[h][:len(batch[h])]
@@ -168,17 +237,21 @@ class HubWorker(threading.Thread):
                 t = time.time()
             n = counter.process(frame, t)
             if n:
+                n = self.sender.scalers[self.hub].add(n)     # calibration (Setup: counts per ball)
+            if n:
                 for f in self.sender.feeds:  # first: these are on the field's auto deadline
                     f.add(self.hub, n, t)
-                self.sender.add(self.hub, t, n)
+                self.sender.add(self.hub, t + self.sender.offset, n)
             if self.recorder:
-                self.recorder.update(self.sender.record, frame, t, fps_nominal)
+                self.recorder.update(self.sender.record, frame, t + self.sender.offset, fps_nominal)
             n_frames += 1
             if time.time() - t_fps >= 1:
                 fps = n_frames / (time.time() - t_fps)
                 n_frames, t_fps = 0, time.time()
+                sc = self.sender.scalers[self.hub]
                 self.sender.status[self.hub] = {"fps": round(fps, 1), "counter": self.cfg["counter"],
-                                                "session_total": counter.total,
+                                                "session_total": counter.total, "counted": sc.out,
+                                                "scale": sc.scale, "clock_offset": round(self.sender.offset, 3),
                                                 **plugin_status(counter)}
             if self.preview:
                 self.frame_out = counter.draw(frame.copy())

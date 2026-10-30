@@ -64,6 +64,7 @@ class CountFeed(threading.Thread):
     def __init__(self, host, port=DEFAULT_PORT, bind="", heartbeat_s=0.1, name=None):
         super().__init__(daemon=True)
         self.dest = (socket.gethostbyname(host), int(port))
+        self.host_ = host
         self.name_ = name or f"{host}:{port}"
         self.session = secrets.token_hex(4)
         self.heartbeat_s = float(heartbeat_s)
