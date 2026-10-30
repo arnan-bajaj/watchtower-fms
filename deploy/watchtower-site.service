@@ -1,0 +1,23 @@
+# The Watchtower website (website/app.py). Installed by deploy/deploy.sh.
+[Unit]
+Description=Watchtower website (event sign-up and launch commands)
+After=network-online.target
+
+[Service]
+User=watchtower
+Group=watchtower
+WorkingDirectory=/srv/watchtower/app
+Environment=WT_SITE_URL=https://watchtower.systemoverload.org
+Environment=WT_DATA=/srv/watchtower/data
+Environment=WT_DIST=/srv/watchtower/dist
+EnvironmentFile=-/srv/watchtower/site.env
+ExecStart=/srv/watchtower/venv/bin/uvicorn website.app:app --host 127.0.0.1 --port 8070 --proxy-headers --forwarded-allow-ips 127.0.0.1 --log-level warning
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/srv/watchtower/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

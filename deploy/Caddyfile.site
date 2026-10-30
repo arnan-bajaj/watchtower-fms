@@ -1,0 +1,13 @@
+# The Watchtower website. Appended to /etc/caddy/Caddyfile by deploy/deploy.sh (between the markers).
+# The sslip.io name works before DNS points watchtower.systemoverload.org at this server.
+watchtower.systemoverload.org, watchtower.141-148-162-105.sslip.io {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy 127.0.0.1:8070
+}
