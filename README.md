@@ -345,6 +345,14 @@ Seed is optional; the same seed gives the same schedule.
 
 The schedule locks once any qual match has started.
 
+**Deleting a match:** Schedule → All matches → **Delete** (quals only; not while running or committed — reopen a committed match first). It's removed here and from TBA, TBA rankings are re-sent, and the other matches keep their numbers.
+
+**Changing teams (replacement robots):** Schedule → All matches → **Teams** on that match, then enter the red and blue teams (3 each; put `*` after a surrogate, who plays but doesn't rank). Not while running or committed: reopen a played match first, change its teams, then **Commit** again so rankings and TBA use the new teams. Teams must be in `event.teams`.
+
+**Adding a match (e.g. one deleted by mistake):** Schedule → **Add a match**: match number (blank = next), teams, time. Leave **Auto started at** blank to schedule it to play. For a match already played, enter when auto really started (`HH:MM:SS` on `event.date`, in the event's time zone): it opens in review and is recounted from the raw fuel still stored for that time (deleting a match never deletes fuel). Climbs, count fixes, the hub order and fouls aren't recovered: set them in review, check the score, then **Commit**. It refuses a start time that overlaps another match.
+
+**Changing times:** edit any match's time in Schedule → **All matches** (Enter or tap away saves; blank clears it). To move a whole block, use **Shift match times**: pick the next unplayed match, its new time and a cycle. That match and every later unplayed match (quals and playoffs) get new times one cycle apart; teams, results and played matches don't change. Works mid-event, and queues the new times for TBA.
+
 ---
 
 ## Running a match
@@ -384,7 +392,7 @@ The schedule locks once any qual match has started.
 | **Tower** | Per robot: **L1 in auto** checkbox and end level (none / L1 / L2 / L3) |
 | **Fouls** | Everything refs logged. Remove mistakes, or add your own |
 | **Summary** | Fuel, auto, teleop, tower, penalty points, total, bonus RP, RP |
-| **Video** | Auto-suggested from the livestream, or paste a YouTube ID |
+| **Video** | Auto-suggested from the livestream, or paste a YouTube ID. `none` = no video, even on a later commit |
 | **Commit and send to TBA** | Locks the match; pushes the match, rankings and video; advances to the next match |
 
 - **Reopen for edits** unlocks a committed match. Recommitting re-sends it to TBA.
@@ -714,6 +722,8 @@ On TBA's side, set the event's playoff type to **4-alliance double elimination**
 | Trigger | Endpoint |
 |---|---|
 | Send schedule | `team_list/update`, `matches/update` (unplayed, score −1) |
+| Delete (Schedule → All matches) | `matches/delete` for that match, then `rankings/update` |
+| Edit a time / Shift match times / Teams / Add a match | `matches/update` for the changed matches (scores kept) |
 | Commit match | `matches/update`, `rankings/update` (quals), `match_videos/add` (if a video is set) |
 | Save alliances | `alliance_selections/update`, plus the new playoff matches |
 | Webcast URL | `info/update` |
@@ -740,6 +750,8 @@ With `enabled: true`, every committed match goes to the real event page, includi
 ## Livestream and match videos
 
 TBA doesn't host video. Match videos are links into your YouTube livestream at the right timestamp, so nothing needs uploading.
+
+**Removing a wrong video:** TBA's API can add videos but not remove them. In the match's review panel set Video to `none` and **Save video**, then Schedule → All matches → **Off TBA** on that match, then **Send schedule to TBA**: the match is re-created on TBA with its score and no videos.
 
 1. Stream the third camera with OBS to YouTube. Add `/display` as a Browser Source for the score overlay.
 2. In `/control` → Setup, enter the livestream's **YouTube video ID** and click **Save**.

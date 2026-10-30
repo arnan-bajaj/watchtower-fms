@@ -110,6 +110,28 @@
       <button id="bimp" style="margin-top:.6rem">Preview import</button>
     </div>
     <div class="panel">
+      <h2>Shift match times</h2>
+      <div class="form">
+        <label class="field">From match <select id="rtfrom"></select></label>
+        <label class="field">New time <input id="rtstart" inputmode="numeric" placeholder="HH:MM"></label>
+        <label class="field">Cycle (min) <input type="number" id="rtcycle" step="0.5" min="1"></label>
+        <button class="primary" id="brt">Shift times</button>
+      </div>
+      <div class="hint">To change one match, edit its time in All matches below. Shifting: that match and every later unplayed match get new times, one cycle apart. Teams and results don't change. If TBA is on, the new times are sent there too.</div>
+    </div>
+    <div class="panel">
+      <h2>Add a match</h2>
+      <div class="form">
+        <label class="field">Match # <input type="number" id="amnum" min="1" placeholder="next"></label>
+        <label class="field">Red <input id="amred" placeholder="101 102 103"></label>
+        <label class="field">Blue <input id="amblue" placeholder="104 105 106"></label>
+        <label class="field">Time <input id="amtime" inputmode="numeric" placeholder="HH:MM"></label>
+        <label class="field">Auto started at <input id="amauto" inputmode="numeric" placeholder="HH:MM:SS"></label>
+        <button class="primary" id="bam">Add match</button>
+      </div>
+      <div class="hint">Re-adds a qual (e.g. one deleted by mistake) at that number. Put <code>*</code> after a surrogate. Leave <b>Auto started at</b> blank to schedule it to play. If it was already played, enter when auto really started (event-day clock): it opens in review, recounted from the fuel still stored for that time. Then set the hub order, climbs, fouls and any count fixes, and Commit.</div>
+    </div>
+    <div class="panel">
       <div class="panel-head"><h2>All matches</h2>
         <div class="row"><button id="btbasched" class="small">Send schedule to TBA</button><a href="/api/export.csv" download="fms-results.csv"><button class="ghost small">Download CSV</button></a></div></div>
       <div class="scroll" id="alltable"></div>
@@ -297,7 +319,7 @@ function renderReview(s) {
         ${locked ? "" : `<div class="row" style="margin-top:.5rem"><button class="red small" data-fadd="red:minor">Red minor</button><button class="red small" data-fadd="red:major">Red major</button><button class="blue small" data-fadd="blue:minor">Blue minor</button><button class="blue small" data-fadd="blue:major">Blue major</button></div>`}</div>
     </div>
     <div class="row" style="margin-top:1rem">
-      <input id="vid" data-id="vid" placeholder="${esc(cur.suggested_video || "YouTube ID (optional)")}" value="${esc(cur.video || "")}" style="flex:1;min-width:14rem">
+      <input id="vid" data-id="vid" placeholder="${esc(cur.suggested_video || "YouTube ID (optional)")}" value="${esc(cur.video || "")}" title="A YouTube ID, or none for no video" style="flex:1;min-width:14rem">
       <button class="ghost" id="bvid">Save video</button>
     </div>
     <div class="row" style="margin-top:1rem;justify-content:flex-end">
@@ -320,7 +342,18 @@ function renderReview(s) {
     api("/api/fouls", { key: cur.key, committed_by: a, kind: k, ref: "scorekeeper" });
   });
   const wo = $("#wo"); if (wo) wo.onchange = () => api("/api/match/winner", { key: cur.key, winner: wo.value || null });
-  $("#bvid").onclick = () => api("/api/match/video", { key: cur.key, youtube: $("#vid").value });
+  // Save on change too: clicking the button blurs the box, and the deferred re-render that
+  // follows would replace both before the click lands (it then saved the old value).
+  let vidSent = cur.video || "";
+  const saveVid = async () => {
+    const v = $("#vid").value.trim();
+    if (v === vidSent) return;
+    vidSent = v;
+    await api("/api/match/video", { key: cur.key, youtube: v });
+    FMS.toast(`${cur.key}: ` + (v.toLowerCase() === "none" ? "no video" : v ? "video saved" : "video cleared (suggested one used)"));
+  };
+  $("#vid").onchange = saveVid;
+  $("#bvid").onclick = saveVid;
   const bc = $("#bcommit"); if (bc) bc.onclick = async () => {
     const j = await api("/api/match/commit", { key: cur.key });
     FMS.toast(`${cur.key} committed${j.next ? ". Next: " + j.next : ""}`);
@@ -372,14 +405,66 @@ function renderPreview() {
   };
 }
 $("#btbasched").onclick = async () => { const j = await api("/api/tba/schedule"); FMS.toast(`Queued ${j.queued} matches for TBA`); };
+let rtSig = "";
+function renderRetime(s) {
+  const open = s.matches.filter((m) => m.status === "scheduled");
+  const sig = open.map((m) => m.key + m.scheduled).join();
+  if (sig === rtSig) return;
+  rtSig = sig;
+  const keep = $("#rtfrom").value;
+  $("#rtfrom").innerHTML = open.map((m) => `<option value="${m.key}">${m.key}${m.scheduled ? " (" + m.scheduled + ")" : ""}</option>`).join("");
+  if (open.some((m) => m.key === keep)) $("#rtfrom").value = keep;
+  $("#brt").disabled = !open.length;
+}
+$("#brt").onclick = async () => {
+  const from = $("#rtfrom").value, start = $("#rtstart").value.trim(), cyc = +$("#rtcycle").value;
+  if (!/^\d{1,2}:\d{2}$/.test(start)) return FMS.toast("Enter the new time as HH:MM, e.g. 13:05");
+  if (!confirm(`Re-time ${from} to ${start} and every later unplayed match ${cyc} min apart?`)) return;
+  const j = await api("/api/schedule/retime", { from, start, cycle_min: cyc });
+  FMS.toast(`${j.count} matches re-timed` + (j.last ? `, last at ${j.last}` : ""));
+};
+$("#bam").onclick = async () => {
+  const split = (id) => $(id).value.split(/[\s,]+/);
+  const j = await api("/api/schedule/add", { match_number: $("#amnum").value, red: split("#amred"),
+    blue: split("#amblue"), scheduled: $("#amtime").value, auto_start: $("#amauto").value });
+  for (const id of ["#amnum", "#amred", "#amblue", "#amtime", "#amauto"]) $(id).value = "";
+  FMS.toast(j.status === "review" ? `${j.key} added in review. Open it to check and commit` : `${j.key} added`);
+};
 function renderAll(s) {
+  renderRetime(s);
+  if (document.activeElement && document.activeElement.dataset.time) return;  // don't clobber a time being typed
   const cur = s.current;
   $("#alltable").innerHTML = `<table><tr><th>Match</th><th>Time</th><th>Red</th><th>Blue</th><th class="r">Score</th><th>Status</th><th></th></tr>
-    ${s.matches.map((m) => `<tr class="${cur && m.key === cur.key ? "cur" : ""}"><td>${m.key}</td><td>${m.scheduled || ""}</td>
+    ${s.matches.map((m) => `<tr class="${cur && m.key === cur.key ? "cur" : ""}"><td>${m.key}</td><td><input class="tcell" data-time="${m.key}" value="${m.scheduled || ""}" placeholder="HH:MM" inputmode="numeric" size="5" title="Edit, then Enter or tap away to save"></td>
       <td class="tred">${m.red.join(" ")}</td><td class="tblue">${m.blue.join(" ")}</td>
       <td class="r num">${m.red_score != null ? `<span class="tred">${m.red_score}</span>–<span class="tblue">${m.blue_score}</span>` : ""}</td>
       <td><span class="pill">${m.status}</span></td><td><button class="ghost small" data-sel="${m.key}">Open</button>
-      <button class="ghost small danger" data-tbadel="${m.key}" title="Remove this match from the TBA event page">Off TBA</button></td></tr>`).join("")}</table>`;
+      <button class="ghost small danger" data-tbadel="${m.key}" title="Remove this match from the TBA event page">Off TBA</button>
+      ${m.status !== "running" && m.status !== "committed" ? `<button class="ghost small" data-teams="${m.key}" title="Change which teams play in this match">Teams</button>` : ""}
+      ${m.comp_level === "qm" && m.status !== "running" && m.status !== "committed" ? `<button class="ghost small danger" data-del="${m.key}" title="Delete this match here and on TBA">Delete</button>` : ""}</td></tr>`).join("")}</table>`;
+  $("#alltable").querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
+    const k = b.dataset.del, m = s.matches.find((x) => x.key === k);
+    if (!confirm(`Delete ${k} (${m.red.join(" ")} vs ${m.blue.join(" ")})?\n\nIt's removed here and from TBA, and its fouls are dropped. Other matches keep their numbers. This can't be undone.`)) return;
+    await api("/api/schedule/delete", { key: k });
+    FMS.toast(`${k} deleted`);
+  });
+  $("#alltable").querySelectorAll("[data-teams]").forEach((b) => b.onclick = async () => {
+    const k = b.dataset.teams, m = s.matches.find((x) => x.key === k), sur = m.surrogates || [];
+    const cur = (a) => m[a].map((t) => t + (sur.includes(t) ? "*" : "")).join(" ");
+    const red = prompt(`${k} red teams (3, spaces between; * after a surrogate):`, cur("red"));
+    if (red === null) return;
+    const blue = prompt(`${k} blue teams (3, spaces between; * after a surrogate):`, cur("blue"));
+    if (blue === null) return;
+    await api("/api/schedule/teams", { key: k, red: red.split(/[\s,]+/), blue: blue.split(/[\s,]+/) });
+    FMS.toast(`${k} teams updated` + (m.status === "review" ? ". Commit it to update rankings and TBA" : ""));
+  });
+  $("#alltable").querySelectorAll("[data-time]").forEach((el) => el.onblur = () => setTimeout(() => S() && renderAll(S())));
+  $("#alltable").querySelectorAll("[data-time]").forEach((el) => el.onchange = async () => {
+    try {
+      const j = await api("/api/schedule/time", { key: el.dataset.time, scheduled: el.value });
+      FMS.toast(`${el.dataset.time} ${j.scheduled ? "now at " + j.scheduled : "has no time"}`);
+    } catch (e) { el.value = (S().matches.find((m) => m.key === el.dataset.time) || {}).scheduled || ""; }
+  });
   $("#alltable").querySelectorAll("[data-tbadel]").forEach((b) => b.onclick = async () => {
     const k = b.dataset.tbadel, m = s.matches.find((x) => x.key === k);
     if (!confirm(`Remove ${k} from TBA? Rankings on TBA are re-sent without it.` +
@@ -439,7 +524,7 @@ async function loadResult(key) {
         ${playoff ? "" : `<tr><td>Bonus RP</td><td class="r small">${bonus("red")}</td><td class="r small">${bonus("blue")}</td></tr>${row("Ranking points", "rp")}`}</table>
         <div class="muted small" style="margin-top:.4rem">Hub off first: ${d.first_inactive || "–"}${d.fi_coin ? " (coin flip)" : ""} · start offset ${(d.offset || 0).toFixed(1)} s${d.winner_override ? " · winner picked by scorekeeper" : ""}</div>
         <h2 style="margin-top:1rem">Fouls</h2><table>${fouls}</table>
-        ${d.video ? `<div style="margin-top:.6rem">Video: <a href="https://youtu.be/${esc(d.video)}" target="_blank" rel="noopener">${esc(d.video)}</a></div>` : ""}</div>
+        ${d.video && d.video !== "none" ? `<div style="margin-top:.6rem">Video: <a href="https://youtu.be/${esc(d.video)}" target="_blank" rel="noopener">${esc(d.video)}</a></div>` : ""}</div>
     </div>`;
   $("#resopen").onclick = async () => {
     await api("/api/match/select", { key: d.key });
@@ -598,6 +683,7 @@ FMS.on((s) => {
   $("#evname").textContent = s.event.name;
   if (first) {
     $("#sstart").value = s.event.qual_start; $("#scycle").value = s.event.cycle_min; first = false;
+    $("#rtcycle").value = s.event.cycle_min;
     $("#mpt").value = suggestMpt(s);
   }
   renderPills(s); renderMatch(s); renderAll(s); renderResults(s); renderRank(s); renderAlli(s); renderLiveSel(s); renderSetup(s);

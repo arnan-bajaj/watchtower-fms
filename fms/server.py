@@ -353,6 +353,137 @@ async def schedule_save(body: dict = Body(...), x_fms_token: str = Header(None))
     return {"ok": True, "count": len(body["matches"])}
 
 
+@app.post("/api/schedule/retime")
+async def schedule_retime(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """Shift the times of unplayed matches; teams and results are untouched, so this works mid-event."""
+    need(x_fms_token)
+    ms = store.matches()
+    try:
+        cycle = float(body.get("cycle_min") or CFG["event"]["cycle_min"])
+        times = schedule.retime(ms, body["from"], body["start"], cycle)
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, f"Need a match, a start time as HH:MM and a cycle in minutes ({e})")
+    for k, t in times.items():
+        store.update_match(k, scheduled=t)
+    changed = [m for m in store.matches() if m["key"] in times]
+    if changed:
+        tba.matches([tba.match(m, None, time_utc(m)) for m in changed])
+    mark_dirty()
+    return {"count": len(times), "last": changed[-1]["scheduled"] if changed else None}
+
+
+@app.post("/api/schedule/time")
+async def schedule_time(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """Set one match's time (blank clears it). Only the time changes, so any match can be edited."""
+    need(x_fms_token)
+    m = _get(body.get("key") or "")
+    try:
+        t = schedule.hhmm(body.get("scheduled"))
+    except ValueError:
+        raise HTTPException(400, "Enter the time as HH:MM, e.g. 13:05")
+    store.update_match(m["key"], scheduled=t)
+    m = store.match(m["key"])
+    tba.one_match(m, m.get("breakdown"), time_utc(m))  # breakdown = what TBA last got (kept while reopened)
+    mark_dirty()
+    return {"ok": True, "scheduled": t}
+
+
+@app.post("/api/schedule/teams")
+async def schedule_teams(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """Change who plays in one match (replacement robots). A committed match must be reopened first;
+    recommitting it re-sends the result and rankings with the new teams."""
+    need(x_fms_token)
+    m = _get(body.get("key") or "")
+    if m["status"] == "running":
+        raise HTTPException(409, f"{m['key']} is running. Press Reset match first.")
+    _editable(m)
+    try:
+        lu = schedule.lineup(body.get("red") or [], body.get("blue") or [], CFG["event"]["teams"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    store.update_match(m["key"], **lu)
+    m = store.match(m["key"])
+    tba.one_match(m, m.get("breakdown"), time_utc(m))  # breakdown = what TBA last got (kept while reopened)
+    mark_dirty()
+    return {"ok": True}
+
+
+@app.post("/api/schedule/add")
+async def schedule_add(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """Add one qual match (e.g. one deleted by mistake). With `auto_start` (HH:MM:SS on event day,
+    when auto really started) it goes straight to review, scored from the raw fuel still stored for
+    that time; without it, it's scheduled like any other match."""
+    need(x_fms_token)
+    qms = store.matches("qm")
+    try:
+        lu = schedule.lineup(body.get("red") or [], body.get("blue") or [], CFG["event"]["teams"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    try:
+        n = int(body.get("match_number") or 0) or max((x["match_number"] for x in qms), default=0) + 1
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise HTTPException(400, "Match number must be a whole number, 1 or more")
+    try:
+        t = schedule.hhmm(body.get("scheduled"))
+    except ValueError:
+        raise HTTPException(400, "Enter the time as HH:MM, e.g. 13:05")
+    a0 = None
+    if (body.get("auto_start") or "").strip():
+        date = CFG["event"]["date"] or datetime.now().strftime("%Y-%m-%d")
+        try:
+            a0 = schedule.clock_to_epoch(body["auto_start"], date, CFG["event"]["utc_offset_hours"])
+        except ValueError:
+            raise HTTPException(400, f"Enter auto start as HH:MM:SS, e.g. 13:05:42 (event date {date})")
+    key = f"qm{n}"
+    if store.match(key):
+        raise HTTPException(409, f"{key} already exists")
+    if a0 is not None:
+        if a0 > time.time():
+            raise HTTPException(400, "Auto start is in the future (check the time and event.date)")
+        span = (lambda ps: ps[-1].end - ps[0].start)(game.build_periods(G, a0))
+        clash = [x["key"] for x in store.matches() if x.get("auto_start") is not None
+                 and abs(x["auto_start"] + (x.get("offset") or 0) - a0) < span]
+        if clash:  # the same fuel would count in both matches
+            raise HTTPException(409, f"That auto start overlaps {', '.join(clash)}")
+    before = [x["ord"] for x in qms if x["match_number"] < n]
+    after = [x["ord"] for x in qms if x["match_number"] > n]
+    ord_ = max(before) + 1 if before else min(after) if after else store.next_ord()
+    store.x("UPDATE matches SET ord=ord+1 WHERE ord>=?", (ord_,))  # make room, keep play order
+    store.insert_match({"key": key, "comp_level": "qm", "set_number": 1, "match_number": n, "ord": ord_,
+                        **lu, "scheduled": t, "status": "review" if a0 is not None else "scheduled",
+                        "auto_start": a0, "adjust": {}, "climbs": {}})
+    m = store.match(key)
+    tba.one_match(m, None, time_utc(m))
+    mark_dirty()
+    return {"ok": True, "key": key, "status": m["status"]}
+
+
+@app.post("/api/schedule/delete")
+async def schedule_delete(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """Drop one qual match (running behind). Others keep their numbers; it also comes off TBA.
+    Raw fuel stays (it's keyed by time, not match); the match's fouls are soft-deleted."""
+    need(x_fms_token)
+    m = _get(body.get("key") or "")
+    if m["comp_level"] != "qm":
+        raise HTTPException(400, "Playoff matches come from the bracket and can't be deleted")
+    if m["status"] == "running":
+        raise HTTPException(409, f"{m['key']} is running. Press Reset match first.")
+    _editable(m)
+    store.x("DELETE FROM matches WHERE key=?", (m["key"],))
+    store.x("UPDATE fouls SET deleted=1 WHERE match_key=?", (m["key"],))
+    if store.get("current") == m["key"]:
+        ms = store.matches()
+        nxt = next((x for x in ms if x["ord"] > m["ord"] and x["status"] == "scheduled"),
+                   next((x for x in ms if x["status"] == "scheduled"), None))
+        store.set("current", nxt["key"]) if nxt else store.delete("current")
+    tba.delete_matches([m["key"]])
+    tba.rankings(bracket.rankings(CFG["event"]["teams"], store.matches("qm")))
+    mark_dirty()
+    return {"ok": True}
+
+
 @app.post("/api/tba/schedule")
 def tba_schedule(x_fms_token: str = Header(None)):
     need(x_fms_token)
@@ -501,9 +632,12 @@ async def winner(body: dict = Body(...), x_fms_token: str = Header(None)):
 async def video(body: dict = Body(...), x_fms_token: str = Header(None)):
     need(x_fms_token)
     m = _get(body.get("key"))
-    store.update_match(m["key"], video=(body.get("youtube") or "").strip() or None)
-    if m["status"] == "committed" and body.get("youtube"):
-        tba.video(m["key"], body["youtube"].strip())
+    v = (body.get("youtube") or "").strip() or None
+    if v and v.lower() == "none":  # no video, not even the suggested one (TBA can't remove one already sent)
+        v = "none"
+    store.update_match(m["key"], video=v)
+    if m["status"] == "committed" and v and v != "none":
+        tba.video(m["key"], v)
     mark_dirty()
     return {"ok": True}
 
@@ -537,7 +671,7 @@ async def commit(body: dict = Body(...), x_fms_token: str = Header(None)):
     if m["comp_level"] == "qm":
         tba.rankings(bracket.rankings(CFG["event"]["teams"], store.matches("qm")))
     vid = m.get("video") or suggested_video(m)
-    if vid:
+    if vid and vid != "none":
         store.update_match(m["key"], video=vid)
         tba.video(m["key"], vid)
     if m["comp_level"] != "qm":

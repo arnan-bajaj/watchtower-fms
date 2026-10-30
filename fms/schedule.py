@@ -18,7 +18,7 @@ import itertools
 import random
 import time
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 W_B2B, W_PARTNER, W_OPP, W_COLOR, W_GAP = 30.0, 3.0, 1.0, 1.0, 0.5
 
@@ -137,6 +137,66 @@ def add_times(matches, start_hhmm, cycle_min):
         m["scheduled"] = t.strftime("%H:%M")
         t += timedelta(minutes=cycle_min)
     return matches
+
+
+def hhmm(text):
+    """'9:5'/'09:05' -> '09:05'; blank -> None (no time). ValueError otherwise."""
+    text = (text or "").strip()
+    return datetime.strptime(text, "%H:%M").strftime("%H:%M") if text else None
+
+
+def clock_to_epoch(text, date, utc_offset_hours):
+    """'13:05:42' local on `date` (YYYY-MM-DD) -> unix time, using the event's UTC offset
+    (not the laptop's timezone). ValueError on a bad time or date."""
+    t = datetime.strptime(f"{date} {text.strip()}", "%Y-%m-%d %H:%M:%S")
+    return (t - timedelta(hours=utc_offset_hours)).replace(tzinfo=timezone.utc).timestamp()
+
+
+def retime(matches, from_key, start_hhmm, cycle_min):
+    """New times for unplayed matches from `from_key` on (running behind, lunch moved).
+    `matches` in play order; played or running ones keep their time and take no slot.
+    Returns {key: "HH:MM"}."""
+    keys = [m["key"] for m in matches]
+    if from_key not in keys:
+        raise ValueError(f"No match {from_key}")
+    if cycle_min <= 0:
+        raise ValueError("Cycle must be more than 0 minutes")
+    t = datetime.strptime(start_hhmm, "%H:%M")
+    out = {}
+    for m in matches[keys.index(from_key):]:
+        if m["status"] != "scheduled":
+            continue
+        out[m["key"]] = t.strftime("%H:%M")
+        t += timedelta(minutes=cycle_min)
+    return out
+
+
+def lineup(red, blue, roster):
+    """New teams for one match (a robot broke and another team filled in).
+    red/blue: 3 slots each like "6059", or "6059*" for a surrogate.
+    Returns {"red", "blue", "surrogates"}; ValueError on a bad slot, wrong count, a repeat,
+    or a team not in the event's team list."""
+    out = {"surrogates": []}
+    for a, slots in (("red", red), ("blue", blue)):
+        slots = [str(s).strip() for s in slots if str(s).strip()]
+        if len(slots) != 3:
+            raise ValueError(f"{a.title()} needs 3 teams (got {len(slots)})")
+        out[a] = []
+        for s in slots:
+            if not s.rstrip("*").isdigit():
+                raise ValueError(f"{s!r} isn't a team number")
+            out[a].append(int(s.rstrip("*")))
+            if s.endswith("*"):
+                out["surrogates"].append(int(s.rstrip("*")))
+    every = out["red"] + out["blue"]
+    twice = sorted({t for t in every if every.count(t) > 1})
+    if twice:
+        raise ValueError(f"In this match twice: {', '.join(map(str, twice))}")
+    missing = [t for t in every if t not in roster]
+    if missing:
+        raise ValueError(f"Not in the event's team list: {', '.join(map(str, missing))} "
+                         "(add to event.teams in config/event.yaml and restart)")
+    return out
 
 
 def parse_csv(text):

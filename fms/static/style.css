@@ -57,6 +57,7 @@ input, select, textarea {
 }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--ink-2); box-shadow: 0 0 0 3px var(--fuel-soft); }
 input[type=number] { width: 5.5rem; }
+input.tcell { width: 4.6rem; min-height: 34px; padding: .25rem .4rem; font-variant-numeric: tabular-nums; }
 input[type=checkbox] { min-height: 0; width: 1.25rem; height: 1.25rem; accent-color: var(--ink); vertical-align: middle; }
 textarea { width: 100%; min-height: 8rem; font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
 label { display: inline-flex; align-items: center; gap: .45rem; }

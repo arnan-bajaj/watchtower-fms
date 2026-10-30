@@ -116,6 +116,60 @@ def test_schedule_surrogates():
     assert set(real.values()) == {5} and sur == 5
 
 
+def test_retime_skips_played():
+    ms = [{"key": "qm1", "status": "committed"}, {"key": "qm2", "status": "scheduled"},
+          {"key": "qm3", "status": "running"}, {"key": "qm4", "status": "scheduled"},
+          {"key": "qm5", "status": "scheduled"}]
+    assert schedule.retime(ms, "qm2", "13:05", 7.5) == {"qm2": "13:05", "qm4": "13:12", "qm5": "13:20"}
+    assert schedule.retime(ms, "qm4", "9:55", 8) == {"qm4": "09:55", "qm5": "10:03"}
+    for bad in (("qm9", "13:00", 8), ("qm2", "1pm", 8), ("qm2", "13:00", 0)):
+        try:
+            schedule.retime(ms, *bad)
+            assert False, bad
+        except ValueError:
+            pass
+
+
+def test_lineup():
+    roster = [101, 102, 103, 104, 105, 106, 107]
+    assert schedule.lineup(["101", "102", "107*"], ["104", " 105 ", "106", ""], roster) == \
+        {"red": [101, 102, 107], "blue": [104, 105, 106], "surrogates": [107]}
+    assert schedule.lineup([101, 102, 103], [104, 105, 106], roster)["surrogates"] == []
+    for red, blue in ((["101", "102"], ["104", "105", "106"]),           # 2 teams
+                      (["101", "102", "103", "107"], ["104", "105", "106"]),
+                      (["101", "102", "abc"], ["104", "105", "106"]),    # not a number
+                      (["101", "102", "104"], ["104", "105", "106"]),    # on both alliances
+                      (["101", "102", "999"], ["104", "105", "106"])):   # not at the event
+        try:
+            schedule.lineup(red, blue, roster)
+            assert False, (red, blue)
+        except ValueError:
+            pass
+
+
+def test_clock_to_epoch():
+    # 2026-01-01T00:00Z = 1767225600; Oct 10 is day 282 after it; 13:05:42 at UTC-7 = 20:05:42Z
+    assert schedule.clock_to_epoch("13:05:42", "2026-10-10", -7) == 1767225600 + 282 * 86400 + 72342
+    assert schedule.clock_to_epoch(" 9:00:00 ", "2026-10-10", -4) == 1767225600 + 282 * 86400 + 13 * 3600
+    for bad in ("13:05", "1pm", "25:00:00"):
+        try:
+            schedule.clock_to_epoch(bad, "2026-10-10", -7)
+            assert False, bad
+        except ValueError:
+            pass
+
+
+def test_hhmm():
+    assert schedule.hhmm("9:5") == "09:05" and schedule.hhmm(" 13:40 ") == "13:40"
+    assert schedule.hhmm("") is None and schedule.hhmm(None) is None
+    for bad in ("25:00", "1pm", "13"):
+        try:
+            schedule.hhmm(bad)
+            assert False, bad
+        except ValueError:
+            pass
+
+
 def _done(key, red_a, blue_a, winner):
     return {"key": key, "status": "committed", "red_alliance": red_a, "blue_alliance": blue_a,
             "breakdown": {"winner": winner}}
