@@ -1192,4 +1192,7 @@ async def vision_replace(body: dict = Body(...), x_vision_key: str = Header(None
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host=CFG["server"]["host"], port=CFG["server"]["port"], log_level="warning")
+    import os
+    port = int(os.environ.get("FMS_PORT") or CFG["server"]["port"])   # launch.py --port
+    CFG["server"]["port"] = port
+    uvicorn.run(app, host=CFG["server"]["host"], port=port, log_level="warning")

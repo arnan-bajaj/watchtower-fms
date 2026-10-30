@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#161a1f">
+<link rel="icon" href="/static/icon.svg">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/style.css">
+<title>Watchtower FMS</title>
+<style>
+  .wrap { max-width: 860px; }
+  .hero { display: flex; align-items: center; gap: .8rem; margin: 1.5rem 0 1rem; }
+  .hero img { width: 48px; height: 48px; border-radius: 12px; background: var(--ink); }
+  .hero h1 { font-size: 1.35rem; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .75rem; margin: 1rem 0; }
+  .step { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 1rem; box-shadow: var(--shadow); }
+  .step b { display: block; margin-bottom: .25rem; }
+  .step .n { display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; border-radius: 50%;
+    background: var(--ink); color: #fff; font-weight: 800; font-size: .85rem; margin-bottom: .5rem; }
+  .cmd { display: flex; gap: .5rem; align-items: stretch; margin: .4rem 0; }
+  .cmd code { flex: 1; display: block; padding: .7rem .8rem; background: var(--ink); color: #f1f3f4; border-radius: var(--r-sm);
+    font-size: .85rem; overflow-x: auto; white-space: nowrap; }
+  .tabs2 { display: flex; gap: .4rem; margin-bottom: .6rem; flex-wrap: wrap; }
+  .tabs2 button.sel { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .evlist a { display: flex; justify-content: space-between; align-items: center; gap: .6rem; padding: .85rem 1rem;
+    border-radius: var(--r-md); border: 1px solid var(--line); background: var(--panel); color: var(--ink); text-decoration: none; margin-bottom: .5rem; }
+  .evlist a:hover { border-color: var(--ink-2); }
+  .topright { margin-left: auto; display: flex; gap: .4rem; align-items: center; }
+  .pins { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
+  .pins div { background: var(--panel-2); border-radius: var(--r-sm); padding: .6rem; text-align: center; }
+  .pins b { display: block; font-size: 1.3rem; font-variant-numeric: tabular-nums; letter-spacing: .05em; }
+  .bigbtn { display: block; text-align: center; padding: 1rem; border-radius: var(--r-lg); background: var(--ink); color: #fff;
+    text-decoration: none; font-weight: 700; margin: .5rem 0; }
+  .panel { margin-bottom: 1rem; }
+  @media (max-width: 640px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head><body>
+<main class="wrap">
+  <div class="hero"><img src="/static/icon.svg" alt=""><div><h1>Watchtower FMS</h1>
+    <div class="muted small">Free scorekeeping for FRC REBUILT scrimmages</div></div>
+    <div class="topright" id="who"></div></div>
+  <div id="view"></div>
+</main>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function toast(msg, err = false) {
+  const el = document.createElement("div"); el.className = "toast" + (err ? " err" : ""); el.textContent = msg;
+  document.body.appendChild(el); setTimeout(() => el.remove(), err ? 4000 : 2200);
+}
+async function api(path, body, method) {
+  const r = await fetch(path, { method: method || (body === undefined ? "GET" : "POST"),
+    headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.detail || r.statusText); e.status = r.status; throw e; }
+  return j;
+}
+const go = (path) => { history.pushState(null, "", path); route(); };
+window.onpopstate = () => route();
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-go]"); if (a) { e.preventDefault(); go(a.getAttribute("href")); }
+});
+let ME = null, timer = null;
+
+async function route() {
+  clearInterval(timer);
+  ME = (await api("/api/me")).user;
+  $("#who").innerHTML = ME ? `<span class="small muted">${esc(ME.email)}</span><button class="ghost small" id="bout">Log out</button>` : "";
+  if (ME) $("#bout").onclick = async () => { await api("/api/logout", {}); go("/"); };
+  const m = location.pathname.match(/^\/e\/([a-z0-9-]+)/);
+  if (m) return eventView(m[1]);
+  return ME ? eventsView() : landing();
+}
+
+// ---------------------------------------------------------------- landing
+function landing() {
+  $("#view").innerHTML = `
+  <div class="panel"><h2>Run your scrimmage like a real event</h2>
+    <p>Quals schedule, live alliance selection, a 4-alliance double-elimination playoff, refs and emcee on their phones,
+      a field display for the audience, results on The Blue Alliance, and hub cameras that count fuel and feed your field system (bioarena).</p>
+    <div class="steps">
+      <div class="step"><span class="n">1</span><b>Create your event</b><span class="muted small">Name, date, teams. Takes a minute.</span></div>
+      <div class="step"><span class="n">2</span><b>Run one command</b><span class="muted small">On the scorekeeper's laptop (Mac, Linux or Windows). It installs everything and starts Watchtower on that laptop.</span></div>
+      <div class="step"><span class="n">3</span><b>Score</b><span class="muted small">Phones on the venue WiFi open the ref, emcee and display pages. Set TBA keys, field address and calibration in Setup.</span></div>
+    </div>
+    <p class="muted small">Your event runs on your laptop, not on this website, so it keeps working if the venue's internet drops.
+      Open source (MIT): <a href="https://github.com/arnan-bajaj/watchtower-fms">github.com/arnan-bajaj/watchtower-fms</a>.</p></div>
+  <div class="grid2">
+    <div class="panel"><h2>Create an account</h2>
+      <div class="form" style="grid-template-columns:1fr">
+        <label class="field">Email <input id="su_email" type="email" autocomplete="email"></label>
+        <label class="field">Password (8+ characters) <input id="su_pw" type="password" autocomplete="new-password"></label>
+        <label class="field">Team number (optional) <input id="su_team" inputmode="numeric"></label>
+        <label class="field" id="su_codew" hidden>Invite code <input id="su_code" autocomplete="off"></label>
+        <button class="primary" id="bsu">Sign up</button></div></div>
+    <div class="panel"><h2>Log in</h2>
+      <div class="form" style="grid-template-columns:1fr">
+        <label class="field">Email <input id="li_email" type="email" autocomplete="email"></label>
+        <label class="field">Password <input id="li_pw" type="password" autocomplete="current-password"></label>
+        <button id="bli">Log in</button></div></div>
+  </div>`;
+  api("/api/me").then((j) => { $("#su_codew").hidden = !j.signup_code; });
+  $("#bsu").onclick = async () => {
+    try { await api("/api/signup", { email: $("#su_email").value, password: $("#su_pw").value, team: $("#su_team").value, code: $("#su_code").value }); go("/"); }
+    catch (e) { toast(e.message, true); }
+  };
+  const li = async () => { try { await api("/api/login", { email: $("#li_email").value, password: $("#li_pw").value }); go(location.pathname); } catch (e) { toast(e.message, true); } };
+  $("#bli").onclick = li; $("#li_pw").onkeydown = (e) => { if (e.key === "Enter") li(); };
+}
+
+// ---------------------------------------------------------------- my events
+async function eventsView() {
+  const { events } = await api("/api/events");
+  $("#view").innerHTML = `
+  <div class="panel"><h2>Your events</h2>
+    <div class="evlist">${events.map((e) => `<a href="/e/${e.slug}" data-go><span><b>${esc(e.name)}</b><br><span class="small muted">/e/${e.slug}</span></span>
+      ${e.online ? `<span class="pill ok">running${e.match ? " · " + esc(e.match) : ""}</span>` : `<span class="pill">not running</span>`}</a>`).join("") || `<p class="muted">None yet. Create one below.</p>`}</div></div>
+  <div class="panel"><h2>New event</h2>
+    <div class="form">
+      <label class="field">Event name <input id="ne_name" placeholder="e.g. Spring Scrimmage"></label>
+      <label class="field">Date <input id="ne_date" type="date"></label>
+      <label class="field">UTC offset (h) <input id="ne_utc" type="number" step="0.5" value="${-new Date().getTimezoneOffset() / 60}"></label>
+      <label class="field">TBA event key (optional) <input id="ne_key" placeholder="2026abcd" autocapitalize="off"></label>
+    </div>
+    <label class="field" style="margin-top:.75rem">Teams (optional now; any separator) <textarea id="ne_teams" style="min-height:4rem" placeholder="254 1678 971 ..."></textarea></label>
+    <button class="primary" id="bne" style="margin-top:.6rem">Create event</button></div>`;
+  $("#bne").onclick = async () => {
+    try {
+      const e = await api("/api/events", { name: $("#ne_name").value, date: $("#ne_date").value, utc_offset_hours: $("#ne_utc").value,
+                                           tba_event_key: $("#ne_key").value, teams: $("#ne_teams").value });
+      go("/e/" + e.slug);
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
+// ---------------------------------------------------------------- one event
+function phoneLinks(e) {
+  if (!e.online || !e.lan_urls.length) return `<p class="muted">Watchtower isn't running for this event right now (it runs on the scorekeeper's laptop). Check back when it is.</p>`;
+  const u = e.lan_urls[0];
+  return `<p class="small muted">On the venue WiFi, open your station:</p>
+    ${["ref", "emcee", "display", "control"].map((p) => `<a class="bigbtn" href="${esc(u)}/${p}">${{ ref: "Referee", emcee: "Emcee", display: "Field display", control: "Scorekeeper" }[p]}</a>`).join("")}
+    <p class="small muted">Address: <code>${esc(u)}</code>. If it doesn't open, you're not on the same WiFi as the scorekeeper's laptop.</p>`;
+}
+
+async function eventView(slug) {
+  let e;
+  try { e = await api("/api/events/" + slug); }
+  catch (err) {
+    if (err.status !== 401 && err.status !== 404) throw err;
+    try { e = await api("/api/public/" + slug); } catch { $("#view").innerHTML = `<div class="panel"><h2>No such event</h2><a href="/" data-go>Home</a></div>`; return; }
+    $("#view").innerHTML = `<div class="panel"><h2>${esc(e.name)}</h2>${phoneLinks(e)}</div>
+      ${ME ? "" : `<p class="small muted">Running this event? <a href="/" data-go>Log in</a>.</p>`}`;
+    timer = setInterval(() => eventView(slug), 15000);
+    return;
+  }
+  renderOwner(e);
+  timer = setInterval(async () => {
+    if (document.querySelector("#view input:focus, #view textarea:focus")) return;
+    try { renderOwner(await api("/api/events/" + slug)); } catch {}
+  }, 10000);
+}
+
+let osTab = /Win/.test(navigator.platform) ? "windows" : "mac";
+function renderOwner(e) {
+  const S = e.settings, v = (k) => S[k].value;
+  const c = e.commands;
+  const cmds = osTab === "windows"
+    ? [["Start Watchtower", c.windows], ["With fake fuel (rehearsal)", c.windows_mock]]
+    : [["Start Watchtower", c.mac], ["With fake fuel (rehearsal)", c.mac_mock], ["With the hub cameras", c.mac_cameras]];
+  const fd = v("field.feeds");
+  $("#view").innerHTML = `
+  <p><a href="/" data-go>← Your events</a></p>
+  <div class="panel"><div class="panel-head"><h2 style="margin:0">${esc(v("event.name"))}</h2>
+    ${e.online ? `<span class="pill ok">running${e.match ? " · " + esc(e.match) + " " + esc(e.match_status || "") : ""}</span>` : `<span class="pill">not running</span>`}</div>
+    ${e.online ? `<p class="small">Phones on the venue WiFi: <code>${esc(e.lan_urls[0] || "")}</code> · ${e.played || 0} matches played</p>` :
+      e.last_seen ? `<p class="small muted">Last seen ${new Date(e.last_seen * 1000).toLocaleString()}</p>` : `<p class="small muted">Not started yet. Run the command below on the scorekeeper's laptop.</p>`}
+    <p class="small muted">Phones can also open <a href="${esc(e.url)}">${esc(e.url)}</a>: it links them to your laptop while Watchtower runs.</p></div>
+
+  <div class="panel"><h2>Launch command</h2>
+    <div class="tabs2"><button class="small ${osTab === "mac" ? "sel" : ""}" data-os="mac">Mac / Linux (Terminal)</button><button class="small ${osTab === "windows" ? "sel" : ""}" data-os="windows">Windows (PowerShell)</button></div>
+    ${cmds.map(([label, cmd]) => `<div class="small muted">${label}</div><div class="cmd"><code>${esc(cmd)}</code><button class="small" data-copy="${esc(cmd)}">Copy</button></div>`).join("")}
+    <p class="small muted">Paste it into ${osTab === "windows" ? "PowerShell" : "Terminal"} on the scorekeeper's laptop. The first run installs Watchtower into a <code>Watchtower</code> folder in your home folder (a few minutes); later runs start in seconds. It opens the scorekeeper page; Ctrl+C stops it.
+      ${osTab === "windows" ? "<b>Windows support is new and less tested than Mac.</b>" : ""}</p>
+    <p class="small muted">Treat this command like a password: it carries your event's PINs and TBA keys.</p></div>
+
+  <div class="grid2">
+    <div class="panel"><h2>PINs</h2>
+      <div class="pins"><div><span class="small muted">Scorekeeper</span><b>${esc(v("server.pins.control"))}</b></div>
+        <div><span class="small muted">Ref</span><b>${esc(v("server.pins.ref"))}</b></div>
+        <div><span class="small muted">Emcee</span><b>${esc(v("server.pins.emcee"))}</b></div></div>
+      <p class="small muted">Change them in Watchtower: /control → Setup.</p></div>
+    <div class="panel"><h2>Hub cameras</h2>
+      ${e.vision && Object.keys(e.vision).length ? Object.entries(e.vision).map(([h, f]) => `<div class="small"><b>${h}</b>: ${f} fps</div>`).join("") : `<p class="small muted">No hub counter running.</p>`}
+      <p class="small muted">Counts per ball: red ${esc(v("vision.scale.red"))}, blue ${esc(v("vision.scale.blue"))}. Calibrate in /control → Setup while the cameras run.</p></div>
+  </div>
+
+  <div class="panel"><h2>Event</h2>
+    <div class="form">
+      <label class="field">Name <input data-k="event.name" value="${esc(v("event.name"))}"></label>
+      <label class="field">Date <input data-k="event.date" type="date" value="${esc(v("event.date"))}"></label>
+      <label class="field">UTC offset (h) <input data-k="event.utc_offset_hours" type="number" step="0.5" value="${esc(v("event.utc_offset_hours"))}"></label>
+      <label class="field">TBA event key <input data-k="event.tba_event_key" value="${esc(v("event.tba_event_key"))}" placeholder="2026abcd"></label>
+    </div>
+    <label class="field" style="margin-top:.75rem">Teams <textarea data-k="event.teams" style="min-height:4rem">${esc((v("event.teams") || []).join(" "))}</textarea></label>
+    <button class="primary" data-save="event.name event.date event.utc_offset_hours event.tba_event_key event.teams" style="margin-top:.6rem">Save</button></div>
+
+  <div class="grid2">
+    <div class="panel"><h2>The Blue Alliance</h2>
+      <div class="form" style="grid-template-columns:1fr">
+        <label class="field">Auth ID <input data-k="tba.auth_id" value="${esc(v("tba.auth_id"))}" autocomplete="off"></label>
+        <label class="field">Auth secret <input id="tsec" type="password" placeholder="${v("tba.auth_secret") ? "saved (type to replace)" : "not set"}" autocomplete="new-password"></label>
+      </div>
+      <label style="margin-top:.6rem"><input type="checkbox" data-k="tba.enabled" ${v("tba.enabled") ? "checked" : ""}> Send results to TBA</label>
+      <button class="primary" data-save="tba.auth_id tba.enabled" style="margin-top:.6rem;display:block">Save</button>
+      <p class="small muted">Get keys at thebluealliance.com/request/apiwrite (sign in, pick your event). Leave sending off while you rehearse.</p></div>
+    <div class="panel"><h2>Field system (bioarena)</h2>
+      <div class="form">
+        <label class="field">Field IP <input id="fhost" value="${esc(fd && fd[0] ? fd[0].host : "")}" placeholder="192.168.1.10"></label>
+        <label class="field">UDP port <input id="fport" type="number" value="${esc(fd && fd[0] ? fd[0].port : "")}" placeholder="8411"></label>
+      </div>
+      <button class="primary" id="bfield" style="margin-top:.6rem">Save</button>
+      <p class="small muted">The hub cameras send every ball to the field so it decides AUTO and lights the hubs. In the field's counter setting, enter the laptop's address${e.lan_urls.length ? ` (<b>${esc(e.lan_urls[0].replace(/^http:\/\/|:\d+$/g, ""))}</b> right now)` : " (shown here once Watchtower runs)"}. Both change per WiFi network.</p></div>
+  </div>
+
+  <div class="panel"><h2>Danger zone</h2>
+    <div class="row"><button class="ghost danger" id="brot">New launch command</button><button class="danger" id="bdel">Delete event</button></div>
+    <p class="small muted">A new command stops the old one from syncing. Deleting removes it from this website only; matches stay on the laptop.</p></div>`;
+
+  document.querySelectorAll("[data-os]").forEach((b) => b.onclick = () => { osTab = b.dataset.os; renderOwner(e); });
+  document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); toast("Copied"); } catch { toast("Select the command and copy it", true); }
+  });
+  const save = async (changes) => {
+    try { renderOwner(await api(`/api/events/${e.slug}/settings`, { changes })); toast("Saved. Watchtower picks it up within 15 s if it's running."); }
+    catch (err) { toast(err.message, true); }
+  };
+  document.querySelectorAll("[data-save]").forEach((b) => b.onclick = () => {
+    const ch = {};
+    b.dataset.save.split(" ").forEach((k) => { const el = document.querySelector(`[data-k="${k}"]`); ch[k] = el.type === "checkbox" ? el.checked : el.value; });
+    if (b.dataset.save.startsWith("tba") && $("#tsec").value) ch["tba.auth_secret"] = $("#tsec").value;
+    save(ch);
+  });
+  $("#bfield").onclick = () => { const h = $("#fhost").value.trim(); save({ "field.feeds": h ? [{ name: "field", host: h, port: $("#fport").value || 8411 }] : [] }); };
+  $("#brot").onclick = async () => { if (confirm("Make a new launch command? The old one stops syncing.")) renderOwner(await api(`/api/events/${e.slug}/rotate`, {})); };
+  $("#bdel").onclick = async () => {
+    if (prompt(`Type ${e.slug} to delete this event from the website`) !== e.slug) return;
+    await api(`/api/events/${e.slug}`, undefined, "DELETE"); go("/");
+  };
+}
+route().catch((e) => { $("#view").innerHTML = `<div class="panel">Couldn't load: ${esc(e.message)}</div>`; });
+</script>
+</body></html>
