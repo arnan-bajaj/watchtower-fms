@@ -23,33 +23,33 @@ Built for the 10th Street Showdown (October 2026) and shared so other teams can 
 
 ---
 
-## The app (no terminal)
+## Use the website (recommended)
 
-Each release has **Watchtower** as a double-click app, with the hub-camera
-counter from [YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model)
-built in:
+**[watchtower.systemoverload.org](https://watchtower.systemoverload.org)**. No clone, no config files.
 
-| computer | download |
-|---|---|
-| Mac (Apple silicon) | `Watchtower-mac.zip` |
-| Windows 10/11 | `Watchtower-windows.zip` |
-| Linux PC | `Watchtower-linux-x64.tar.gz` |
-| Raspberry Pi 4/5 (64-bit Pi OS) | `Watchtower-linux-arm64.tar.gz` |
+1. **Sign up and create your event** (name, date, teams; all can change later).
+2. **Copy the launch command** from your event's page and paste it into Terminal (Mac/Linux) or
+   PowerShell (Windows) on the scorekeeper's laptop:
+   ```bash
+   curl -fsSL https://watchtower.systemoverload.org/run/<your event's token> | sh                # FMS
+   curl -fsSL https://watchtower.systemoverload.org/run/<your event's token> | sh -s -- --mock  # + fake fuel
+   ```
+   The first run installs Watchtower into `~/Watchtower` (Python too, via [uv](https://docs.astral.sh/uv/),
+   if the laptop has no Python 3.10+). Later runs start in seconds; `~/Watchtower/start <event> [--mock|--cameras]`
+   also works. It prints the phone address and PINs and opens `/control`. Ctrl+C stops it.
+3. **Set everything else in `/control` → Setup**: event name, date and teams, TBA keys, PINs, the field
+   system's IP (bioarena) and each hub camera's calibration. Or set them on the website before event day.
 
-- **First launch** makes `Documents/Watchtower/config/event.yaml` with new
-  PINs and a vision key.
-- **Every launch:**
-  - starts the FMS on port 8000 for phones on the Wi-Fi;
-  - starts the hub counter already sending to it;
-  - opens a start page with every link and PIN.
-- **Event name, date and teams:** set them in that `event.yaml`, then Quit
-  (on the hub camera page) and reopen.
-- **First open:** the apps are unsigned. On a Mac: System Settings → Privacy
-  & Security → Open Anyway. On Windows: More info → Run anyway.
+**Your event runs on your laptop, not on the website.** Matches, fuel and scores never leave it, phones
+talk to it over the venue WiFi, and it keeps working if the venue's internet drops. When there is internet,
+the laptop syncs its Setup settings with the website every 15 s (newest edit wins, per setting) and
+reports its status, so the event page shows whether it's running, the current match and the address phones
+open. Phones can also open `watchtower.systemoverload.org/e/<event>` to be linked to your laptop.
 
-`.github/workflows/app.yml` builds them on each tag. The hub counter comes
-from the YOLOv26-FRC-Model release named in `.github/hubcounter-release`.
-Everything below is the from-source setup, which the app replaces.
+Treat the launch command like a password: it carries the event's PINs and TBA keys. **New launch command**
+on the event page cuts the old one off.
+
+Running your own copy of the website instead: see [Hosting the website](#hosting-the-website).
 
 ## Quick start (no cameras, about 5 minutes)
 
@@ -60,7 +60,7 @@ pip install -r requirements.txt
 python -m fms.init                     # creates config/event.yaml with random PINs (printed once)
 ```
 
-Edit `config/event.yaml`: set `event.name`, `event.date` and `event.teams` (your team numbers). Then:
+Set `event.name`, `event.date` and `event.teams` (your team numbers) in `config/event.yaml`, or later in `/control` → Setup. Then:
 
 ```bash
 pip install -r vision/requirements.txt     # only needed for real cameras; skip for a first look
@@ -73,7 +73,7 @@ Open `http://localhost:8000` on the laptop, or `http://<laptop-ip>:8000` on a ph
 
 ## Contents
 
-1. [The app (no terminal)](#the-app-no-terminal)
+1. [Use the website](#use-the-website-recommended)
 1. [Quick start](#quick-start-no-cameras-about-5-minutes)
 1. [Architecture](#architecture)
 2. [Repo layout](#repo-layout)
@@ -132,10 +132,13 @@ fms/
   tba.py           TBA trusted API client with persistent outbox
   store.py         SQLite persistence
   config.py        config loader, defaults, PIN checks
+  settings.py      live settings (/control -> Setup) on top of event.yaml; newest-wins merge
+  cloud.py         optional sync with the website (settings + status; never matches)
   init.py          first-run setup: python -m fms.init
   static/          control / ref / emcee / display pages (vanilla JS, no CDN)
 vision/
-  run_vision.py    cameras -> counter -> FMS; records match video
+  run_vision.py    cameras -> counter -> FMS; records match video; takes feeds/calibration from the FMS
+  scaler.py        counts-per-ball calibration
   counters/        zone, linecross, mock, base interface
   rescore.py       recount a recorded match with a new model
   pick_roi.py      draw the hub region on a camera frame
@@ -147,7 +150,10 @@ config/
   vision.mock.yaml     fake fuel for rehearsal (committed)
   event.yaml           your event; created by fms.init, gitignored
   vision.yaml          your cameras; created by fms.init, gitignored
-.github/workflows/app.yml  builds the Watchtower app on each tag (see "The app")
+website/           watchtower.systemoverload.org: sign-up, events, launch scripts, settings sync
+deploy/            build.sh (the download), deploy.sh + systemd unit + Caddy block for the website
+launch.py          run one event's FMS (+ --mock / --cameras) from its folder; what the launch command runs
+.github/workflows/app.yml  builds the old desktop app on each tag (the website replaces it)
 docs/screenshots/  images used in this README
 tests/             hand-computed scoring, schedule, bracket, selection, setup tests
 run.sh             start FMS + vision together (runs fms.init on first use)
@@ -226,6 +232,29 @@ Your event's settings live in two gitignored files, so your PINs and event detai
 - `python -m fms.init` copies `config/event.example.yaml` → `config/event.yaml` and `config/vision.example.yaml` → `config/vision.yaml`. It fills in three random 6-digit PINs and a random vision key, and prints the PINs. It never overwrites an existing file. `run.sh` runs it automatically the first time.
 - The server won't start if `config/event.yaml` is missing, a PIN is still `CHANGE-ME` or blank, the control PIN is the same as the ref or emcee PIN, or `display.red_side` isn't `left` or `right`.
 
+### Live settings: `/control` → Setup
+
+Everything a team needs to change is in **Setup**, applied at once with no restart. `event.yaml` is only the
+starting point; a Setup value wins over it, and **Use event.yaml** puts one back.
+
+| Setup panel | Settings |
+|---|---|
+| **Event** | name, date, UTC offset, TBA event key, first match, cycle, teams |
+| **The Blue Alliance** | Auth ID, secret (never shown again after saving), Send to TBA on/off |
+| **Field system (bioarena)** | the field's IP and UDP port; shows this laptop's IP to enter in the field's counter setting |
+| **Vision & calibration** | per hub: counts per ball, and a **Calibrate** button |
+| **PINs** | scorekeeper, ref, emcee; **Random new PINs**. A changed PIN logs out every device using it |
+
+They're stored in SQLite (`kv` key `settings`) and survive restarts and **Wipe everything**. After 10 wrong
+PINs in a minute, logins wait out the rest of that minute.
+
+**Calibration.** A counter that sees one ball as several counts (at the 10th Street Showdown the colour
+counter counted each ball about 9 times until its `ball_area` was fixed) is corrected per hub with **counts
+per ball**: the vision process divides that hub's count by it before the FMS and the field feed see it. To
+measure it, start the cameras, press **Calibrate** on that hub, drop some balls in, enter how many, and press
+**Done**. The raw count is kept beside the corrected one. A new value applies from the next ball; already
+stored fuel isn't changed (fix a match in review if needed).
+
 ### `config/event.yaml`
 
 | Section | Key | What it does |
@@ -257,7 +286,7 @@ TBA credentials don't go in this file. See [The Blue Alliance](#the-blue-allianc
 | `defaults.weights` | Path to the model, e.g. `models/fuel_best.pt` |
 | `hubs.red/blue.source` | Camera index (`0`, `1`), a video file path, or an `rtsp://` URL |
 | `hubs.red/blue.roi` | `[x, y, w, h]` of the hub opening in full-resolution pixels |
-| `feeds` | Optional list of field systems to stream live counts to (`name`, `host`, `port`, `bind`, `heartbeat_s`). See [Feeding a field system](#feeding-a-field-system-bioarena) |
+| `feeds` | Optional list of field systems to stream live counts to (`name`, `host`, `port`, `bind`, `heartbeat_s`). See [Feeding a field system](#feeding-a-field-system-bioarena). A field set in `/control` → Setup replaces these (and `--feed`) live |
 
 Any key can be set under `defaults` or overridden per hub.
 
@@ -657,6 +686,11 @@ each feed's state).
 
 #### Setting up a bioarena field
 
+**Watchtower side, no files:** `/control` → Setup → **Field system (bioarena)**: enter bioarena's IP and
+UDP port and press **Save field**. The running vision process starts feeding it within a second. The same
+panel shows the laptop's IP to type into bioarena. (Editing `feeds:` in `config/vision.yaml`, below, still
+works; a field saved in Setup replaces it.)
+
 Any network works as long as the vision laptop can reach bioarena's IP; usually that's the
 venue WiFi, with no wired link needed. (bioarena's Settings page suggests wiring the counter into the
 field switch; WiFi works as long as the source address it sees is the laptop's own IP, with no NAT
@@ -799,6 +833,22 @@ Test this on one match early, and check the timestamp lands where you expect.
 - **Fresh start** (after rehearsals): use Wipe everything, or stop the server and run `rm data/fms.sqlite3*`.
 
 ---
+
+## Hosting the website
+
+`website/app.py` is a small FastAPI + SQLite app: accounts, events, the per-event launch script
+(`website/launch.sh`, `website/launch.ps1`), each event's starting `event.yaml`, and the synced settings and
+status. It never runs matches. `deploy/deploy.sh user@server` puts it on an Ubuntu server with Caddy:
+
+- code in `/srv/watchtower/app`, venv in `/srv/watchtower/venv`, accounts and events in `/srv/watchtower/data`;
+- `watchtower-site.service` (uvicorn on 127.0.0.1:8070, user `watchtower`);
+- the download (`deploy/build.sh`: `dist/watchtower.tar.gz` + `version`) built from the committed tree;
+- a Caddy block between `# >>> watchtower-site` markers in `/etc/caddy/Caddyfile` (backed up, validated,
+  then reloaded). Other sites on the server are left alone.
+
+Environment (`/srv/watchtower/site.env` overrides): `WT_SITE_URL` (the address in launch commands),
+`WT_SIGNUP_CODE` (set it to require an invite code), `WT_MAX_EVENTS` (per account, default 10).
+Re-run `deploy/deploy.sh` to update; launch commands pick up the new download on their next run.
 
 ## Testing
 

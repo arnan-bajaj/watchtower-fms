@@ -3,11 +3,18 @@
 Open-source (MIT) field management system for one-day FRC offseason events: quals, live alliance selection,
 then a 4-alliance double-elimination playoff. Runs on one laptop on the event WiFi. First built for the
 10th Street Showdown (Oct 2026); published for other teams, so nothing may assume one specific event.
+Other teams use it through the website (watchtower.systemoverload.org): sign up, create an event, paste one
+launch command; the FMS then runs on THEIR laptop. No desktop app (user's decision, 2026-10-30).
 
 ## Architecture (keep these separate)
 - `fms/` FastAPI server + SQLite. Owns the match timeline, scoring, fouls, schedule, rankings, bracket, TBA.
 - `vision/` Separate process. Hub cameras -> counter plugin (YOLO model) -> POSTs `(timestamp, hub, n)` to the FMS.
   The FMS never imports vision code or the model. Vision never contains scoring rules.
+- `website/` The website on the Oracle server (141.148.162.105, host `blue-banner`, shared with other
+  services: never touch their units or Caddy blocks). Accounts, events, launch scripts, the starting
+  event.yaml, a synced copy of settings + status. It NEVER runs matches; it imports only `fms.settings`/`fms.config`.
+  Deploy: `deploy/deploy.sh ubuntu@141.148.162.105` (systemd `watchtower-site`, port 8070, Caddy block between
+  `# >>> watchtower-site` markers). `launch.py` runs one event folder (`~/Watchtower/events/<slug>`) on a laptop.
 - Phone pages (`fms/static/`): `/ref` (fouls), `/emcee` (auto result + hub light cues), `/control`
   (scorekeeper), `/display` (field TV / OBS overlay; also the live alliance selection screen). Vanilla JS,
   no build step, no CDN (the venue may have no internet). Live state over one websocket `/ws`.
@@ -17,6 +24,13 @@ then a 4-alliance double-elimination playoff. Runs on one laptop on the event Wi
 - Committed templates: `config/event.example.yaml`, `config/vision.example.yaml`, `config/vision.mock.yaml`.
 - `config/event.yaml` and `config/vision.yaml` are gitignored. `python -m fms.init` creates them with random
   distinct PINs and a vision key (`run.sh` runs it on first use); it never overwrites.
+- Live settings (`fms/settings.py`): the keys in `settings.FIELDS` (event basics, teams, TBA keys, PINs,
+  `field.feeds`, `vision.scale.*`) are edited in /control -> Setup, stored in SQLite as `{key: {v, t}}` and applied
+  in place over event.yaml (never replace CFG's sub-dicts; G and tba.cfg hold them). Newest `t` wins per key, with
+  tombstones for "back to event.yaml"; the website syncs with the same merge (`fms/cloud.py`). The TBA secret never
+  goes to a browser. Tokens include the PIN. A data wipe keeps settings. Server-side paths (db, port) aren't settings.
+- Vision fetches `/api/vision/config` when the FMS's `config_rev` changes: Setup's feeds replace the file's
+  (null = use the file), and `vision.scale` (counts per ball) divides each hub's count before the feed and the FMS.
 - `fms/config.py` refuses to start on a missing config, `CHANGE-ME`/blank PINs, or a control PIN shared
   with ref/emcee. Vision takes `vision_key` from `event.yaml` when its own config omits it, and `feeds:` from
   `vision.yaml` when its config has no `feeds` key (so mock runs feed bioarena too; `feeds: []` = off) (`vision/vconfig.py`).
@@ -48,6 +62,7 @@ Teleop = 140 s. Fuel landing within `score_grace_s` (3 s) after a hub deactivate
 Unverified: teleop Level 1 climb (10 vs 15 in different sources), RP thresholds, foul values.
 
 ## Run
+Website flow (what other teams do): create an event at watchtower.systemoverload.org, run its launch command.
 ```bash
 source .venv/bin/activate
 ./run.sh ../config/vision.mock.yaml     # FMS + fake fuel (no model/cameras)
@@ -98,6 +113,16 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
   the seed and breaks. 12 teams => bound 0 => two fixed groups alternate per session. Schedules need >= 6 teams; live alliance selection needs >= 12 (4 alliances of 3).
 - Quals end by `lunch` by default. `quals_after_lunch` (or the Schedule tab checkbox) makes `schedule.add_times`
   skip the `lunch`–`lunch_end` break (no match's cycle overlaps it) and warn against `day_end` instead.
+
+## Event-day history (10th Street Showdown, 2026-10-10): what bit us
+- The colour counter counted each ball ~9x (ball_area 77/80 px in YOLOv26-FRC-Model's cams.json; fixed to
+  693/720). Now: Setup -> counts per ball / Calibrate.
+- bioarena's address had to be typed into vision.yaml by hand (field at 192.168.1.10, feed port 8411, web UI
+  8080; bioarena accepts one source IP = the laptop's). Now: Setup -> Field system.
+- A leftover mock vision process kept posting random fuel into the real match; a stray `on` line in event.yaml
+  crashed startup. `main` was missing the quals-after-lunch branch on the day (merged since).
+- Built live: per-match time edits, Shift times, Teams edit (replacement robots), Add/Delete match, `none` video,
+  clearing TBA rankings.
 
 ## Not implemented yet
 Yellow/red cards and DQs, playoff backup robots, FRC's exact ranking/playoff tiebreakers,
