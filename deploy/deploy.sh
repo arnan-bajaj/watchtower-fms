@@ -29,13 +29,14 @@ systemctl enable -q watchtower-site
 systemctl restart watchtower-site
 # Caddy: replace our block between markers, keep everything else
 CF=/etc/caddy/Caddyfile
+NEW="$(mktemp)"
 cp "$CF" "$CF.bak-watchtower-$(date +%Y%m%d%H%M%S)"
-awk '/^# >>> watchtower-site/{skip=1} !skip{print} /^# <<< watchtower-site/{skip=0}' "$CF" > /tmp/Caddyfile.new
-{ echo "# >>> watchtower-site (deploy/deploy.sh; edits here are replaced)"; cat /tmp/Caddyfile.site; echo "# <<< watchtower-site"; } >> /tmp/Caddyfile.new
-caddy validate --adapter caddyfile --config /tmp/Caddyfile.new >/dev/null 2>&1 || { echo "Caddyfile invalid; left unchanged"; caddy validate --adapter caddyfile --config /tmp/Caddyfile.new; exit 1; }
-install -m 644 /tmp/Caddyfile.new "$CF"
+awk '/^# >>> watchtower-site/{skip=1} !skip{print} /^# <<< watchtower-site/{skip=0}' "$CF" > "$NEW"
+{ echo "# >>> watchtower-site (deploy/deploy.sh; edits here are replaced)"; cat /tmp/Caddyfile.site; echo "# <<< watchtower-site"; } >> "$NEW"
+caddy validate --adapter caddyfile --config "$NEW" >/dev/null 2>&1 || { echo "Caddyfile invalid; left unchanged"; caddy validate --adapter caddyfile --config "$NEW"; exit 1; }
+install -m 644 "$NEW" "$CF"
 systemctl reload caddy
-rm -f /tmp/app.tgz /tmp/watchtower-site.service /tmp/Caddyfile.site /tmp/Caddyfile.new
+rm -f /tmp/app.tgz /tmp/watchtower-site.service /tmp/Caddyfile.site "$NEW"
 sleep 2
 curl -fsS http://127.0.0.1:8070/healthz && echo " website up ($(cat /srv/watchtower/dist/version))"
 REMOTE
