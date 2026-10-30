@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import pathlib
+import random
 import secrets
 import threading
 import time
@@ -122,7 +123,8 @@ def build_state():
     ms = store.matches()
     return {
         "now": time.time(),
-        "event": {k: CFG["event"][k] for k in ("name", "teams", "tba_event_key", "lunch", "qual_start", "cycle_min")},
+        "event": {k: CFG["event"][k] for k in ("name", "teams", "tba_event_key", "lunch", "lunch_end",
+                                                    "quals_after_lunch", "day_end", "qual_start", "cycle_min")},
         "game": G,
         "current": match_public(m, True) if m else None,
         "matches": [match_public(x) for x in ms],
@@ -135,7 +137,15 @@ def build_state():
         "webcast": store.get("webcast") or {},
         "selection": selection_public(),
         "display": store.get("display") or "match",
+        "red_side": red_side(),
+        "red_side_default": CFG["display"]["red_side"],
+        "red_side_source": "setup" if store.get("red_side") else "event.yaml",
     }
+
+
+def red_side():
+    """Screen order only: Setup's live choice, else display.red_side from event.yaml."""
+    return store.get("red_side") or CFG["display"]["red_side"]
 
 
 def selection_public():
@@ -302,25 +312,55 @@ def _schedule_locked():
     return any(m["auto_start"] is not None or m["status"] == "committed" for m in store.matches("qm"))
 
 
-def _preview(matches, start, cycle):
+def _day(body):
+    """Schedule clock from the Schedule form, falling back to event.yaml. Times come back as HH:MM."""
+    e = CFG["event"]
+    try:
+        start, ls, le, de = (schedule.hm(body.get(k) or e[c]).strftime("%H:%M") for k, c in (
+            ("start", "qual_start"), ("lunch", "lunch"), ("lunch_end", "lunch_end"), ("day_end", "day_end")))
+        cycle = float(body.get("cycle_min") or e["cycle_min"])
+    except ValueError:
+        raise HTTPException(400, "Times must look like 13:00, and the cycle must be a number")
+    if le <= ls:
+        raise HTTPException(400, "Lunch must end after it starts")
+    after = bool(body.get("after_lunch", e["quals_after_lunch"]))
+    return {"start": start, "cycle": cycle, "lunch": (ls, le), "after_lunch": after, "day_end": de}
+
+
+def _preview(matches, day):
+    """Fill in times (unless every match has one) and say when quals end and whether that's in time."""
+    ls, le = day["lunch"]
     if not all(m.get("scheduled") for m in matches):
-        schedule.add_times(matches, start, cycle)
-    end = (datetime.strptime(matches[-1]["scheduled"], "%H:%M") + timedelta(minutes=cycle)).strftime("%H:%M")
-    return {"matches": matches, "quals_end": end, "fits_before_lunch": end <= CFG["event"]["lunch"]}
+        schedule.add_times(matches, day["start"], day["cycle"], day["lunch"] if day["after_lunch"] else None)
+    end = (schedule.hm(matches[-1]["scheduled"]) + timedelta(minutes=day["cycle"])).strftime("%H:%M")
+    limit = day["day_end"] if day["after_lunch"] else ls
+    return {"matches": matches, "quals_end": end, "fits": schedule.hm(end) <= schedule.hm(limit),
+            "limit": limit, "limit_name": "the end of the day" if day["after_lunch"] else "lunch",
+            "lunch": {"start": ls, "end": le} if day["after_lunch"] else None,
+            "after_lunch": sum(schedule.hm(m["scheduled"]) >= schedule.hm(le) for m in matches)}
+
+
+def _lunch_breaks(m_count, day):
+    """Match numbers the lunch break follows, for a schedule of m_count matches on this day's clock."""
+    if not day["after_lunch"]:
+        return []
+    ms = schedule.add_times([{} for _ in range(m_count)], day["start"], day["cycle"], day["lunch"])
+    return schedule.breaks_from_times(ms, day["cycle"])
 
 
 @app.post("/api/schedule/preview")
 def schedule_preview(body: dict = Body(...), x_fms_token: str = Header(None)):
     need(x_fms_token)
     mpt = int(body.get("matches_per_team", 6))
-    start = body.get("start") or CFG["event"]["qual_start"]
-    cycle = float(body.get("cycle_min") or CFG["event"]["cycle_min"])
-    seed = body.get("seed")
-    if len(CFG["event"]["teams"]) < 6:
+    day = _day(body)
+    seed = str(body.get("seed") or "").strip() or str(random.SystemRandom().randrange(1, 1_000_000))
+    teams = CFG["event"]["teams"]
+    if len(teams) < 6:
         raise HTTPException(400, "Add at least 6 team numbers to event.teams in config/event.yaml, then restart the server")
-    matches, st = schedule.generate(CFG["event"]["teams"], mpt, seed=seed)
-    out = _preview(matches, start, cycle)
-    out["stats"] = st
+    breaks = _lunch_breaks(schedule.match_count(len(teams), mpt), day)
+    matches, rep = schedule.generate(teams, mpt, breaks=breaks, seed=seed)
+    out = _preview(matches, day)
+    out.update(report=rep, seed=seed, breaks=breaks, matches_per_team=mpt)
     return out
 
 
@@ -331,8 +371,14 @@ def schedule_import(body: dict = Body(...), x_fms_token: str = Header(None)):
     if not matches:
         raise HTTPException(400, "No rows parsed. Format: match,red1,red2,red3,blue1,blue2,blue3[,HH:MM]")
     unknown = sorted({t for m in matches for t in m["red"] + m["blue"]} - set(CFG["event"]["teams"]))
-    out = _preview(matches, CFG["event"]["qual_start"], float(CFG["event"]["cycle_min"]))
+    day = _day(body)
+    try:
+        out = _preview(matches, day)
+    except ValueError:
+        raise HTTPException(400, "A time in the CSV isn't HH:MM")
     out["unknown_teams"] = unknown
+    out["breaks"] = schedule.breaks_from_times(matches, day["cycle"])
+    out["report"] = schedule.report(matches, CFG["event"]["teams"], out["breaks"])
     return out
 
 
@@ -348,6 +394,10 @@ async def schedule_save(body: dict = Body(...), x_fms_token: str = Header(None))
                             "ord": base + i, "red": m["red"], "blue": m["blue"],
                             "surrogates": m.get("surrogates", []), "scheduled": m.get("scheduled"),
                             "status": "scheduled", "adjust": {}, "climbs": {}})
+    # How it was made, so a generated schedule can be reproduced from its seed.
+    store.set("schedule_meta", {"source": "generated" if body.get("seed") else "import",
+                                "seed": body.get("seed"), "matches_per_team": body.get("matches_per_team"),
+                                "breaks": body.get("breaks") or [], "saved_at": time.time()})
     store.set("current", "qm1")
     mark_dirty()
     return {"ok": True, "count": len(body["matches"])}
@@ -482,6 +532,19 @@ async def schedule_delete(body: dict = Body(...), x_fms_token: str = Header(None
     tba.rankings(bracket.rankings(CFG["event"]["teams"], store.matches("qm")))
     mark_dirty()
     return {"ok": True}
+
+@app.get("/api/schedule/report")
+def schedule_report(x_fms_token: str = Header(None)):
+    """Quality report for the saved qualification schedule."""
+    need(x_fms_token)
+    qm = store.matches("qm")
+    meta = store.get("schedule_meta") or {}
+    breaks = meta.get("breaks")
+    if breaks is None:      # saved before schedule_meta existed: infer lunch from the clock
+        breaks = schedule.breaks_from_times(qm, float(CFG["event"]["cycle_min"]))
+    rep = schedule.report(qm, CFG["event"]["teams"], breaks)
+    rep["seed"] = meta.get("seed")
+    return rep
 
 
 @app.post("/api/tba/schedule")
@@ -859,6 +922,21 @@ async def display_mode(body: dict = Body(...), x_fms_token: str = Header(None)):
     return {"ok": True}
 
 
+@app.post("/api/red_side")
+async def set_red_side(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """side: left | right, or null to fall back to event.yaml. Presentation only; no data changes."""
+    need(x_fms_token)
+    side = body.get("side")
+    if side is None:
+        store.delete("red_side")
+    elif side in config.RED_SIDES:
+        store.set("red_side", side)
+    else:
+        raise HTTPException(400, "side must be left, right or null")
+    mark_dirty()
+    return {"red_side": red_side(), "override": store.get("red_side")}
+
+
 # ------------------------------------------------------------------ wipe
 @app.post("/api/admin/wipe")
 async def wipe(body: dict = Body(...), x_fms_token: str = Header(None)):
@@ -964,6 +1042,7 @@ def export():
     head = ["match", "status", "red1", "red2", "red3", "blue1", "blue2", "blue3", "red", "blue"]
     for a in ("red", "blue"):
         head += [f"{a}_{n}" for n in names] + [f"{a}_tower", f"{a}_fouls_drawn", f"{a}_rp"]
+    head.append("surrogates")       # last, so existing column positions don't move
     wr.writerow(head)
     for m in store.matches():
         bd = m.get("breakdown")
@@ -975,6 +1054,7 @@ def export():
                                                             bd[a]["foul_points"], bd[a]["rp"]]
             else:
                 row += [""] * (len(names) + 3)
+        row.append(" ".join(str(t) for t in m.get("surrogates") or []))
         wr.writerow(row)
     return PlainTextResponse(buf.getvalue(), media_type="text/csv")
 

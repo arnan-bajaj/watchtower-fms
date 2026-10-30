@@ -35,6 +35,10 @@ then a 4-alliance double-elimination playoff. Runs on one laptop on the event Wi
 - Committed matches are read-only until reopened. Playoff matches cannot commit while tied (scorekeeper picks).
 - Every TBA write goes through the SQLite outbox (`fms/tba.py`); never call TBA directly from a request handler.
   Takedowns (`matches/delete`, `matches/delete_all`) go through it too.
+- Alliance screen order is presentation only. Pages draw every red/blue pair in `FMS.sides()` order
+  (`fms/static/common.js`; `FMS.placeSides` for static layouts). State `red_side` = Setup's override (kv `red_side`,
+  `POST /api/red_side`) else `display.red_side` (default `right`); every page has a per-device flip in
+  localStorage keyed by page path (`/display` has no login role; its button shows only on mouse movement). Never hardcode red-then-blue in a page; data, API payloads, CSV and TBA keep their red/blue keys.
 - Live alliance selection stores only the frozen rank order and the pick list; `bracket.selection` replays
   it (serpentine, captain promotion), so undo is dropping the last pick.
 
@@ -77,8 +81,9 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
   over UDP to field systems that decide the auto winner themselves (bioarena protocol v1). Sent on every
   count, before the FMS POST. Their replies are relayed to the FMS; once a shift shows one hub dark the FMS
   adopts and locks that `first_inactive` once per match (the lights are the truth).
-  bioarena `main` (checked 2026-09-26) does NOT implement the receiver yet; it picks the winner at auto
-  start. Until it does, the emcee locks `first_inactive` to what bioarena's lights showed.
+  bioarena `main` implements the receiver and Counted mode since 2026-10-07 (read at `c95a49b`, not yet
+  run end to end). Only Counted mode uses the counts; in Random/Red/Blue the emcee locks `first_inactive`
+  to what bioarena's lights showed.
 
 ## Event constraints
 - Everyone (refs, emcee, scorekeeper) is on the venue WiFi; no hotspot. Some networks isolate clients;
@@ -86,8 +91,13 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
 - Count feeds to a field system (e.g. bioarena) normally run over the same venue WiFi, no wired link. The
   field accepts one source address, so its counter setting must hold the Mac's current IP, and `feeds:`
   must hold the field's IP; both change per network.
-- With few teams (e.g. 12) and 6-team matches, some back-to-backs are unavoidable; the schedule optimizer
-  minimizes them. Schedules need >= 6 teams; live alliance selection needs >= 12 (4 alliances of 3).
+- Schedule generator (`fms/schedule.py`): greedy + annealing over restarts from one seed, a fixed move count
+  (never a time budget) so a seed reproduces. Hard: back-to-backs = max(0, 12-N) per in-session pair (breaks
+  = match numbers lunch follows), no three in a row (impossible below 9 teams), counts within 1, one
+  surrogate per extra team on its 3rd match. `schedule.report` checks any schedule; kv `schedule_meta` holds
+  the seed and breaks. 12 teams => bound 0 => two fixed groups alternate per session. Schedules need >= 6 teams; live alliance selection needs >= 12 (4 alliances of 3).
+- Quals end by `lunch` by default. `quals_after_lunch` (or the Schedule tab checkbox) makes `schedule.add_times`
+  skip the `lunch`–`lunch_end` break (no match's cycle overlaps it) and warn against `day_end` instead.
 
 ## Not implemented yet
 Yellow/red cards and DQs, playoff backup robots, FRC's exact ranking/playoff tiebreakers,
