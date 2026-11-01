@@ -131,6 +131,35 @@ def _feeds(x):
     return out
 
 
+def _hubcam(x):
+    """Setup -> Cameras, one hub: None = vision's config file decides; else {"source": camera index or
+    address, "size": [w, h] of the picture the outline was drawn on, "outline": [[x, y], ...] in those
+    pixels (or [] = not drawn yet), "ball_area": one ball's pixel area at that size (None = guessed)}."""
+    if x is None:
+        return None
+    if not isinstance(x, dict):
+        raise ValueError("must be {source, outline, size, ball_area}")
+    src = _str(300)(x.get("source"))
+    if not src:
+        raise ValueError("pick a camera")
+    size = x.get("size") or [0, 0]
+    if not (isinstance(size, (list, tuple)) and len(size) == 2):
+        raise ValueError("size is [width, height]")
+    w, h = (int(_num(0, 10000)(v)) for v in size)
+    pts = []
+    for p in x.get("outline") or []:
+        if not (isinstance(p, (list, tuple)) and len(p) == 2):
+            raise ValueError("outline points are [x, y]")
+        pts.append([round(float(_num(0, 10000)(v)), 1) for v in p])
+    if pts and not 3 <= len(pts) <= 24:
+        raise ValueError("an outline needs 3 to 24 points")
+    if pts and not (w and h):
+        raise ValueError("an outline needs the picture size it was drawn on")
+    ball = x.get("ball_area")
+    ball = None if ball in (None, "") else round(float(_num(1, 1e6)(ball)), 1)
+    return {"source": src, "size": [w, h], "outline": pts, "ball_area": ball}
+
+
 # key -> validator. Dotted keys are paths into the event.yaml structure.
 FIELDS = {
     "event.name": _name,
@@ -154,6 +183,8 @@ FIELDS = {
     "field.feeds": _feeds,
     "vision.scale.red": _num(0.05, 100),
     "vision.scale.blue": _num(0.05, 100),
+    "vision.hubs.red": _hubcam,
+    "vision.hubs.blue": _hubcam,
 }
 SECRET = {"tba.auth_secret"}       # never sent to a browser; Setup shows only whether it's set
 

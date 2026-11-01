@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import csv
 import hashlib
@@ -17,7 +18,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 from fastapi import Body, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import bracket, cloud, config, game, schedule, settings
@@ -41,6 +42,11 @@ clients: set[WebSocket] = set()
 vision_status: dict = {}
 feed_status: list = []        # live count feeds to field systems, relayed by vision (count_feed.py)
 feed_seen = 0.0
+# Setup -> Cameras, in memory only: what /control asks vision for, and the pictures it sends back.
+vision_want = {"frames_until": 0.0, "scan": 0, "drop": {}}   # drop: hub -> {"id", "n"} (drop test)
+vision_frames: dict = {}      # hub -> {"jpeg": bytes, "w", "h", "source", "t"}
+vision_cams: dict = {"id": 0, "t": 0, "cameras": [], "in_use": {}, "error": None}
+vision_drop: dict = {}        # hub -> {"ok", "msg", "t"} (the last drop test's outcome)
 _field_applied: set = set()   # (match key, auto_start) whose auto result came from a field's lights
 _dirty = threading.Event()  # set from any thread; tick loop broadcasts
 
@@ -1165,16 +1171,130 @@ def vision_events(body: dict = Body(...), x_vision_key: str = Header(None)):
         ps = periods_of(m)
         if m["status"] == "running" or (m["status"] == "review" and time.time() < ps[-1].end + 10):
             rec = f"{m['key']}_{int(m['auto_start'])}"
+    for hub, res in (body.get("measured") or {}).items():
+        d = vision_want["drop"].get(hub)
+        if hub in game.ALLIANCES and isinstance(res, dict) and d and res.get("id") == d["id"]:
+            vision_want["drop"].pop(hub, None)
+            _calibrated(hub, res)
     # config_rev: vision re-fetches /api/vision/config when it changes. now: its clock check.
-    return {"record": rec, "config_rev": store.get("vision_rev") or 0, "now": time.time()}
+    # want: what Setup -> Cameras is waiting for (pictures, a camera scan, a drop test).
+    return {"record": rec, "config_rev": store.get("vision_rev") or 0, "now": time.time(),
+            "want": {"frames": time.time() < vision_want["frames_until"], "scan": vision_want["scan"],
+                     "drop": copy.deepcopy(vision_want["drop"])}}
+
+
+def _calibrated(hub, res):
+    """A drop test's fit from vision (vision/dropfit.py): saved as this hub's ball_area, at the outline's
+    picture size, with counts per ball back to 1 (the ball size now does that job)."""
+    cur = CFG["vision"]["hubs"].get(hub)
+    now = time.time()
+    if res.get("error") or not res.get("area"):
+        vision_drop[hub] = {"ok": False, "msg": res.get("error") or "Nothing to fit.", "t": now}
+    elif not cur:
+        vision_drop[hub] = {"ok": False, "msg": "Pick this hub's camera in Setup first.", "t": now}
+    else:
+        (w, h), (sw, sh) = res.get("size") or [0, 0], cur.get("size") or [0, 0]
+        area = res["area"] * (sw * sh) / (w * h) if w and h and sw and sh else res["area"]
+        try:
+            apply_settings(settings.merge(settings_entries(), settings.stamp(settings.clean(
+                {f"vision.hubs.{hub}": {**cur, "ball_area": round(area, 1)}, f"vision.scale.{hub}": 1}), now)))
+            cloud.poke()
+            got, n = res.get("got"), res.get("n")
+            msg = f"Calibrated: one ball = {area:.0f} px. Replaying the test with it counts {got} of the {n} balls dropped."
+            off = got is not None and n and abs(got - n) > max(1, 0.1 * n)
+            vision_drop[hub] = {"ok": not off, "t": now, "msg": msg + (
+                " That's not close: check the outline covers the whole opening and run the test again." if off else "")}
+        except ValueError as e:
+            vision_drop[hub] = {"ok": False, "msg": str(e), "t": now}
+    mark_dirty()
+
+
+@app.post("/api/vision/frames")
+def vision_frames_in(body: dict = Body(...), x_vision_key: str = Header(None)):
+    """Hub camera pictures for Setup -> Cameras (about one a second while it's open)."""
+    _vision_auth(x_vision_key)
+    for hub, f in body.items():
+        if hub in game.ALLIANCES and isinstance(f, dict) and f.get("jpeg"):
+            vision_frames[hub] = {"jpeg": base64.b64decode(f["jpeg"]), "w": int(f.get("w") or 0),
+                                  "h": int(f.get("h") or 0), "source": str(f.get("source", "")), "t": time.time()}
+    return {"ok": True}
+
+
+@app.post("/api/vision/cameras")
+def vision_cameras_in(body: dict = Body(...), x_vision_key: str = Header(None)):
+    """The result of Find cameras: a picture from each camera no hub is using."""
+    _vision_auth(x_vision_key)
+    cams = [{"source": str(c["source"]), "w": int(c.get("w") or 0), "h": int(c.get("h") or 0),
+             "jpeg": base64.b64decode(c.get("jpeg") or "")} for c in body.get("cameras") or [] if c.get("source") is not None]
+    vision_cams.update(id=body.get("id"), t=time.time(), cameras=cams, error=body.get("error"),
+                       in_use={str(k): v for k, v in (body.get("in_use") or {}).items()})
+    return {"ok": True}
+
+
+@app.post("/api/vision/want")
+def vision_want_post(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """Setup -> Cameras: {"frames": true} (keep pictures coming ~15 s), {"scan": true}, and the drop test:
+    {"drop": hub} starts recording, {"drop": hub, "n": balls} ends it (vision fits), {"drop": hub, "cancel": true}."""
+    need(x_fms_token)
+    if body.get("frames"):
+        vision_want["frames_until"] = time.time() + 15
+    if body.get("scan"):
+        vision_want["scan"] = int(time.time() * 1000)
+        vision_cams["error"] = None
+    hub = body.get("drop")
+    if hub in game.ALLIANCES:
+        if body.get("cancel"):
+            vision_want["drop"].pop(hub, None)
+        elif body.get("n") is not None:
+            try:
+                n = int(body["n"])
+            except (TypeError, ValueError):
+                n = 0
+            if not 1 <= n <= 1000:
+                raise HTTPException(400, "Enter how many balls you dropped")
+            if hub not in vision_want["drop"]:
+                raise HTTPException(409, "No drop test running for that hub")
+            vision_want["drop"][hub]["n"] = n
+        else:
+            vision_want["drop"][hub] = {"id": int(time.time() * 1000), "n": None}
+            vision_drop.pop(hub, None)
+    return vision_setup(x_fms_token)
+
+
+@app.get("/api/vision/setup")
+def vision_setup(x_fms_token: str = Header(None)):
+    """What Setup -> Cameras draws: picture times and sizes (images come from /api/vision/image/...)."""
+    need(x_fms_token)
+    now = time.time()
+    return {"frames": {h: {k: f[k] for k in ("w", "h", "source", "t")} for h, f in vision_frames.items() if now - f["t"] < 30},
+            "scan": {"asked": vision_want["scan"], "id": vision_cams["id"], "t": vision_cams["t"],
+                     "error": vision_cams["error"], "in_use": vision_cams["in_use"],
+                     "cameras": [{k: c[k] for k in ("source", "w", "h")} for c in vision_cams["cameras"]]},
+            "drop": {h: {"n": d["n"]} for h, d in vision_want["drop"].items()}, "drop_result": vision_drop,
+            # live, unlike /ws state (pushed only on changes when no match runs)
+            "vision": {h: {**v, "age": round(now - v["seen"], 1)} for h, v in vision_status.items()}}
+
+
+@app.get("/api/vision/image/{kind}/{name}")
+def vision_image(kind: str, name: str, x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    if kind == "hub" and name in vision_frames:
+        return Response(vision_frames[name]["jpeg"], media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+    if kind == "cam":
+        for c in vision_cams["cameras"]:
+            if c["source"] == name:
+                return Response(c["jpeg"], media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+    raise HTTPException(404, "no picture")
 
 
 @app.get("/api/vision/config")
 def vision_config(x_vision_key: str = Header(None)):
-    """What Setup decides for the vision process: field feeds (null = its own file's) and calibration."""
+    """What Setup decides for the vision process: field feeds (null = its own file's), calibration, and
+    each hub's camera, outline and ball size (null = its own file's)."""
     _vision_auth(x_vision_key)
     return {"rev": store.get("vision_rev") or 0, "feeds": CFG["field"]["feeds"],
-            "scale": {h: float(CFG["vision"]["scale"].get(h) or 1) for h in game.ALLIANCES}}
+            "scale": {h: float(CFG["vision"]["scale"].get(h) or 1) for h in game.ALLIANCES},
+            "hubs": {h: CFG["vision"]["hubs"].get(h) for h in game.ALLIANCES}}
 
 
 @app.post("/api/vision/replace")

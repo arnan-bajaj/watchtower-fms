@@ -48,6 +48,19 @@
   #alliform .scroll table { min-width: 0; table-layout: fixed; }
   #alliform th:first-child, #alliform td:first-child { width: 3rem; }
   .bar #curkey { opacity: .7; font-weight: 600; }
+  /* Setup -> Cameras */
+  .camgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr)); gap: .6rem; margin-top: .6rem; }
+  .camcard { margin: 0; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; background: var(--panel-2); }
+  .camcard img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; }
+  .camcard figcaption { padding: .45rem .55rem; display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
+  .hubcams { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); gap: 1rem; margin-top: 1rem; }
+  .hubcam { border: 1px solid var(--line); border-radius: var(--r-md); padding: .7rem; min-width: 0; }
+  .hubcam.red { border-color: var(--red-line); } .hubcam.blue { border-color: var(--blue-line); }
+  .camview { position: relative; background: #000; border-radius: var(--r-sm); overflow: hidden; aspect-ratio: 16 / 9; margin: .5rem 0; touch-action: none; }
+  .camview img, .camview canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .camview canvas { cursor: crosshair; }
+  .camview .camwait { position: absolute; inset: 0; display: grid; place-items: center; color: #cfd3d8; font-size: .9rem; padding: 1rem; text-align: center; }
+  .camsteps { margin: .3rem 0 0; padding-left: 1.2rem; } .camsteps li { margin: .15rem 0; } .camsteps li.done { color: var(--ok); }
 </style>
 </head><body>
 <div class="bar">
@@ -172,6 +185,15 @@
 
   <!-- SETUP -->
   <section data-tab="setup" hidden>
+    <div class="panel" id="campanel"><h2>Cameras</h2>
+      <div class="muted small">Plug the hub cameras into this computer (USB), or use a network camera. Press <b>Find cameras</b>, give each hub its camera, then click around the hub's opening on its picture. The counter is built in: nothing to install, no model.</div>
+      <div class="row" style="margin-top:.6rem"><button class="primary" id="bscan">Find cameras</button><span class="muted small" id="scanmsg"></span></div>
+      <div class="camgrid" id="camlist"></div>
+      <details style="margin-top:.6rem"><summary class="small">Network camera or video file</summary>
+        <div class="row" style="margin-top:.4rem"><input id="camsrc" placeholder="rtsp://192.168.1.20:554/stream or a file path" autocapitalize="off" spellcheck="false">
+          <span id="camsrcbtns"></span></div></details>
+      <div class="hubcams" id="hubcams"></div>
+    </div>
     <div class="grid2">
       <div class="panel"><h2>Event</h2>
         <div class="form">
@@ -195,7 +217,7 @@
         <table class="kv" id="ftable" style="margin-top:.6rem"></table></div>
       <div class="panel"><h2>Vision &amp; calibration</h2><table class="kv" id="vtable"></table>
         <div id="calib" style="margin-top:.6rem"></div>
-        <div class="muted small" style="margin-top:.4rem"><b>Counts per ball</b>: if one ball counts as 8, set 8 and each hub's count is divided by it. Or press <b>Calibrate</b>, drop some balls in that hub, and enter how many.</div></div>
+        <div class="muted small" style="margin-top:.4rem"><b>Counts per ball</b>: if one ball counts as 8, set 8 and each hub's count is divided by it. Or press <b>Calibrate</b>, drop some balls in that hub, and enter how many. Cameras and outlines: <b>Cameras</b> at the top of Setup.</div></div>
       <div class="panel"><h2>PINs</h2>
         <div class="form">
           <label class="field">Scorekeeper <input id="sp_control" data-k="server.pins.control" inputmode="numeric" autocomplete="off"></label>
@@ -748,6 +770,7 @@ async function loadSettings() {
   SET = j.settings; CLOUD = j.cloud; LAN = j.lan_urls || [];
   fillSettings();
   if (S()) renderSetup(S());
+  renderCams(true);
 }
 const sv = (k) => SET && SET[k] ? SET[k].value : null;
 function fillSettings() {
@@ -768,6 +791,7 @@ async function saveSettings(changes, msg) {
   const j = await api("/api/settings", { changes });
   SET = j.settings; fillSettings(); FMS.toast(msg || "Saved");
   if (S()) renderSetup(S());
+  renderCams(true);
 }
 const SAVE_GROUPS = { event: ["event.name", "event.date", "event.utc_offset_hours", "event.tba_event_key", "event.qual_start", "event.cycle_min", "event.teams"],
                       pins: ["server.pins.control", "server.pins.ref", "server.pins.emcee"],
@@ -831,6 +855,161 @@ function renderCalib(s) {
   });
 }
 
+// ---- Setup -> Cameras: pick each hub's camera, draw its outline, calibrate by drop test (vision/hubsetup.py, dropfit.py)
+let CAM = null, scanAsked = 0, lastWant = 0;
+const camDraft = {}, camImg = {}, camImgT = {};     // per hub (outline being drawn, picture); camImg also "cam:<source>"
+const hubCam = (h) => sv("vision.hubs." + h);
+const setupOpen = () => !document.querySelector('section[data-tab="setup"]').hidden && document.visibilityState === "visible";
+async function camFetch(key, url) {
+  try {
+    const r = await fetch(url, { headers: { "X-FMS-Token": localStorage.getItem("fms_token_control") || "" } });
+    if (!r.ok) return;
+    if (camImg[key]) URL.revokeObjectURL(camImg[key]);
+    camImg[key] = URL.createObjectURL(await r.blob());
+  } catch {}
+}
+async function pollCams() {
+  if (!setupOpen() || !SET) return;
+  try {
+    const now = Date.now();
+    if (now - lastWant > 5000) { lastWant = now; CAM = await FMS.api("/api/vision/want", { frames: true }); }
+    else CAM = await FMS.api("/api/vision/setup", undefined, "GET");
+  } catch { return; }
+  // a drop test's fit is saved by the server: fetch the settings again to show it
+  const resT = Object.values(CAM.drop_result).map((r) => r.t).join();
+  if (resT !== camImgT.res) { const first = camImgT.res === undefined; camImgT.res = resT; if (!first) await loadSettings(); }
+  const jobs = [];
+  for (const [h, f] of Object.entries(CAM.frames)) if (camImgT[h] !== f.t) { camImgT[h] = f.t; jobs.push(camFetch(h, `/api/vision/image/hub/${h}`)); }
+  if (CAM.scan.id && camImgT.scan !== CAM.scan.id) {
+    camImgT.scan = CAM.scan.id;
+    jobs.push(...CAM.scan.cameras.map((c) => camFetch("cam:" + c.source, `/api/vision/image/cam/${encodeURIComponent(c.source)}`)));
+  }
+  await Promise.all(jobs);
+  renderCams();
+}
+setInterval(pollCams, 1000);
+$("#bscan").onclick = async () => {
+  CAM = await api("/api/vision/want", { scan: true, frames: true });
+  scanAsked = CAM.scan.asked; renderCams();
+};
+function pickCam(h, source) {
+  source = String(source).trim();
+  if (!source) return FMS.toast("Enter the camera's address first", true);
+  const other = h === "red" ? "blue" : "red", oc = hubCam(other);
+  if (oc && oc.source === source) return FMS.toast(`That's the ${other} hub's camera. Give it a different one, or remove it there first.`, true);
+  delete camDraft[h];
+  saveSettings({ ["vision.hubs." + h]: { source, size: [0, 0], outline: [], ball_area: null } }, `${Cap(h)} hub: camera ${source}. Now click around the hub's opening.`);
+}
+function camFrameSize(h) { const f = CAM && CAM.frames[h]; return f && f.w ? [f.w, f.h] : null; }
+function savedOutline(h, fw, fh) {        // the saved outline in the current picture's pixels
+  const c = hubCam(h); if (!c || !c.outline.length) return [];
+  const [sw, sh] = c.size; return c.outline.map(([x, y]) => [x * fw / (sw || fw), y * fh / (sh || fh)]);
+}
+function drawCam(h) {
+  const box = document.querySelector(`.hubcam[data-hub="${h}"]`); if (!box) return;
+  const cv = box.querySelector("canvas"), fs = camFrameSize(h); if (!cv || !fs) return;
+  const r = cv.getBoundingClientRect(), k = r.width / fs[0], dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, r.width, r.height);
+  const pts = camDraft[h] || savedOutline(h, fs[0], fs[1]), col = h === "red" ? "#ff4d64" : "#3d8bff";
+  if (pts.length) {
+    g.lineWidth = 2.5; g.strokeStyle = "#f4c300"; g.fillStyle = "rgba(244,195,0,.18)";
+    g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x * k, y * k) : g.moveTo(x * k, y * k));
+    if (!camDraft[h] || pts.length > 2) g.closePath();
+    g.fill(); g.stroke();
+    pts.forEach(([x, y], i) => { g.fillStyle = i === 0 && camDraft[h] ? "#fff" : col; g.beginPath(); g.arc(x * k, y * k, 5, 0, 7); g.fill(); });
+  }
+}
+function camPoint(h, ev) {
+  const cv = ev.currentTarget, r = cv.getBoundingClientRect(), fs = camFrameSize(h);
+  return [Math.round((ev.clientX - r.left) * fs[0] / r.width * 10) / 10, Math.round((ev.clientY - r.top) * fs[1] / r.height * 10) / 10];
+}
+function wireCam(box, h) {
+  const cv = box.querySelector("canvas"); if (!cv) return;
+  cv.onpointerdown = (ev) => {
+    if (!camFrameSize(h) || !camDraft[h]) return;
+    if (camDraft[h].length >= 24) return FMS.toast("That's plenty of points. Save the outline.", true);
+    camDraft[h].push(camPoint(h, ev)); renderCams(true);
+  };
+}
+function renderCams(force) {
+  const panel = $("#campanel");
+  if (!SET || (!force && panel.contains(document.activeElement) && document.activeElement.tagName === "INPUT")) return;
+  const v = (CAM && CAM.vision) || (S() && S().vision) || {};
+  const running = Object.values(v).some((x) => x.age <= 5);
+  const sc = CAM && CAM.scan, waiting = scanAsked && (!sc || sc.id !== scanAsked);
+  $("#bscan").disabled = !!waiting;
+  const mac = /Mac/.test(navigator.platform);
+  $("#scanmsg").innerHTML = !running ? `<span style="color:var(--warn)">The hub counter isn't running. Start Watchtower with the launch command from the website (it starts the counter unless you add --no-vision).</span>`
+    : waiting ? "Looking for cameras (a few seconds)…"
+    : sc && sc.error ? `<span style="color:var(--warn)">${esc(sc.error)}</span>`
+    : sc && sc.id && !sc.cameras.length && !Object.keys(sc.in_use).length ? `<span style="color:var(--warn)">No cameras found. Plug one in and press Find cameras again.${mac ? " If macOS asked about the camera, allow Terminal (System Settings → Privacy &amp; Security → Camera), then stop Watchtower (Ctrl+C) and run the command again." : ""}</span>`
+    : sc && sc.id ? `${sc.cameras.length} camera${sc.cameras.length === 1 ? "" : "s"} free${Object.keys(sc.in_use).length ? `, ${Object.keys(sc.in_use).length} in use by a hub` : ""}.` : "";
+  const hubBtns = (src) => sides().map((h) => `<button class="small ${hubCam(h) && hubCam(h).source === src ? "primary" : "ghost"}" data-pick="${h}" data-src="${esc(src)}">${Cap(h)} hub</button>`).join("");
+  $("#camlist").innerHTML = sc && sc.id && !waiting ? sc.cameras.map((c) =>
+    `<figure class="camcard"><img alt="" src="${camImg["cam:" + c.source] || ""}"><figcaption><b>Camera ${esc(c.source)}</b><span class="muted small">${c.w}×${c.h}</span>${hubBtns(c.source)}</figcaption></figure>`).join("") : "";
+  if (document.activeElement !== $("#camsrc")) $("#camsrcbtns").innerHTML = sides().map((h) => `<button class="small ghost" data-picksrc="${h}">${Cap(h)} hub</button>`).join("");
+  $("#hubcams").innerHTML = sides().map((h) => {
+    const c = hubCam(h), x = v[h] && v[h].age <= 5 ? v[h] : null, fs = camFrameSize(h);
+    const drop = CAM && CAM.drop[h], res = CAM && CAM.drop_result[h];
+    if (!c) return `<div class="hubcam ${h}" data-hub="${h}"><b class="t${h}">${Cap(h)} hub</b><div class="muted small" style="margin-top:.3rem">No camera yet. Press <b>Find cameras</b> and choose <b>${Cap(h)} hub</b> under the one that sees this hub.</div></div>`;
+    const drawing = !!camDraft[h], hasOutline = c.outline.length > 0, counting = x && x.session_total != null;
+    const steps = [[true, `Camera ${esc(c.source)}${fs ? ` · ${fs[0]}×${fs[1]}` : ""}`],
+      [hasOutline, hasOutline ? "Outline drawn" : "Draw the outline: click the corners of the hub's opening, where balls drop in, going round. Then Save outline."],
+      [!!c.ball_area, c.ball_area ? `Calibrated (one ball = ${Math.round(c.ball_area)} px)` : "Calibrate: press Calibrate, drop 20 or more balls into the hub (some one at a time, some in handfuls, like robots do), type how many, press Done."],
+      [counting, counting ? `Counting: ${x.session_total} so far` : "Counting starts once it's calibrated."]];
+    const help = drawing ? `${camDraft[h].length} point${camDraft[h].length === 1 ? "" : "s"}. Keep clicking round the opening; Save when done.`
+      : drop && drop.n ? "Working out the ball size from the test (up to a minute)…"
+      : drop ? `Recording${x && x.drop ? ` (${x.drop.s} s)` : ""}. Drop balls into the ${h} hub now, then type how many and press Done.` : "";
+    const buttons = drawing
+      ? `<button class="small primary" data-camsave="${h}" ${camDraft[h].length < 3 ? "disabled" : ""}>Save outline</button><button class="small ghost" data-camundo="${h}">Undo point</button><button class="small ghost" data-camcancel="${h}">Cancel</button>`
+      : drop && !drop.n ? `<input type="number" min="1" max="1000" placeholder="balls" data-dropn="${h}" style="width:6rem"><button class="small primary" data-dropdone="${h}">Done</button><button class="small ghost" data-dropcancel="${h}">Cancel</button>`
+      : drop ? `<button class="small ghost" data-dropcancel="${h}">Cancel</button>`
+      : `<button class="small ${hasOutline ? "ghost" : "primary"}" data-camdraw="${h}" ${fs ? "" : "disabled"}>${hasOutline ? "Redraw outline" : "Draw outline"}</button>
+         <button class="small ${hasOutline && !c.ball_area ? "primary" : "ghost"}" data-dropstart="${h}" ${hasOutline && x ? "" : "disabled"}>${c.ball_area ? "Calibrate again" : "Calibrate"}</button>`;
+    return `<div class="hubcam ${h}" data-hub="${h}">
+      <div class="row" style="justify-content:space-between"><b class="t${h}">${Cap(h)} hub</b>
+        <span>${x ? (x.error ? `<span class="pill bad">${esc(x.error)}</span>` : `<span class="pill ok">${x.fps} fps</span>`) : `<span class="pill bad">no picture</span>`}
+        <button class="ghost small" data-camoff="${h}">Remove camera</button></span></div>
+      <div class="camview" style="${fs ? `aspect-ratio:${fs[0]} / ${fs[1]}` : ""}">${fs && camImg[h] ? `<img alt="" src="${camImg[h]}"><canvas></canvas>` : `<div class="camwait">${running ? "Waiting for a picture from camera " + esc(c.source) + "…" : "The hub counter isn't running."}</div>`}</div>
+      ${help ? `<div class="small"><b>${help}</b></div>` : ""}
+      <div class="row" style="margin-top:.4rem">${buttons}</div>
+      ${res && !drop ? `<div class="small" style="margin-top:.3rem;color:${res.ok ? "var(--ok)" : "var(--warn)"}">${esc(res.msg)}</div>` : ""}
+      <ol class="camsteps small">${steps.map(([ok, t]) => `<li class="${ok ? "done" : ""}">${ok ? "✓ " : ""}${t}</li>`).join("")}</ol>
+    </div>`;
+  }).join("");
+  const box = $("#campanel");
+  box.querySelectorAll("[data-pick]").forEach((b) => b.onclick = () => pickCam(b.dataset.pick, b.dataset.src));
+  box.querySelectorAll("[data-picksrc]").forEach((b) => b.onclick = () => pickCam(b.dataset.picksrc, $("#camsrc").value));
+  box.querySelectorAll("[data-camoff]").forEach((b) => b.onclick = () => {
+    if (!confirm(`Stop counting the ${b.dataset.camoff} hub with this camera? Its outline is forgotten.`)) return;
+    delete camDraft[b.dataset.camoff];
+    saveSettings({ ["vision.hubs." + b.dataset.camoff]: null }, `${Cap(b.dataset.camoff)} hub: no camera`);
+  });
+  box.querySelectorAll("[data-camdraw]").forEach((b) => b.onclick = () => { camDraft[b.dataset.camdraw] = []; renderCams(true); });
+  box.querySelectorAll("[data-camundo]").forEach((b) => b.onclick = () => { camDraft[b.dataset.camundo].pop(); renderCams(true); });
+  box.querySelectorAll("[data-camcancel]").forEach((b) => b.onclick = () => { delete camDraft[b.dataset.camcancel]; renderCams(true); });
+  box.querySelectorAll("[data-camsave]").forEach((b) => b.onclick = () => {
+    const h = b.dataset.camsave, c = hubCam(h), [fw, fh] = camFrameSize(h);
+    // a new outline needs a new drop test: the ball size was fitted to the old one
+    const outline = camDraft[h]; delete camDraft[h];
+    saveSettings({ ["vision.hubs." + h]: { ...c, size: [fw, fh], outline, ball_area: null } }, `${Cap(h)} hub outline saved. Now Calibrate.`);
+  });
+  box.querySelectorAll("[data-dropstart]").forEach((b) => b.onclick = async () => {
+    CAM = await api("/api/vision/want", { drop: b.dataset.dropstart }); renderCams(true);
+  });
+  box.querySelectorAll("[data-dropcancel]").forEach((b) => b.onclick = async () => {
+    CAM = await api("/api/vision/want", { drop: b.dataset.dropcancel, cancel: true }); renderCams(true);
+  });
+  box.querySelectorAll("[data-dropdone]").forEach((b) => b.onclick = async () => {
+    const h = b.dataset.dropdone, n = parseInt(box.querySelector(`[data-dropn="${h}"]`).value, 10);
+    if (!(n > 0)) return FMS.toast("Type how many balls you dropped", true);
+    CAM = await api("/api/vision/want", { drop: h, n }); renderCams(true);
+  });
+  sides().forEach((h) => { const hb = box.querySelector(`.hubcam[data-hub="${h}"]`); if (hb) { wireCam(hb, h); drawCam(h); } });
+}
+window.addEventListener("resize", () => sides().forEach(drawCam));
+
 function renderSetup(s) {
   const local = /^(localhost|127\.)/.test(location.hostname);
   const base = local && LAN.length ? LAN[0] : location.origin;
@@ -866,9 +1045,10 @@ function renderSetup(s) {
 
 function renderPills(s) {
   const v = Object.values(s.vision);
-  const ok = v.length && v.every((x) => x.age <= 3 && !x.error);
-  $("#vpill").className = "pill " + (ok ? "ok" : "bad");
-  $("#vpill").textContent = ok ? "vision ok" : "vision down";
+  const ok = v.length && v.every((x) => x.age <= 3 && !x.error), idle = ok && v.every((x) => x.idle);
+  $("#vpill").className = "pill " + (idle ? "" : ok ? "ok" : "bad");
+  $("#vpill").textContent = idle ? "cameras not set up" : ok ? (v.some((x) => x.idle) ? "vision: 1 hub" : "vision ok") : "vision down";
+  $("#vpill").title = idle ? "Setup → Cameras" : "";
   const fd = s.feeds || [], fup = fd.filter((f) => f.link).length;
   $("#fpill").hidden = !fd.length;
   $("#fpill").className = "pill " + (fup === fd.length ? "ok" : "bad");

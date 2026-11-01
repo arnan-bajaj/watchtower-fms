@@ -43,7 +43,8 @@ DEFAULTS = {
     # feeds:; a list (set in /control -> Setup) wins over that. vision/run_vision.py fetches it.
     "field": {"feeds": None},
     # Counts per real ball, per hub (calibration in /control -> Setup). Vision divides by it.
-    "vision": {"scale": {"red": 1, "blue": 1}},
+    # hubs: Setup -> Cameras (camera, outline, ball size per hub); None = vision's config file.
+    "vision": {"scale": {"red": 1, "blue": 1}, "hubs": {"red": None, "blue": None}},
     # Set by the website's launch command (fms/cloud.py): settings backup and status. Empty = local only.
     "cloud": {"url": "", "event": "", "token": ""},
     "game": {

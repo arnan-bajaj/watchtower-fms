@@ -128,16 +128,89 @@ def test_vision_config_follows_setup(tmp_path, monkeypatch):
     c = TestClient(srv.app)
     vk = {"X-Vision-Key": ev["server"]["vision_key"]}
     assert c.get("/api/vision/config", headers={"X-Vision-Key": "wrong"}).status_code == 401
-    assert c.get("/api/vision/config", headers=vk).json() == {"rev": 0, "feeds": None, "scale": {"red": 1.0, "blue": 1.0}}
+    assert c.get("/api/vision/config", headers=vk).json() == {"rev": 0, "feeds": None, "scale": {"red": 1.0, "blue": 1.0},
+                                                              "hubs": {"red": None, "blue": None}}
     ctl = {"X-FMS-Token": srv.token_for("control")}
     c.post("/api/settings", headers=ctl, json={"changes": {"event.name": "Only a name"}})
     assert c.get("/api/vision/config", headers=vk).json()["rev"] == 0            # vision not bothered
     c.post("/api/settings", headers=ctl, json={"changes": {"field.feeds": "192.168.1.10:8411", "vision.scale.red": 9}})
     vc = c.get("/api/vision/config", headers=vk).json()
     assert vc == {"rev": 1, "feeds": [{"name": "field", "host": "192.168.1.10", "port": 8411}],
-                  "scale": {"red": 9.0, "blue": 1.0}}
+                  "scale": {"red": 9.0, "blue": 1.0}, "hubs": {"red": None, "blue": None}}
     r = c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}}).json()
     assert r["config_rev"] == 1 and abs(r["now"] - __import__("time").time()) < 5
+    assert r["want"] == {"frames": False, "scan": 0, "drop": {}}
+
+
+def test_setup_cameras_flow(tmp_path, monkeypatch):
+    """Setup -> Cameras: pick a camera, draw the outline, calibrate by drop test; vision sees each step."""
+    import base64
+    srv, ev = _server(tmp_path, monkeypatch)
+    c = TestClient(srv.app)
+    vk = {"X-Vision-Key": ev["server"]["vision_key"]}
+    ctl = {"X-FMS-Token": srv.token_for("control")}
+    ref = {"X-FMS-Token": srv.token_for("ref")}
+    assert c.post("/api/vision/want", headers=ref, json={"scan": True}).status_code == 401
+    assert c.get("/api/vision/image/hub/red", headers=ctl).status_code == 404
+
+    # Find cameras: the FMS asks, vision answers with a picture per camera
+    asked = c.post("/api/vision/want", headers=ctl, json={"scan": True, "frames": True}).json()["scan"]["asked"]
+    want = c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}}).json()["want"]
+    assert want["scan"] == asked and want["frames"] is True
+    jpg = base64.b64encode(b"\xff\xd8fake").decode()
+    c.post("/api/vision/cameras", headers=vk, json={"id": asked, "cameras": [{"source": "1", "w": 1920, "h": 1080, "jpeg": jpg}],
+                                                    "in_use": {"0": "blue"}})
+    st = c.get("/api/vision/setup", headers=ctl).json()
+    assert st["scan"]["id"] == asked and st["scan"]["cameras"] == [{"source": "1", "w": 1920, "h": 1080}]
+    assert st["scan"]["in_use"] == {"0": "blue"}
+    assert c.get("/api/vision/image/cam/1", headers=ctl).content == b"\xff\xd8fake"
+
+    # pick camera 1 for red, then the outline; each reaches vision through /api/vision/config
+    bad = {"source": "1", "size": [1920, 1080], "outline": [[1, 2], [3, 4]]}
+    assert c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": bad}}).status_code == 400
+    c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": {"source": 1}}})
+    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"] == {"source": "1", "size": [0, 0], "outline": [], "ball_area": None}
+    c.post("/api/vision/frames", headers=vk, json={"red": {"jpeg": jpg, "w": 1280, "h": 720, "source": "1"}})
+    assert c.get("/api/vision/setup", headers=ctl).json()["frames"]["red"]["w"] == 1280
+    assert c.get("/api/vision/image/hub/red", headers=ctl).content == b"\xff\xd8fake"
+    hub = {"source": "1", "size": [1280, 720], "outline": [[400, 300], [800, 300], [780, 420], [420, 420]]}
+    c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": hub}})
+    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"]["outline"][2] == [780, 420]
+
+    # drop test: start (vision records), the number dropped (vision fits), the fit saved; vision
+    # measured at 1920x1080 while the outline was drawn at 1280x720: 900 px -> 400 px; scale back to 1
+    c.post("/api/settings", headers=ctl, json={"changes": {"vision.scale.red": 8}})
+    assert c.post("/api/vision/want", headers=ctl, json={"drop": "red", "n": 10}).status_code == 409   # not started
+    assert c.post("/api/vision/want", headers=ctl, json={"drop": "red"}).json()["drop"] == {"red": {"n": None}}
+    want = c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}}).json()["want"]
+    did = want["drop"]["red"]["id"]
+    assert want["drop"]["red"]["n"] is None
+    assert c.post("/api/vision/want", headers=ctl, json={"drop": "red", "n": "x"}).status_code == 400
+    c.post("/api/vision/want", headers=ctl, json={"drop": "red", "n": 20})
+    want = c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}}).json()["want"]
+    assert want["drop"]["red"] == {"id": did, "n": 20}
+    c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}, "measured": {
+        "red": {"id": did + 1, "area": 5.0, "size": [1920, 1080]}}})               # a stale answer: ignored
+    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"]["ball_area"] is None
+    c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}, "measured": {
+        "red": {"id": did, "area": 900.0, "got": 20, "n": 20, "size": [1920, 1080]}}})
+    st = c.get("/api/vision/setup", headers=ctl).json()
+    assert st["drop"] == {} and st["drop_result"]["red"]["ok"] and "20 of the 20" in st["drop_result"]["red"]["msg"]
+    vc = c.get("/api/vision/config", headers=vk).json()
+    assert vc["hubs"]["red"]["ball_area"] == 400.0 and vc["scale"]["red"] == 1.0
+    # a test that found nothing says why and changes nothing; cancel drops a running one
+    c.post("/api/vision/want", headers=ctl, json={"drop": "red"})
+    want = c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}}).json()["want"]
+    c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}, "measured": {
+        "red": {"id": want["drop"]["red"]["id"], "error": "Nothing crossed the outline."}}})
+    st = c.get("/api/vision/setup", headers=ctl).json()
+    assert not st["drop_result"]["red"]["ok"] and "Nothing crossed" in st["drop_result"]["red"]["msg"]
+    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"]["ball_area"] == 400.0
+    c.post("/api/vision/want", headers=ctl, json={"drop": "blue"})
+    assert c.post("/api/vision/want", headers=ctl, json={"drop": "blue", "cancel": True}).json()["drop"] == {}
+    # back to the config file
+    c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": None}})
+    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"] is None
 
 
 def test_cloud_sync_merges_website_edits(tmp_path, monkeypatch):
