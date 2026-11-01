@@ -1,0 +1,26 @@
+# Every commit is authored by the repo owner's account: no AI-tool author, committer or co-author lines.
+name: authors
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No Claude / Anthropic attribution
+        run: |
+          bad=$(git log --format='%h %an <%ae> | %cn <%ce>%n%b' HEAD | grep -i -E 'anthropic|^[0-9a-f]+ claude |\| claude |co-authored-by: .*claude|claude-session:' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Commits credit Claude/Anthropic. Re-author them as the repo owner and drop the trailers:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "authors ok ($(git rev-list --count HEAD) commits)"

@@ -143,7 +143,10 @@ TBA `score_breakdown` (off by default; TBA validates per-season keys), alliance 
 
 ## Working style for this repo
 Direct answers, uncomfortable truths first. Prove changes with tests or a mock run before calling them done.
-Small commits; don't refactor across `fms/` and `vision/` in one change. Update README.md (and this file)
+Small commits; don't refactor across `fms/` and `vision/` in one change.
+- Commits are Arnan Bajaj's only (`92697572+arnan-bajaj@users.noreply.github.com`): no Claude author/committer, no
+  `Co-Authored-By`/`Claude-Session` lines, no "Generated with" footers in commits or PRs. `.claude/settings.json` turns
+  attribution off and sets that git identity at session start; `.github/workflows/authors.yml` fails any commit that credits Claude. Update README.md (and this file)
 in the same commit as any change to setup, usage or invariants.
 - The Watchtower app (`.github/workflows/app.yml`) is built from YOLOv26-FRC-Model's `apps/watchtower/` (launcher,
   spec, smoke test) at the tag in `.github/hubcounter-release`, with this repo's code as the FMS. It runs fms.init

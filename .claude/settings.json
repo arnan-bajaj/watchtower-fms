@@ -1,0 +1,19 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git config user.name 'Arnan Bajaj' && git config user.email '92697572+arnan-bajaj@users.noreply.github.com'"
+          }
+        ]
+      }
+    ]
+  }
+}
