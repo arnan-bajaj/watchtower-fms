@@ -10,3 +10,4 @@ tba_secrets.sh
 vision/plugins/*
 !vision/plugins/_example.py
 !vision/plugins/README.md
+dist/
