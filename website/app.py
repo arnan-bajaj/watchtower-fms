@@ -207,8 +207,9 @@ def list_events(wt: str = Cookie(None)):
     return {"events": [event_public(e) for e in q("SELECT * FROM events WHERE owner=? AND deleted=0 ORDER BY created DESC", (u["id"],))]}
 
 
-# The game an event is scored for. Only REBUILT (2026) is implemented; BIOCORE (2027) is listed, not selectable.
-GAMES = {"rebuilt": True, "biocore": False}
+# The game an event is scored for. Only REBUILT (2026) is implemented; REEFSCAPE (2025, past) and
+# BIOCORE (2027, next) are listed, not selectable.
+GAMES = {"rebuilt": True, "reefscape": False, "biocore": False}
 
 
 @app.post("/api/events")
@@ -218,7 +219,8 @@ def create_event(body: dict = Body(...), wt: str = Cookie(None)):
     if game not in GAMES:
         raise HTTPException(400, "Pick a game: REBUILT")
     if not GAMES[game]:
-        raise HTTPException(400, f"{game.upper()} is next season's game; it isn't available yet")
+        raise HTTPException(400, f"{game.upper()} is " + ("a past season's game; it isn't supported" if game == "reefscape"
+                                                           else "next season's game; it isn't available yet"))
     if q("SELECT COUNT(*) n FROM events WHERE owner=? AND deleted=0", (u["id"],))[0]["n"] >= MAX_EVENTS:
         raise HTTPException(409, f"An account can have {MAX_EVENTS} events. Delete an old one first.")
     try:

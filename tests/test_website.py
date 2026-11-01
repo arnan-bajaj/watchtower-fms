@@ -43,6 +43,7 @@ def test_signup_login_and_ownership(site):
     assert a.post("/api/events", json={"name": ""}).status_code == 400
     assert json.loads(site.event_row("spring-scrimmage")["base"])["event"]["game"] == "rebuilt"   # the default
     assert a.post("/api/events", json={"name": "Next Year", "game": "biocore"}).status_code == 400   # not yet
+    assert a.post("/api/events", json={"name": "Last Year", "game": "reefscape"}).status_code == 400   # past season
     assert a.post("/api/events", json={"name": "Odd", "game": "chess"}).status_code == 400
 
     b = _user(site, "b@team.org")

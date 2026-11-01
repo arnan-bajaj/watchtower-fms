@@ -32,11 +32,11 @@
   .bigbtn { display: block; text-align: center; padding: 1rem; border-radius: var(--r-lg); background: var(--ink); color: #fff;
     text-decoration: none; font-weight: 700; margin: .5rem 0; }
   .panel { margin-bottom: 1rem; }
-  .games { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-bottom: .75rem; }
+  .games { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin-bottom: .75rem; }
   .games button { text-align: left; padding: .75rem .9rem; border-radius: var(--r-md); }
   .games button b { display: block; font-size: 1rem; }
   .games button.sel { background: var(--ink); color: #fff; border-color: var(--ink); }
-  @media (max-width: 640px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 640px) { .grid2 { grid-template-columns: minmax(0, 1fr); } .games { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head><body>
 <main class="wrap">
@@ -122,6 +122,7 @@ async function eventsView() {
   <div class="panel"><h2>New event</h2>
     <div class="small muted" style="margin-bottom:.35rem">Game</div>
     <div class="games" role="radiogroup" aria-label="Game">
+      <button disabled role="radio" aria-checked="false" data-game="reefscape" title="REEFSCAPE was the 2025 game; it isn't supported"><b>REEFSCAPE</b><span class="small">2025 · past season</span></button>
       <button class="sel" role="radio" aria-checked="true" data-game="rebuilt"><b>REBUILT</b><span class="small">2026 season</span></button>
       <button disabled role="radio" aria-checked="false" data-game="biocore" title="BIOCORE is next season's game"><b>BIOCORE</b><span class="small">2027 · coming next season</span></button>
     </div>

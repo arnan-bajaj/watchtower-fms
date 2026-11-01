@@ -28,7 +28,7 @@ Built for the 10th Street Showdown (October 2026) and shared so other teams can 
 **[watchtower.systemoverload.org](https://watchtower.systemoverload.org)**. No clone, no config files.
 
 1. **Sign up and create your event** (game, name, date, teams; all but the game can change later). REBUILT (2026) is the
-   only game; BIOCORE (2027) is listed but can't be picked until its scoring is written.
+   only game; REEFSCAPE (2025, past season) and BIOCORE (2027) are listed but can't be picked.
 2. **Copy the launch command** from your event's page and paste it into Terminal (Mac/Linux) or
    PowerShell (Windows) on the scorekeeper's laptop:
    ```bash
