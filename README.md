@@ -163,10 +163,11 @@ config/
 website/           watchtower.systemoverload.org: sign-up, events, launch scripts, settings sync
 deploy/            build.sh (the download), deploy.sh + systemd unit + Caddy block for the website
 launch.py          run one event's FMS + hub cameras (or --mock / --no-vision) from its folder; what the launch command runs
-.github/workflows/app.yml  builds the old desktop app on each tag (the website replaces it)
+.github/workflows/authors.yml  checks every commit credits the repo owner
 docs/screenshots/  images used in this README
 tests/             hand-computed scoring, schedule, bracket, selection, setup tests
 run.sh             start FMS + vision together (runs fms.init on first use)
+CHANGELOG.md       what changed in each version
 CLAUDE.md          project context for AI coding agents (AGENTS.md links to it)
 LICENSE            MIT
 ```

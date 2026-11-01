@@ -143,12 +143,13 @@ TBA `score_breakdown` (off by default; TBA validates per-season keys), alliance 
 
 ## Working style for this repo
 Direct answers, uncomfortable truths first. Prove changes with tests or a mock run before calling them done.
-Small commits; don't refactor across `fms/` and `vision/` in one change.
+Small commits; don't refactor across `fms/` and `vision/` in one change. Update README.md (and this file)
+in the same commit as any change to setup, usage or invariants.
 - Commits are Arnan Bajaj's only (`92697572+arnan-bajaj@users.noreply.github.com`): no Claude author/committer, no
   `Co-Authored-By`/`Claude-Session` lines, no "Generated with" footers in commits or PRs. `.claude/settings.json` turns
-  attribution off and sets that git identity at session start; `.github/workflows/authors.yml` fails any commit that credits Claude. Update README.md (and this file)
-in the same commit as any change to setup, usage or invariants.
-- The Watchtower app (`.github/workflows/app.yml`) is built from YOLOv26-FRC-Model's `apps/watchtower/` (launcher,
-  spec, smoke test) at the tag in `.github/hubcounter-release`, with this repo's code as the FMS. It runs fms.init
-  into `~/Documents/Watchtower/config`, so `fms.server`'s import-time `config.load()` and relative `data/` paths must
-  keep working from whatever folder the process chdirs to. Bump `.github/hubcounter-release` to pick up counter fixes.
+  attribution off and sets that git identity at session start; `.github/workflows/authors.yml` fails any commit that credits Claude.
+- Versions are git tags (`git describe` is the version the website shows): v0.x = alphas before the first scrimmage,
+  v1 = the build run at the 10th Street Showdown, v2 = the website + Setup revamp. Bump the major for a revamp, the
+  minor for features, the patch for fixes. There is no desktop app build (removed in v2).
+- `launch.py` chdirs into the event folder, so `fms.server`'s import-time `config.load()` and relative `data/` paths
+  must keep working from whatever folder the process starts in.
