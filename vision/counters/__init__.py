@@ -6,7 +6,8 @@ A counter is any class with `__init__(cfg)` and `process(frame, t) -> int`
 
 Where `counter:` in config/vision.yaml is looked up, in this order:
 
-1. Built-in short names: `zone`, `linecross`, `mock`.
+1. Built-in short names: `colour` (the colour crossing counter in vision/hubcounter/, also under its
+   old plugin name `tbavid-colour`), `zone`, `linecross`, `mock`.
 2. Installed plugins: any Python package that registers classes under the
    entry-point group `watchtower.counters` (e.g. in its pyproject.toml:
    `[project.entry-points."watchtower.counters"] my-counter = "pkg.mod:Class"`).
@@ -44,6 +45,8 @@ PLUGIN_API = 1                       # bump on a breaking change to the contract
 ENTRY_POINT_GROUP = "watchtower.counters"
 
 BUILTIN = {
+    "colour": "hubcounter.fms_counter:ColourCounter",
+    "tbavid-colour": "hubcounter.fms_counter:ColourCounter",
     "zone": "counters.zone:ZoneCounter",
     "linecross": "counters.linecross:LineCrossCounter",
     "mock": "counters.mock:MockCounter",
@@ -51,7 +54,7 @@ BUILTIN = {
 
 # Keys the runner itself reads from a hub's config; never "unknown" to a plugin.
 RUNNER_KEYS = {"counter", "hub", "source", "enabled", "fps", "width", "height", "loop",
-               "roi", "weights", "plugins", "plugin_paths"}
+               "roi", "weights", "plugins", "plugin_paths", "setup_size"}
 
 
 _PATH_PLUGINS: dict = {}           # short names read from plugin_paths' pyproject.toml
