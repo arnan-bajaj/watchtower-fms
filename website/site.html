@@ -32,6 +32,10 @@
   .bigbtn { display: block; text-align: center; padding: 1rem; border-radius: var(--r-lg); background: var(--ink); color: #fff;
     text-decoration: none; font-weight: 700; margin: .5rem 0; }
   .panel { margin-bottom: 1rem; }
+  .games { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-bottom: .75rem; }
+  .games button { text-align: left; padding: .75rem .9rem; border-radius: var(--r-md); }
+  .games button b { display: block; font-size: 1rem; }
+  .games button.sel { background: var(--ink); color: #fff; border-color: var(--ink); }
   @media (max-width: 640px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head><body>
@@ -116,6 +120,11 @@ async function eventsView() {
     <div class="evlist">${events.map((e) => `<a href="/e/${e.slug}" data-go><span><b>${esc(e.name)}</b><br><span class="small muted">/e/${e.slug}</span></span>
       ${e.online ? `<span class="pill ok">running${e.match ? " · " + esc(e.match) : ""}</span>` : `<span class="pill">not running</span>`}</a>`).join("") || `<p class="muted">None yet. Create one below.</p>`}</div></div>
   <div class="panel"><h2>New event</h2>
+    <div class="small muted" style="margin-bottom:.35rem">Game</div>
+    <div class="games" role="radiogroup" aria-label="Game">
+      <button class="sel" role="radio" aria-checked="true" data-game="rebuilt"><b>REBUILT</b><span class="small">2026 season</span></button>
+      <button disabled role="radio" aria-checked="false" data-game="biocore" title="BIOCORE is next season's game"><b>BIOCORE</b><span class="small">2027 · coming next season</span></button>
+    </div>
     <div class="form">
       <label class="field">Event name <input id="ne_name" placeholder="e.g. Spring Scrimmage"></label>
       <label class="field">Date <input id="ne_date" type="date"></label>
@@ -126,7 +135,7 @@ async function eventsView() {
     <button class="primary" id="bne" style="margin-top:.6rem">Create event</button></div>`;
   $("#bne").onclick = async () => {
     try {
-      const e = await api("/api/events", { name: $("#ne_name").value, date: $("#ne_date").value, utc_offset_hours: $("#ne_utc").value,
+      const e = await api("/api/events", { game: document.querySelector(".games button.sel").dataset.game, name: $("#ne_name").value, date: $("#ne_date").value, utc_offset_hours: $("#ne_utc").value,
                                            tba_event_key: $("#ne_key").value, teams: $("#ne_teams").value });
       go("/e/" + e.slug);
     } catch (err) { toast(err.message, true); }

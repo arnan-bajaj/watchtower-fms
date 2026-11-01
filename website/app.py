@@ -207,9 +207,18 @@ def list_events(wt: str = Cookie(None)):
     return {"events": [event_public(e) for e in q("SELECT * FROM events WHERE owner=? AND deleted=0 ORDER BY created DESC", (u["id"],))]}
 
 
+# The game an event is scored for. Only REBUILT (2026) is implemented; BIOCORE (2027) is listed, not selectable.
+GAMES = {"rebuilt": True, "biocore": False}
+
+
 @app.post("/api/events")
 def create_event(body: dict = Body(...), wt: str = Cookie(None)):
     u = need_user(wt)
+    game = str(body.get("game") or "rebuilt").strip().lower()
+    if game not in GAMES:
+        raise HTTPException(400, "Pick a game: REBUILT")
+    if not GAMES[game]:
+        raise HTTPException(400, f"{game.upper()} is next season's game; it isn't available yet")
     if q("SELECT COUNT(*) n FROM events WHERE owner=? AND deleted=0", (u["id"],))[0]["n"] >= MAX_EVENTS:
         raise HTTPException(409, f"An account can have {MAX_EVENTS} events. Delete an old one first.")
     try:
@@ -225,7 +234,7 @@ def create_event(body: dict = Body(...), wt: str = Cookie(None)):
         p = f"{secrets.randbelow(10**6):06d}"
         if p not in pins:
             pins.append(p)
-    base = {"event": {k.split(".", 1)[1]: v for k, v in c.items()},
+    base = {"event": {**{k.split(".", 1)[1]: v for k, v in c.items()}, "game": game},
             "server": {"port": 8000, "db": "data/fms.sqlite3",
                        "pins": dict(zip(("control", "ref", "emcee"), pins)),
                        "vision_key": secrets.token_urlsafe(18)},

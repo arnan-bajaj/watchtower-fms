@@ -1,5 +1,6 @@
 """The website: accounts, events, launch script, settings sync with an event's FMS."""
 import importlib
+import json
 import sys
 
 import pytest
@@ -40,6 +41,9 @@ def test_signup_login_and_ownership(site):
     assert len(set(pins)) == 3 and all(len(p) == 6 for p in pins)
     assert a.post("/api/events", json={"name": "Spring Scrimmage"}).json()["slug"] == "spring-scrimmage-2"
     assert a.post("/api/events", json={"name": ""}).status_code == 400
+    assert json.loads(site.event_row("spring-scrimmage")["base"])["event"]["game"] == "rebuilt"   # the default
+    assert a.post("/api/events", json={"name": "Next Year", "game": "biocore"}).status_code == 400   # not yet
+    assert a.post("/api/events", json={"name": "Odd", "game": "chess"}).status_code == 400
 
     b = _user(site, "b@team.org")
     assert b.get("/api/events/spring-scrimmage").status_code == 404           # not theirs
