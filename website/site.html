@@ -166,7 +166,7 @@ function renderOwner(e) {
   const c = e.commands;
   const cmds = osTab === "windows"
     ? [["Start Watchtower", c.windows], ["With fake fuel (rehearsal)", c.windows_mock]]
-    : [["Start Watchtower", c.mac], ["With fake fuel (rehearsal)", c.mac_mock], ["With the hub cameras", c.mac_cameras]];
+    : [["Start Watchtower", c.mac], ["With fake fuel (rehearsal)", c.mac_mock]];
   const fd = v("field.feeds");
   $("#view").innerHTML = `
   <p><a href="/" data-go>← Your events</a></p>
@@ -190,8 +190,9 @@ function renderOwner(e) {
         <div><span class="small muted">Emcee</span><b>${esc(v("server.pins.emcee"))}</b></div></div>
       <p class="small muted">Change them in Watchtower: /control → Setup.</p></div>
     <div class="panel"><h2>Hub cameras</h2>
-      ${e.vision && Object.keys(e.vision).length ? Object.entries(e.vision).map(([h, f]) => `<div class="small"><b>${h}</b>: ${f} fps</div>`).join("") : `<p class="small muted">No hub counter running.</p>`}
-      <p class="small muted">Counts per ball: red ${esc(v("vision.scale.red"))}, blue ${esc(v("vision.scale.blue"))}. Calibrate in /control → Setup while the cameras run.</p></div>
+      ${["red", "blue"].map((h) => { const cam = S["vision.hubs." + h] && S["vision.hubs." + h].value, f = e.vision && e.vision[h];
+        return `<div class="small"><b>${h}</b>: ${!cam ? "no camera picked" : `camera ${esc(cam.source)}, ${cam.outline && cam.outline.length ? "outline drawn" : "outline not drawn yet"}`}${e.online && f ? ` · ${f} fps` : ""}</div>`; }).join("")}
+      <p class="small muted">Plug USB cameras into the laptop, then in Watchtower open /control → Setup → Cameras: pick each hub's camera and click around the hub's opening. Nothing to install. Counts per ball: red ${esc(v("vision.scale.red"))}, blue ${esc(v("vision.scale.blue"))}.</p></div>
   </div>
 
   <div class="panel"><h2>Event</h2>

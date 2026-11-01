@@ -1,14 +1,15 @@
-"""Run one event's Watchtower on this computer: the FMS, and optionally the hub counter.
+"""Run one event's Watchtower on this computer: the FMS and the hub counter.
 
 The website's launch command installs Watchtower and then runs this. Run it again any time:
 
-  python launch.py EVENT_FOLDER              # FMS only (score by hand in review, or vision elsewhere)
-  python launch.py EVENT_FOLDER --mock       # + fake fuel, no cameras (rehearsal)
-  python launch.py EVENT_FOLDER --cameras    # + the hub cameras (EVENT_FOLDER/config/vision.yaml)
+  python launch.py EVENT_FOLDER              # FMS + hub cameras (set up in /control -> Setup -> Cameras)
+  python launch.py EVENT_FOLDER --mock       # FMS + fake fuel, no cameras (rehearsal)
+  python launch.py EVENT_FOLDER --no-vision  # FMS only (score by hand in review, or vision elsewhere)
+  python launch.py EVENT_FOLDER --vision-config my-vision.yaml   # your own vision config instead
 
 EVENT_FOLDER holds config/event.yaml (written by the website) and data/ (matches, fuel, backups).
-Everything else (teams, TBA keys, PINs, field system, calibration) is in /control -> Setup.
-Ctrl+C stops everything this started.
+Everything else (teams, TBA keys, PINs, field system, cameras, calibration) is in /control -> Setup.
+No camera is opened until one is picked there. Ctrl+C stops everything this started.
 """
 from __future__ import annotations
 
@@ -30,6 +31,13 @@ record_dir: ""
 defaults: {{counter: mock, rate_per_s: 3}}
 hubs: {{red: {{source: none}}, blue: {{source: none}}}}
 """
+CAMERAS = """# Written by launch.py on every start. Each hub's camera, outline and ball size are set in
+# /control -> Setup -> Cameras; the shipped colour counter needs no model.
+fms_url: http://127.0.0.1:{port}
+record_dir: ""
+defaults: {{counter: colour, width: 1920, height: 1080, fps: 60}}
+hubs: {{red: {{}}, blue: {{}}}}
+"""
 
 
 def up(port, timeout=20.0):
@@ -48,8 +56,10 @@ def main():
     ap.add_argument("event", help="the event's folder (has config/event.yaml)")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--mock", action="store_true", help="fake fuel, no cameras")
-    g.add_argument("--cameras", action="store_true", help="count with the hub cameras (config/vision.yaml)")
-    ap.add_argument("--preview", action="store_true", help="with --cameras: show what each camera sees")
+    g.add_argument("--no-vision", action="store_true", help="no hub counter at all")
+    g.add_argument("--vision-config", metavar="FILE", help="run vision on this config instead of Setup's cameras")
+    g.add_argument("--cameras", action="store_true", help=argparse.SUPPRESS)   # the default now; old commands
+    ap.add_argument("--preview", action="store_true", help="show what each camera sees in a window")
     ap.add_argument("--port", type=int, help="serve on this port instead of event.yaml's (8000)")
     ap.add_argument("--no-browser", action="store_true", help="don't open /control")
     args, vision_args = ap.parse_known_args()
@@ -97,16 +107,16 @@ def main():
     if args.mock:
         vcfg = ev / "config" / "vision.mock.yaml"
         vcfg.write_text(MOCK.format(port=port))
-    elif args.cameras:
-        vcfg = ev / "config" / "vision.yaml"
-        if not vcfg.exists():
-            shutil.copy(APP / "config" / "vision.example.yaml", vcfg)
-            print(f"\nCreated {vcfg} from the example. Set each hub's camera and counter in it, then run again.")
+    elif args.vision_config:
+        vcfg = pathlib.Path(args.vision_config).expanduser().resolve()
+    elif not args.no_vision:
+        vcfg = ev / "config" / "vision.cameras.yaml"
+        vcfg.write_text(CAMERAS.format(port=port))
     if vcfg:
         try:
             import cv2  # noqa: F401
         except ImportError:
-            print("\nThe hub counter needs OpenCV. Run the launch command again with --mock or --cameras to install it.")
+            print("\nThe hub counter needs OpenCV, which didn't install. Run the launch command again to retry.")
             vcfg = None
     if vcfg:
         vargs = [sys.executable, "run_vision.py", "--config", str(vcfg), *vision_args]
@@ -124,7 +134,8 @@ def main():
   Scorekeeper (this computer):  http://localhost:{port}/control
   Phones on the same WiFi:      {urls[0]}   (ref, emcee, display)
   PINs: scorekeeper {pins['control']}  ref {pins['ref']}  emcee {pins['emcee']}   (change them in /control -> Setup)
-  Hub counter: {'fake fuel' if args.mock else 'cameras' if vcfg else 'off (start with --mock or --cameras)'}
+  Hub counter: {'fake fuel' if args.mock else 'off' if not vcfg else vcfg.name if args.vision_config
+                else 'pick each hub camera in /control -> Setup -> Cameras'}
   Ctrl+C here stops Watchtower. Your matches are saved in {ev / 'data'}.
 """, flush=True)
     if not args.no_browser:

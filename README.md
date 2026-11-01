@@ -31,14 +31,19 @@ Built for the 10th Street Showdown (October 2026) and shared so other teams can 
 2. **Copy the launch command** from your event's page and paste it into Terminal (Mac/Linux) or
    PowerShell (Windows) on the scorekeeper's laptop:
    ```bash
-   curl -fsSL https://watchtower.systemoverload.org/run/<your event's token> | sh                # FMS
-   curl -fsSL https://watchtower.systemoverload.org/run/<your event's token> | sh -s -- --mock  # + fake fuel
+   curl -fsSL https://watchtower.systemoverload.org/run/<your event's token> | sh                # FMS + hub cameras
+   curl -fsSL https://watchtower.systemoverload.org/run/<your event's token> | sh -s -- --mock  # fake fuel instead
    ```
    The first run installs Watchtower into `~/Watchtower` (Python too, via [uv](https://docs.astral.sh/uv/),
-   if the laptop has no Python 3.10+). Later runs start in seconds; `~/Watchtower/start <event> [--mock|--cameras]`
-   also works. It prints the phone address and PINs and opens `/control`. Ctrl+C stops it.
+   if the laptop has no Python 3.10+, and OpenCV for the cameras). Later runs start in seconds;
+   `~/Watchtower/start <event> [--mock|--no-vision]` also works. It prints the phone address and PINs and
+   opens `/control`. Ctrl+C stops it.
 3. **Set everything else in `/control` → Setup**: event name, date and teams, TBA keys, PINs, the field
-   system's IP (bioarena) and each hub camera's calibration. Or set them on the website before event day.
+   system's IP (bioarena). Or set them on the website before event day.
+4. **Hub cameras** (optional): plug them into the laptop and follow `/control` → Setup → **Cameras**: Find
+   cameras, give each hub its camera, click around the hub's opening, then Calibrate (drop 20+ balls in,
+   type how many). The counter ships with Watchtower; there is no model or plugin to install. No camera is
+   opened until you pick one. See [Hub cameras from Setup](#hub-cameras-from-setup).
 
 **Your event runs on your laptop, not on the website.** Matches, fuel and scores never leave it, phones
 talk to it over the venue WiFi, and it keeps working if the venue's internet drops. When there is internet,
@@ -137,7 +142,11 @@ fms/
   init.py          first-run setup: python -m fms.init
   static/          control / ref / emcee / display pages (vanilla JS, no CDN)
 vision/
-  run_vision.py    cameras -> counter -> FMS; records match video; takes feeds/calibration from the FMS
+  run_vision.py    cameras -> counter -> FMS; records match video; takes feeds, calibration and
+                   Setup -> Cameras (camera, outline, drop test, pictures) from the FMS
+  hubcounter/      the colour counter (built-in `colour`), copied from YOLOv26-FRC-Model (MIT)
+  hubsetup.py      a hub's Setup -> Cameras entry -> its counter config
+  dropfit.py       the drop test: fit the one-ball size to the number of balls dropped
   scaler.py        counts-per-ball calibration
   counters/        zone, linecross, mock, base interface
   rescore.py       recount a recorded match with a new model
@@ -152,7 +161,7 @@ config/
   vision.yaml          your cameras; created by fms.init, gitignored
 website/           watchtower.systemoverload.org: sign-up, events, launch scripts, settings sync
 deploy/            build.sh (the download), deploy.sh + systemd unit + Caddy block for the website
-launch.py          run one event's FMS (+ --mock / --cameras) from its folder; what the launch command runs
+launch.py          run one event's FMS + hub cameras (or --mock / --no-vision) from its folder; what the launch command runs
 .github/workflows/app.yml  builds the old desktop app on each tag (the website replaces it)
 docs/screenshots/  images used in this README
 tests/             hand-computed scoring, schedule, bracket, selection, setup tests
@@ -242,18 +251,20 @@ starting point; a Setup value wins over it, and **Use event.yaml** puts one back
 | **Event** | name, date, UTC offset, TBA event key, first match, cycle, teams |
 | **The Blue Alliance** | Auth ID, secret (never shown again after saving), Send to TBA on/off |
 | **Field system (bioarena)** | the field's IP and UDP port; shows this laptop's IP to enter in the field's counter setting |
-| **Vision & calibration** | per hub: counts per ball, and a **Calibrate** button |
+| **Cameras** | per hub: camera (USB index, or a network camera / video file), the outline drawn on its live picture, and the drop-test calibration ([Hub cameras from Setup](#hub-cameras-from-setup)) |
+| **Vision & calibration** | per hub: status, counts per ball, and a **Calibrate** button (for counters other than the built-in colour one) |
 | **PINs** | scorekeeper, ref, emcee; **Random new PINs**. A changed PIN logs out every device using it |
 
 They're stored in SQLite (`kv` key `settings`) and survive restarts and **Wipe everything**. After 10 wrong
 PINs in a minute, logins wait out the rest of that minute.
 
-**Calibration.** A counter that sees one ball as several counts (at the 10th Street Showdown the colour
-counter counted each ball about 9 times until its `ball_area` was fixed) is corrected per hub with **counts
-per ball**: the vision process divides that hub's count by it before the FMS and the field feed see it. To
-measure it, start the cameras, press **Calibrate** on that hub, drop some balls in, enter how many, and press
-**Done**. The raw count is kept beside the corrected one. A new value applies from the next ball; already
-stored fuel isn't changed (fix a match in review if needed).
+**Calibration.** For hubs set up in **Cameras**, the drop test there is the calibration: it sets the
+one-ball size the colour counter divides by, and puts counts per ball back to 1. For any other counter, a
+counter that sees one ball as several counts is corrected per hub with **counts per ball**: the vision
+process divides that hub's count by it before the FMS and the field feed see it. To measure it, start the
+cameras, press **Calibrate** in Vision & calibration, drop some balls in, enter how many, and press **Done**.
+The raw count is kept beside the corrected one. A new value applies from the next ball; already stored fuel
+isn't changed (fix a match in review if needed).
 
 ### `config/event.yaml`
 
@@ -572,10 +583,11 @@ Drag a box over the hub opening and press Enter. It prints `roi: [x, y, w, h]` i
 
 | Counter | How it counts | Use when |
 |---|---|---|
-| `zone` (default) | Runs the model on a crop around the ROI; links detections frame-to-frame with a small nearest-neighbor tracker; counts each short track once | Wide or noisy views. Built because ByteTrack fragmented badly on broadcast footage |
+| `colour` | Built in (`vision/hubcounter/`, from [YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model)): yellow blobs crossing down into a hub outline. No model, no GPU | A camera on the hub mouth. What the launch command uses; set it up in [Setup → Cameras](#hub-cameras-from-setup) |
+| `zone` (`vision.example.yaml`'s default) | Runs the model on a crop around the ROI; links detections frame-to-frame with a small nearest-neighbor tracker; counts each short track once | Wide or noisy views. Built because ByteTrack fragmented badly on broadcast footage |
 | `linecross` | Ultralytics ByteTrack; counts IDs crossing a line inside the ROI moving down | Close cameras with clean, continuous ball tracks |
 | `mock` | Random fuel at `rate_per_s`, no model or camera (`source: none`) | Rehearsals, UI testing |
-| `"tbavid.fms_counter:ColourCounter"` / `"tbavid.fms_counter:ComboCounter"` | External, from [YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model): yellow blobs crossing down into a hub outline; `ComboCounter` blends in a fuel model | A camera on the hub mouth; see [External hub counter](#external-hub-counter-yolov26-frc-model) |
+| `tbavid-combo` | External, from YOLOv26-FRC-Model: the colour counter blended with a fuel model | See [External hub counter](#external-hub-counter-yolov26-frc-model) |
 | `"pkg.module:Class"` | Your own | Anything else |
 
 `zone` tuning keys:
@@ -608,11 +620,45 @@ python rescore.py --match qm7 --hub red --video recordings/qm7_<id>_red.mp4 --we
 
 These recordings are also your best training data, because they come from the real camera mount.
 
+### Hub cameras from Setup
+
+What the launch command gives every team, with nothing to edit or install:
+
+1. **Find cameras** lists a picture from every camera index that opens (0–5), besides those a hub already
+   uses. Pick **Red hub** / **Blue hub** under the right one, or type a network camera address
+   (`rtsp://…`, `http://…`) or a video file under *Network camera or video file*.
+   On a Mac, the first camera use asks to let Terminal use the camera; allow it, then restart Watchtower.
+2. **Draw outline**: click the corners of the hub's opening on its live picture (about one a second),
+   going round, then **Save outline**. Put the top edge 3–4 ball widths above the hood (see below).
+3. **Calibrate** (the drop test): press it, drop 20 or more balls into that hub, some one at a time and some
+   in handfuls like robots shoot, type how many, press **Done**. Vision records each frame's yellow blobs
+   near the outline during the test and replays the counter over them at many one-ball sizes
+   (`vision/dropfit.py`); the size whose count matches is saved, and the hub starts counting.
+   A hub with an outline but no calibration does not count. A new outline needs a new drop test.
+
+Why a drop test and not a measured or guessed ball size: the count depends steeply on it. On the
+2026-10-10 recording, half the right size counted 302 balls against 112, double counted 46, and measuring
+lone balls mid-match gave 150–230 px against the right 693 (the event's ~9x overcount was a wrong size).
+Fitted from 20–60 s stretches of that recording (counted by the hand-tuned setup), the drop-test size counted
+the whole 100 s within 6% in five of six tries (15% low in the sixth). A real practice-hub drop test hasn't
+been run yet: check the count on a few drops after calibrating.
+
+The choices are live settings (`vision.hubs.red` / `vision.hubs.blue`: camera, outline, picture size, ball
+size), so they sync with the website and apply without a restart; changing one hub rebuilds only that hub's
+counter (same camera: it stays open). **Remove camera** puts a hub back to the vision config
+file. `launch.py` writes `config/vision.cameras.yaml` on each start (counter `colour`, 1920×1080 at 60 fps, no
+recording); `--vision-config FILE` runs your own config instead, and Setup still overrides its hubs.
+
 ### External hub counter (YOLOv26-FRC-Model)
 
-[YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model) ships two counter plugins for this vision process, `tbavid-colour` and `tbavid-combo`. They are not part of this repo. Clone it, then run `cd vision && python run_vision.py --add-plugin ~/dev/YOLOv26-FRC-Model`. Alternatively, `pip install -e` it or add it to `plugin_paths:` (see [Counter plugins](#counter-plugins)).
+[YOLOv26-FRC-Model](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model) is where the colour counter is
+developed. Its `tbavid-colour` is built in here as `colour` (and under the old name), copied unchanged into
+`vision/hubcounter/` at the commit named in its `__init__.py`; recopy after a fix there. The model blend,
+`tbavid-combo`, is not shipped (it needs weights and a GPU): clone that repo, then run
+`cd vision && python run_vision.py --add-plugin ~/dev/YOLOv26-FRC-Model`. Alternatively, `pip install -e` it
+or add it to `plugin_paths:` (see [Counter plugins](#counter-plugins)).
 
-- `tbavid-colour` counts yellow blobs crossing down into a hub outline. It needs no model or GPU. On four scored 2026 Einstein broadcasts it measured 10.1% mean error against the official counts at 60 fps, with the auto winner right on all four.
+- `colour` / `tbavid-colour` counts yellow blobs crossing down into a hub outline. It needs no model or GPU. On four scored 2026 Einstein broadcasts it measured 10.1% mean error against the official counts at 60 fps, with the auto winner right on all four.
 - `tbavid-combo` blends that with a fuel model (`model:`). On the same four it measured 6.8%, but three were in the model's training set; expect 7–9% on a new match. It needs Apple Silicon or a GPU. The model runs on its own thread; if it falls behind it turns itself off and the hub counts by colour.
 - Draw each outline with its top edge 3–4 ball widths above the hood, where a falling ball is still in view. On the 2026 Central Valley broadcast an outline on the hood rim gave 38.9% error and the raised one 6.4%. On that broadcast the combo was 34.5%, worse than colour alone, so check it on your own camera.
 - Neither has been checked against a hand-counted practice hub yet. Do the 20-ball test before trusting it.
@@ -885,7 +931,7 @@ For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a ma
 - [ ] Laptop plugged in, on venue WiFi
 - [ ] Laptop IP noted (or `.local` name confirmed)
 - [ ] One phone loads `/ref` (proves there's no client isolation)
-- [ ] Both hub cameras mounted; ROIs re-picked with `pick_roi.py`
+- [ ] Both hub cameras mounted; in Setup → Cameras each outline redrawn if a camera moved, and a drop test run per hub
 - [ ] Vision pill green in `/control`
 - [ ] If a field system (e.g. bioarena) lights the hubs: its IP in `feeds:`, this Mac's current IP in its counter settings, mode set to Counted, **field** pill green in `/control` and the counter `ONLINE` on the field's panel
 - [ ] `rm data/fms.sqlite3*` done, `tba.enabled: true`, `source tba_secrets.sh`

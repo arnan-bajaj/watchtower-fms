@@ -14,7 +14,9 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
   services: never touch their units or Caddy blocks). Accounts, events, launch scripts, the starting
   event.yaml, a synced copy of settings + status. It NEVER runs matches; it imports only `fms.settings`/`fms.config`.
   Deploy: `deploy/deploy.sh ubuntu@141.148.162.105` (systemd `watchtower-site`, port 8070, Caddy block between
-  `# >>> watchtower-site` markers). `launch.py` runs one event folder (`~/Watchtower/events/<slug>`) on a laptop.
+  `# >>> watchtower-site` markers). `launch.py` runs one event folder (`~/Watchtower/events/<slug>`) on a laptop:
+  the FMS plus vision on a generated `config/vision.cameras.yaml` (counter `colour`, hubs empty until
+  Setup -> Cameras picks them; `--mock`, `--no-vision`, `--vision-config FILE`).
 - Phone pages (`fms/static/`): `/ref` (fouls), `/emcee` (auto result + hub light cues), `/control`
   (scorekeeper), `/display` (field TV / OBS overlay; also the live alliance selection screen). Vanilla JS,
   no build step, no CDN (the venue may have no internet). Live state over one websocket `/ws`.
@@ -25,12 +27,20 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
 - `config/event.yaml` and `config/vision.yaml` are gitignored. `python -m fms.init` creates them with random
   distinct PINs and a vision key (`run.sh` runs it on first use); it never overwrites.
 - Live settings (`fms/settings.py`): the keys in `settings.FIELDS` (event basics, teams, TBA keys, PINs,
-  `field.feeds`, `vision.scale.*`) are edited in /control -> Setup, stored in SQLite as `{key: {v, t}}` and applied
+  `field.feeds`, `vision.scale.*`, `vision.hubs.*`) are edited in /control -> Setup, stored in SQLite as `{key: {v, t}}` and applied
   in place over event.yaml (never replace CFG's sub-dicts; G and tba.cfg hold them). Newest `t` wins per key, with
   tombstones for "back to event.yaml"; the website syncs with the same merge (`fms/cloud.py`). The TBA secret never
   goes to a browser. Tokens include the PIN. A data wipe keeps settings. Server-side paths (db, port) aren't settings.
 - Vision fetches `/api/vision/config` when the FMS's `config_rev` changes: Setup's feeds replace the file's
   (null = use the file), and `vision.scale` (counts per ball) divides each hub's count before the feed and the FMS.
+- Setup -> Cameras (`vision.hubs.<hub>` = {source, size, outline, ball_area}; null = the vision file's hub):
+  `vision/hubsetup.py` merges it into the hub config and rescales an outline drawn at another picture size.
+  The colour counter never counts on a guessed ball size: a hub with an outline but no `ball_area` waits for
+  its drop test (`vision/dropfit.py`: record blobs near the outline, replay the counter at log-spaced areas,
+  keep the area whose count matches the balls dropped). The FMS relays pictures, Find cameras and the drop
+  test through the `want` field of its `/api/vision/events` reply (in memory only, never stored); pictures go
+  to the browser via `/api/vision/image/...` with the control token. Saving a fitted size resets `vision.scale`
+  for that hub to 1.
 - `fms/config.py` refuses to start on a missing config, `CHANGE-ME`/blank PINs, or a control PIN shared
   with ref/emcee. Vision takes `vision_key` from `event.yaml` when its own config omits it, and `feeds:` from
   `vision.yaml` when its config has no `feeds` key (so mock runs feed bioarena too; `feeds: []` = off) (`vision/vconfig.py`).
@@ -82,12 +92,14 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
   `plugin_paths:` folder's pyproject.toml), a class in `vision/plugins/*.py` (its NAME; found by parsing the
   source with ast, never importing it, so a broken file can't stop startup), a repo recorded there as
   `<name>.path` by `--add-plugin` (plain text, not a symlink, for Windows), a `plugins:` alias, or
-  `"module:Class"`. `vision/plugins/` is gitignored except `_example.py` (a working template; `_` files are
+  `"module:Class"`. `colour` (alias `tbavid-colour`) is `vision/hubcounter/`, copied unchanged from
+  YOLOv26-FRC-Model's `tbavid/` (MIT; the commit is in its `__init__.py`): fix counter bugs there and recopy, don't
+  edit the copy. `vision/plugins/` is gitignored except `_example.py` (a working template; `_` files are
   skipped) and README.md. Required: `__init__(cfg)`,
   `process(frame, t) -> int`. Optional, defaulted: PLUGIN_API, NAME, DESCRIPTION, NEEDS, OPTIONS (misspelt keys
   warned), `status()` (detail/warning/error, shown in /control), `close()`. `--list-counters` prints them. Keep the
   registry free of cv2 (tests run without it). `zone` counts only the class named `fuel` (or `classes:`). The
-  YOLOv26-FRC-Model counters (tbavid-colour / tbavid-combo) are maintained there, not copied here.
+  model blend `tbavid-combo` is not shipped (weights + GPU); it stays a plugin from that repo.
 - Model weights go in `vision/models/` (gitignored). Restart only the vision process to swap models.
 - Vision records raw hub video + per-frame timestamps per match; `vision/rescore.py` recounts a match offline
   and replaces that hub's events in the FMS on the same clock.
@@ -116,7 +128,8 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
 
 ## Event-day history (10th Street Showdown, 2026-10-10): what bit us
 - The colour counter counted each ball ~9x (ball_area 77/80 px in YOLOv26-FRC-Model's cams.json; fixed to
-  693/720). Now: Setup -> counts per ball / Calibrate.
+  693/720). Now: Setup -> Cameras' drop test fits the ball size (and counts per ball / Calibrate for other
+  counters). Half/double the right size counted 302/46 against 112 on that recording: never guess it.
 - bioarena's address had to be typed into vision.yaml by hand (field at 192.168.1.10, feed port 8411, web UI
   8080; bioarena accepts one source IP = the laptop's). Now: Setup -> Field system.
 - A leftover mock vision process kept posting random fuel into the real match; a stray `on` line in event.yaml

@@ -1,8 +1,7 @@
 #!/bin/sh
 # Watchtower for "__NAME__" -- from __SITE__/e/__EVENT__
-#   curl -fsSL __SITE__/run/<token> | sh                  FMS only
-#   curl -fsSL __SITE__/run/<token> | sh -s -- --mock     + fake fuel (rehearsal)
-#   curl -fsSL __SITE__/run/<token> | sh -s -- --cameras  + hub cameras
+#   curl -fsSL __SITE__/run/<token> | sh                  FMS + hub cameras (pick them in /control -> Setup)
+#   curl -fsSL __SITE__/run/<token> | sh -s -- --mock     FMS + fake fuel instead (rehearsal)
 # Installs into ~/Watchtower (WATCHTOWER_HOME to change it). Nothing outside that folder changes,
 # except uv (a Python installer, ~/.local/bin) if this computer has no Python 3.10 or newer.
 set -eu
@@ -13,8 +12,8 @@ WT="${WATCHTOWER_HOME:-$HOME/Watchtower}"
 APP="$WT/app"
 EV="$WT/events/$EVENT"
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
-need_counter=0
-for a in "$@"; do case "$a" in --mock|--cameras) need_counter=1 ;; esac; done
+need_counter=1
+for a in "$@"; do case "$a" in --no-vision) need_counter=0 ;; esac; done
 mkdir -p "$WT" "$EV/config"
 
 # 1. Watchtower itself (only when the website has a newer one)
@@ -50,12 +49,14 @@ install() {  # $1 = requirements file
   stamp="$WT/venv/.$(basename "$1").$(cksum < "$1" | cut -d' ' -f1)"
   if [ ! -f "$stamp" ]; then
     say "Installing packages ($(basename "$1"))"
-    "$PYV" -m pip install -q --disable-pip-version-check -r "$1"
+    "$PYV" -m pip install -q --disable-pip-version-check -r "$1" || return 1
     touch "$stamp"
   fi
 }
 install "$APP/requirements-run.txt"
-[ "$need_counter" = 1 ] && install "$APP/vision/requirements-counter.txt"
+if [ "$need_counter" = 1 ]; then
+  install "$APP/vision/requirements-counter.txt" || say "OpenCV didn't install, so the hub cameras are off. Watchtower still runs."
+fi
 
 # 4. This event's settings (first time), or just the website link (new launch command)
 curl -fsSL -H "X-Watchtower-Token: $TOKEN" "$SITE/api/link/$EVENT/event.yaml" -o "$EV/config/event.yaml.new"
@@ -75,9 +76,9 @@ fi
 # 5. A short command for next time
 cat > "$WT/start" <<'SH'
 #!/bin/sh
-# Start an event's Watchtower again:  ~/Watchtower/start EVENT [--mock | --cameras]
+# Start an event's Watchtower again:  ~/Watchtower/start EVENT [--mock | --no-vision]
 WT="$(cd "$(dirname "$0")" && pwd)"
-[ -n "${1:-}" ] || { echo "usage: $0 EVENT [--mock|--cameras]"; ls "$WT/events"; exit 1; }
+[ -n "${1:-}" ] || { echo "usage: $0 EVENT [--mock|--no-vision]"; ls "$WT/events"; exit 1; }
 ev="$1"; shift
 exec "$WT/venv/bin/python" "$WT/app/launch.py" "$WT/events/$ev" "$@"
 SH

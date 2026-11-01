@@ -185,7 +185,6 @@ def event_row(slug, user=None, token=None):
 def commands(ev):
     run = f"{SITE}/run/{ev['token']}"
     return {"mac": f"curl -fsSL {run} | sh", "mac_mock": f"curl -fsSL {run} | sh -s -- --mock",
-            "mac_cameras": f"curl -fsSL {run} | sh -s -- --cameras",
             "windows": f"irm {run}.ps1 | iex", "windows_mock": f"$env:WATCHTOWER_ARGS='--mock'; irm {run}.ps1 | iex"}
 
 

@@ -1,6 +1,6 @@
 # Watchtower for "__NAME__" -- from __SITE__/e/__EVENT__  (Windows PowerShell)
-#   irm __SITE__/run/<token>.ps1 | iex                                   FMS only
-#   $env:WATCHTOWER_ARGS='--mock'; irm __SITE__/run/<token>.ps1 | iex    + fake fuel
+#   irm __SITE__/run/<token>.ps1 | iex                                   FMS + hub cameras (pick them in /control -> Setup)
+#   $env:WATCHTOWER_ARGS='--mock'; irm __SITE__/run/<token>.ps1 | iex    FMS + fake fuel instead
 # Installs into %USERPROFILE%\Watchtower. Uses uv (a Python installer) if there's no Python 3.10+.
 $ErrorActionPreference = 'Stop'
 $Site = '__SITE__'; $Event = '__EVENT__'; $Token = '__TOKEN__'
@@ -31,8 +31,9 @@ if (-not (Test-Path $Py)) {
   uv venv --seed --python 3.12 (Join-Path $WT 'venv')
 }
 & $Py -m pip install -q --disable-pip-version-check -r (Join-Path $App 'requirements-run.txt')
-if ($Args2 -contains '--mock' -or $Args2 -contains '--cameras') {
+if ($Args2 -notcontains '--no-vision') {
   & $Py -m pip install -q --disable-pip-version-check -r (Join-Path $App 'vision\requirements-counter.txt')
+  if ($LASTEXITCODE -ne 0) { Write-Host "OpenCV didn't install, so the hub cameras are off. Watchtower still runs." }
 }
 
 $Cfg = Join-Path $Ev 'config\event.yaml'
