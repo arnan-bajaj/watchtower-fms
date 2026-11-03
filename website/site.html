@@ -26,7 +26,7 @@
     border-radius: var(--r-md); border: 1px solid var(--line); background: var(--panel); color: var(--ink); text-decoration: none; margin-bottom: .5rem; }
   .evlist a:hover { border-color: var(--ink-2); }
   .topright { margin-left: auto; display: flex; gap: .4rem; align-items: center; }
-  .pins { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
+  .pins { display: grid; grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr)); gap: .5rem; }
   .pins div { background: var(--panel-2); border-radius: var(--r-sm); padding: .6rem; text-align: center; }
   .pins b { display: block; font-size: 1.3rem; font-variant-numeric: tabular-nums; letter-spacing: .05em; }
   .bigbtn { display: block; text-align: center; padding: 1rem; border-radius: var(--r-lg); background: var(--ink); color: #fff;
@@ -84,7 +84,7 @@ function landing() {
       a field display for the audience, results on The Blue Alliance, and hub cameras that count fuel and feed your field system (bioarena).</p>
     <div class="steps">
       <div class="step"><span class="n">1</span><b>Create your event</b><span class="muted small">Name, date, teams. Takes a minute.</span></div>
-      <div class="step"><span class="n">2</span><b>Run one command</b><span class="muted small">On the scorekeeper's laptop (Mac, Linux or Windows). It installs everything and starts Watchtower on that laptop.</span></div>
+      <div class="step"><span class="n">2</span><b>Run one command</b><span class="muted small">On the Control laptop (Mac, Linux or Windows). It installs everything and starts Watchtower on that laptop.</span></div>
       <div class="step"><span class="n">3</span><b>Score</b><span class="muted small">Phones on the venue WiFi open the ref, emcee and display pages. Set TBA keys, field address and calibration in Setup.</span></div>
     </div>
     <p class="muted small">Your event runs on your laptop, not on this website, so it keeps working if the venue's internet drops.
@@ -147,11 +147,11 @@ async function eventsView() {
 
 // ---------------------------------------------------------------- one event
 function phoneLinks(e) {
-  if (!e.online || !e.lan_urls.length) return `<p class="muted">Watchtower isn't running for this event right now (it runs on the scorekeeper's laptop). Check back when it is.</p>`;
+  if (!e.online || !e.lan_urls.length) return `<p class="muted">Watchtower isn't running for this event right now (it runs on the Control laptop). Check back when it is.</p>`;
   const u = e.lan_urls[0];
   return `<p class="small muted">On the venue WiFi, open your station:</p>
-    ${["ref", "emcee", "display", "control"].map((p) => `<a class="bigbtn" href="${esc(u)}/${p}">${{ ref: "Referee", emcee: "Emcee", display: "Field display", control: "Scorekeeper" }[p]}</a>`).join("")}
-    <p class="small muted">Address: <code>${esc(u)}</code>. If it doesn't open, you're not on the same WiFi as the scorekeeper's laptop.</p>`;
+    ${["ref", ...(e.game === "reefscape" ? ["score"] : []), "emcee", "display", "control"].map((p) => `<a class="bigbtn" href="${esc(u)}/${p}">${{ ref: "Referee", score: "Scorer", emcee: "Emcee", display: "Field display", control: "Control" }[p]}</a>`).join("")}
+    <p class="small muted">Address: <code>${esc(u)}</code>. If it doesn't open, you're not on the same WiFi as the Control laptop.</p>`;
 }
 
 async function eventView(slug) {
@@ -185,24 +185,25 @@ function renderOwner(e) {
   <div class="panel"><div class="panel-head"><h2 style="margin:0">${esc(v("event.name"))}</h2>
     ${e.online ? `<span class="pill ok">running${e.match ? " · " + esc(e.match) + " " + esc(e.match_status || "") : ""}</span>` : `<span class="pill">not running</span>`}</div>
     ${e.online ? `<p class="small">Phones on the venue WiFi: <code>${esc(e.lan_urls[0] || "")}</code> · ${e.played || 0} matches played</p>` :
-      e.last_seen ? `<p class="small muted">Last seen ${new Date(e.last_seen * 1000).toLocaleString()}</p>` : `<p class="small muted">Not started yet. Run the command below on the scorekeeper's laptop.</p>`}
+      e.last_seen ? `<p class="small muted">Last seen ${new Date(e.last_seen * 1000).toLocaleString()}</p>` : `<p class="small muted">Not started yet. Run the command below on the Control laptop.</p>`}
     <p class="small muted">Phones can also open <a href="${esc(e.url)}">${esc(e.url)}</a>: it links them to your laptop while Watchtower runs.</p></div>
 
   <div class="panel"><h2>Launch command</h2>
     <div class="tabs2"><button class="small ${osTab === "mac" ? "sel" : ""}" data-os="mac">Mac / Linux (Terminal)</button><button class="small ${osTab === "windows" ? "sel" : ""}" data-os="windows">Windows (PowerShell)</button></div>
     ${cmds.map(([label, cmd]) => `<div class="small muted">${label}</div><div class="cmd"><code>${esc(cmd)}</code><button class="small" data-copy="${esc(cmd)}">Copy</button></div>`).join("")}
-    <p class="small muted">Paste it into ${osTab === "windows" ? "PowerShell" : "Terminal"} on the scorekeeper's laptop. The first run installs Watchtower into a <code>Watchtower</code> folder in your home folder (a few minutes); later runs start in seconds. It opens the scorekeeper page; Ctrl+C stops it.
+    <p class="small muted">Paste it into ${osTab === "windows" ? "PowerShell" : "Terminal"} on the Control laptop. The first run installs Watchtower into a <code>Watchtower</code> folder in your home folder (a few minutes); later runs start in seconds. It opens the Control page; Ctrl+C stops it.
       ${osTab === "windows" ? "<b>Windows support is new and less tested than Mac.</b>" : ""}</p>
     <p class="small muted">Treat this command like a password: it carries your event's PINs and TBA keys.</p></div>
 
   <div class="grid2">
     <div class="panel"><h2>PINs</h2>
-      <div class="pins"><div><span class="small muted">Scorekeeper</span><b>${esc(v("server.pins.control"))}</b></div>
+      <div class="pins"><div><span class="small muted">Control</span><b>${esc(v("server.pins.control"))}</b></div>
         <div><span class="small muted">Ref</span><b>${esc(v("server.pins.ref"))}</b></div>
-        <div><span class="small muted">Emcee</span><b>${esc(v("server.pins.emcee"))}</b></div></div>
+        <div><span class="small muted">Emcee</span><b>${esc(v("server.pins.emcee"))}</b></div>
+        ${reef ? `<div><span class="small muted">Scorer</span><b>${esc(v("server.pins.scorer") || "off")}</b></div>` : ""}</div>
       <p class="small muted">Change them in Watchtower: /control → Setup.</p></div>
     ${reef ? `<div class="panel"><h2>Scoring</h2>
-      <p class="small muted">REEFSCAPE (2025) is scored by hand: after each match the scorekeeper types each alliance's coral, algae, LEAVE and BARGE results in /control. No cameras.</p></div>`
+      <p class="small muted">REEFSCAPE (2025) is scored by hand, no cameras. Scorers count coral, algae, LEAVE and BARGE live on /score (Scorer PIN); Control (/control) checks the totals and commits.</p></div>`
     : `<div class="panel"><h2>Hub cameras</h2>
       ${["red", "blue"].map((h) => { const cam = S["vision.hubs." + h] && S["vision.hubs." + h].value, f = e.vision && e.vision[h];
         return `<div class="small"><b>${h}</b>: ${!cam ? "no camera picked" : `camera ${esc(cam.source)}, ${cam.outline && cam.outline.length ? "outline drawn" : "outline not drawn yet"}`}${e.online && f ? ` · ${f} fps` : ""}</div>`; }).join("")}

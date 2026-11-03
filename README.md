@@ -2,9 +2,9 @@
 
 A free, open-source field management system for **FRC offseason events and scrimmages** playing the 2026 game **REBUILT** (or the 2025 game **REEFSCAPE**, scored by hand). It runs on one laptop on the venue WiFi:
 
-- **Two hub cameras count fuel automatically** with a YOLO model you supply (no weights ship with this repo), or the scorekeeper types counts per period with no cameras at all.
+- **Two hub cameras count fuel automatically** with a YOLO model you supply (no weights ship with this repo), or Control types counts per period with no cameras at all.
 - **Refs log fouls from their phones**, and the **emcee's phone says which hub lights to switch** and when.
-- **The scorekeeper** runs matches, reviews and corrects scores, and runs **live alliance selection** that shows on the field display.
+- **Control** runs matches, reviews and corrects scores, and runs **live alliance selection** that shows on the field display.
 - **Quals schedule generator**, **rankings**, and a **4-alliance double-elimination playoff** with best-of-3 finals.
 - **The Blue Alliance**: schedule, scores, rankings, alliances and match videos are pushed automatically, and queue up while the venue is offline.
 - **Field display / OBS overlay** for the audience and the stream.
@@ -13,9 +13,9 @@ It doesn't control robots or talk to driver stations. It's the scoring, timing a
 
 Built for the 10th Street Showdown (October 2026) and shared so other teams can run their own offseason events with it.
 
-| Scorekeeper | Ref phone | Emcee phone |
+| Control | Ref phone | Emcee phone |
 |---|---|---|
-| ![Scorekeeper match screen](docs/screenshots/control.png) | ![Ref foul buttons](docs/screenshots/ref.png) | ![Emcee hub-light cues](docs/screenshots/emcee.png) |
+| ![Control match screen](docs/screenshots/control.png) | ![Ref foul buttons](docs/screenshots/ref.png) | ![Emcee hub-light cues](docs/screenshots/emcee.png) |
 
 | Field display | Live alliance selection |
 |---|---|
@@ -30,7 +30,7 @@ Built for the 10th Street Showdown (October 2026) and shared so other teams can 
 1. **Sign up and create your event** (game, name, date, teams; all but the game can change later). Pick REBUILT (2026)
    or REEFSCAPE (2025, see [REEFSCAPE events](#reefscape-events)); BIOCORE (2027) is listed but can't be picked yet.
 2. **Copy the launch command** from your event's page and paste it into Terminal (Mac/Linux) or
-   PowerShell (Windows) on the scorekeeper's laptop:
+   PowerShell (Windows) on the Control laptop:
    ```bash
    curl -fsSL https://watchtower.systemoverload.org/run/<your event's token> | sh                # FMS + hub cameras
    curl -fsSL https://watchtower.systemoverload.org/run/<your event's token> | sh -s -- --mock  # fake fuel instead
@@ -73,7 +73,7 @@ pip install -r vision/requirements.txt     # only needed for real cameras; skip 
 ./run.sh ../config/vision.mock.yaml        # FMS + fake fuel; or: python -m fms.server
 ```
 
-Open `http://localhost:8000` on the laptop, or `http://<laptop-ip>:8000` on a phone on the same WiFi. Pick **Scorekeeper**, log in with the control PIN, generate a schedule, and play a match. Everything below is detail.
+Open `http://localhost:8000` on the laptop, or `http://<laptop-ip>:8000` on a phone on the same WiFi. Pick **Control**, log in with the Control PIN, generate a schedule, and play a match. Everything below is detail.
 
 ---
 
@@ -110,18 +110,18 @@ Two independent processes. The FMS never touches the model, and vision never tou
 ```
  hub cam RED ──┐                                          ┌─ /ref      ref phones: fouls
                ├─ vision/run_vision.py ─(t, hub, n)──▶ FMS server ──┼─ /emcee    emcee phone: auto result, hub light cues
- hub cam BLUE ─┘   counter plugin + YOLO     HTTP      FastAPI    ├─ /control  scorekeeper laptop: start, review, commit
+ hub cam BLUE ─┘   counter plugin + YOLO     HTTP      FastAPI    ├─ /control  Control laptop: start, review, commit
                                                      + SQLite   ├─ /display  field TV / OBS overlay
  stream cam ──▶ OBS ──▶ YouTube live                     │       └─▶ TBA outbox (retries until delivered)
 ```
 
 **Vision only reports timestamped fuel events:** which hub, when, and how many. It knows nothing about periods, shifts or points.
 
-**The FMS decides what each ball is worth.** It builds the match timeline from the scorekeeper's start click, then checks every fuel event against it: which period it fell in, whether that alliance's hub was active, and whether it landed inside the 3-second grace window after a hub shut off. That gives you three things:
+**The FMS decides what each ball is worth.** It builds the match timeline from Control's start click, then checks every fuel event against it: which period it fell in, whether that alliance's hub was active, and whether it landed inside the 3-second grace window after a hub shut off. That gives you three things:
 
 - **Start-click error is fixable after the match.** Shift the timeline ±0.5 s and every ball re-buckets instantly.
 - **Vision can be swapped, restarted or replaced** (new model, offline recount) without touching the FMS.
-- **The FMS works with no vision at all.** The scorekeeper types fuel counts per period in review.
+- **The FMS works with no vision at all.** Control types fuel counts per period in review.
 
 Everything lives in SQLite, so a crash or restart loses nothing. Phones get live state over one websocket and keep their own clock in sync with the server.
 
@@ -142,7 +142,7 @@ fms/
   settings.py      live settings (/control -> Setup) on top of event.yaml; newest-wins merge
   cloud.py         optional sync with the website (settings + status; never matches)
   init.py          first-run setup: python -m fms.init
-  static/          control / ref / emcee / display pages (vanilla JS, no CDN)
+  static/          control / ref / score / emcee / display pages (vanilla JS, no CDN)
 vision/
   run_vision.py    cameras -> counter -> FMS; records match video; takes feeds, calibration and
                    Setup -> Cameras (camera, outline, drop test, pictures) from the FMS
@@ -241,7 +241,7 @@ To try the pages or run scoring by hand, install just `requirements.txt` and ski
 
 Your event's settings live in two gitignored files, so your PINs and event details never end up in git:
 
-- `python -m fms.init` copies `config/event.example.yaml` → `config/event.yaml` and `config/vision.example.yaml` → `config/vision.yaml`. It fills in three random 6-digit PINs and a random vision key, and prints the PINs. It never overwrites an existing file. `run.sh` runs it automatically the first time.
+- `python -m fms.init` copies `config/event.example.yaml` → `config/event.yaml` and `config/vision.example.yaml` → `config/vision.yaml`. It fills in four random 6-digit PINs and a random vision key, and prints the PINs. It never overwrites an existing file. `run.sh` runs it automatically the first time.
 - The server won't start if `config/event.yaml` is missing, a PIN is still `CHANGE-ME` or blank, the control PIN is the same as the ref or emcee PIN, or `display.red_side` isn't `left` or `right`.
 
 ### Live settings: `/control` → Setup
@@ -256,7 +256,7 @@ starting point; a Setup value wins over it, and **Use event.yaml** puts one back
 | **Field system (bioarena)** | the field's IP and UDP port; shows this laptop's IP to enter in the field's counter setting |
 | **Cameras** | per hub: camera (USB index, or a network camera / video file), the outline drawn on its live picture, and the drop-test calibration ([Hub cameras from Setup](#hub-cameras-from-setup)) |
 | **Vision & calibration** | per hub: status, counts per ball, and a **Calibrate** button (for counters other than the built-in colour one) |
-| **PINs** | scorekeeper, ref, emcee; **Random new PINs**. A changed PIN logs out every device using it |
+| **PINs** | Control, ref, emcee, scorer (REEFSCAPE); **Random new PINs**. A changed PIN logs out every device using it |
 
 They're stored in SQLite (`kv` key `settings`) and survive restarts and **Wipe everything**. After 10 wrong
 PINs in a minute, logins wait out the rest of that minute.
@@ -281,7 +281,7 @@ isn't changed (fix a match in review if needed).
 | | `quals_after_lunch`, `day_end` | `true`: match times skip the lunch break and quals continue after it until `day_end` (default 17:00), for an event that's only quals or has playoffs later. Default `false`. The Schedule tab can switch this per schedule |
 | `display` | `red_side` | `left` or `right` (default `right`): which side of every page red is drawn on. Screen order only. `/control` → Setup → **Field sides** overrides it live. Older configs without this key get `right`; earlier versions always drew red on the left, so set `left` to keep that |
 | `server` | `port` | Default 8000. Don't change it after phones have saved the pages |
-| | `pins.control / ref / emcee` | Generated by `fms.init`. Give each one only to that role: anyone on the WiFi can load the pages |
+| | `pins.control / ref / emcee / scorer` | Generated by `fms.init` (`scorer` may be blank: no `/score` logins). Give each one only to that role: anyone on the WiFi can load the pages |
 | | `vision_key` | Shared secret between the FMS and vision. Vision reads it from this file, so you don't copy it anywhere |
 | `tba` | `enabled` | Off while rehearsing (see [TBA](#the-blue-alliance)) |
 | | `send_score_breakdown` | Off by default; totals-only is always accepted |
@@ -346,7 +346,7 @@ In `--preview`, press `q` in a camera window to quit vision.
 
 ## Phones and networking
 
-Everyone joins the **venue WiFi**: the scorekeeper laptop, ref phones and the emcee phone. Phones open the laptop's address:
+Everyone joins the **venue WiFi**: the Control laptop, ref phones and the emcee phone. Phones open the laptop's address:
 
 | OS | Find the laptop's IP |
 |---|---|
@@ -354,7 +354,7 @@ Everyone joins the **venue WiFi**: the scorekeeper laptop, ref phones and the em
 | Windows | `ipconfig` → "IPv4 Address" of the WiFi adapter |
 | Linux | `hostname -I` |
 
-Then on each phone, open `http://<ip>:8000/ref` (or `/emcee`) and choose Share → **Add to Home Screen**. It opens like an app.
+Then on each phone, open `http://<ip>:8000/ref` (or `/emcee`, or `/score` for REEFSCAPE scorers) and choose Share → **Add to Home Screen**. It opens like an app.
 
 - **`localhost` / `127.0.0.1` only works on the laptop itself.** On a phone it means the phone.
 - **Type `http://` and `:8000`.** Some phone browsers try `https://` otherwise, and that fails.
@@ -407,7 +407,7 @@ The schedule locks once any qual match has started.
 
 ## Running a match
 
-### Scorekeeper (`/control` → Match)
+### Control (`/control` → Match)
 
 1. **Select** the match. It auto-advances to the next one after each commit.
 2. **Start match** exactly on the field countdown.
@@ -448,7 +448,7 @@ alliance, and nothing about the data, scoring or TBA changes.
 - The big buttons are **Red fouled: Minor / Major** and **Blue fouled: Minor / Major**. Points go to the *other* alliance (minor 5, major 15 by default).
 - After a tap you can tag the team that fouled, or skip.
 - **⇄ Flip sides** mirrors the buttons on this phone only, for a ref on the far side of the field.
-- Refs can remove their own entries until the match is committed. The scorekeeper can remove any.
+- Refs can remove their own entries until the match is committed. Control can remove any.
 
 ### Review and commit (`/control`)
 
@@ -479,12 +479,27 @@ Full-screen scoreboard for a TV, or add it as a **Browser Source** in OBS for th
 ### REEFSCAPE events
 
 Pick REEFSCAPE (2025) when you create the event. It has no hubs, so there's no vision: the launch command starts
-only the FMS, and the scorekeeper types the scores in `/control` → Match → Score review after each match.
+only the FMS. **Scorers** count each alliance live on `/score` while the match runs; Control checks the totals in
+`/control` → Match → Score review (and can type any count there) and commits.
+
+#### Scorers (`/score`)
+
+- Log in with the **Scorer PIN** (website events get one; set or change it in `/control` → Setup → PINs, blank = off).
+  Control's PIN also works.
+- Pick **Red**, **Blue** or **Both**. Each alliance has big buttons for Coral L4, L3, L2, L1, Processor and Net: tap
+  to add one, **−** to take one off. Each tap adds to the count, so any number of scorers can share an alliance
+  without overwriting each other.
+- Taps count toward **Auto** until teleop starts (the 3 s pause still counts as auto), then **Teleop**. Tap the other
+  one to override; it follows the clock again when the clock reaches the next period. **Undo** takes back this
+  phone's last tap.
+- **Robots**: each robot's Leave and its barge result.
+- Scorers can count once Control starts the match, and keep fixing counts in review until Control commits.
+  They can't start, reset or commit.
 
 - **Per alliance:** coral on L1 (trough) to L4 and algae in the processor and net, each split into Auto and Teleop
   (coral scored in auto goes in Auto, the rest in Teleop). **Per robot:** Leave, and No barge / Park / Shallow cage / Deep cage.
 - Refs log fouls from `/ref` as usual. The emcee page shows only the clock and the scores, and the field display drops the hub indicators.
-- Live scores show only what's been typed so far, so they stay near 0 during the match.
+- The display's live score is whatever the scorers have counted so far.
 - Timeline: Auto 15 s → 3 s pause → Teleop 2:15 (the last 20 s labelled Endgame).
 - Points: Leave 3. Coral in auto L1–L4 3/4/6/7, in teleop 2/3/4/5. Processor 6, net 4. Park 2, shallow 6, deep 12.
   Minor foul 2, major 6.
@@ -751,7 +766,7 @@ fake fuel. `feeds: []` in the mock config turns that off.
 **Watchtower follows the field's call.** The field's replies (match state and which hub is lit)
 are relayed to the FMS. As soon as a shift shows one hub dark, the FMS sets and locks the auto
 result to match what the lights showed, even if its own count disagreed (logged as `[field]`).
-The scorekeeper can still override it afterwards. `/control` shows a **field** pill (hover for
+Control can still override it afterwards. `/control` shows a **field** pill (hover for
 each feed's state).
 
 #### Setting up a bioarena field
@@ -796,7 +811,7 @@ the ports don't match; or the WiFi isolates clients (then phones can't load `/re
 **If vision goes down mid-event:** in Counted mode bioarena won't start a match while the counter
 is offline. Switch bioarena's auto winner to Random (or have its operator pick a side) to keep
 running. Watchtower can't see bioarena's lights without vision (the replies come through it), so
-the emcee or scorekeeper sets Watchtower's auto result by hand to match the lights.
+the emcee or Control sets Watchtower's auto result by hand to match the lights.
 
 WiFi usually adds a few ms with occasional spikes; bioarena's `OFFLINE` badge and latency figure
 show it.
@@ -896,7 +911,7 @@ Test this on one match early, and check the timestamp lands where you expect.
 - **Past matches:** `/control` → Results lists every played match. Click one for its full breakdown: per-period fuel (with the vision count where it was overridden), tower, fouls, RP and video. Viewing doesn't change the current match or the field display. **Open in Match tab** brings it up for editing or reopening.
 - **Results CSV:** `/control` → Schedule → **Download results CSV**, which has per-period fuel, tower, fouls and RP for every match. Grab one at lunch and at the end of the day.
 - **Backup:** copy `data/fms.sqlite3` while the server is stopped.
-- **Wipe from the UI:** `/control` → Setup → Wipe data asks for the scorekeeper PIN again and refuses while a match is running. It always saves a copy to `data/backups/` first.
+- **Wipe from the UI:** `/control` → Setup → Wipe data asks for the Control PIN again and refuses while a match is running. It always saves a copy to `data/backups/` first.
   - **Wipe playoffs** removes alliances, the live selection and every playoff match (and their fouls and unsent TBA writes). Quals are kept.
   - **Wipe everything** removes the schedule, results, fuel, fouls, the TBA queue and settings like the webcast and the Field sides choice (it goes back to `event.yaml`). Logins stay valid.
   - Neither one deletes anything already sent to TBA.
@@ -1009,7 +1024,7 @@ For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a ma
 
 **Not implemented**
 - Yellow and red cards, DQs, playoff backup robots.
-- FRC's exact ranking and playoff tiebreakers. Rankings use the sort described above; playoff ties are decided by the scorekeeper.
+- FRC's exact ranking and playoff tiebreakers. Rankings use the sort described above; playoff ties are decided by Control.
 - TBA `score_breakdown`: off by default, because TBA validates per-season keys.
 - Automatic robot enable/disable. This system doesn't talk to driver stations.
 

@@ -3,6 +3,17 @@
 Versions are git tags. v0.x were alphas built toward our first scrimmage; v1 is the build that ran the
 10th Street Showdown (2026-10-10); v2 is the website revamp.
 
+## v2.2.0: live REEFSCAPE scorers
+
+- **Scorer page (`/score`)** for REEFSCAPE: scorers on their phones tap coral (L1 to L4), processor and net for one
+  alliance or both while the match runs, plus each robot's Leave and Barge. Taps add to the count, so several
+  scorers can share an alliance; taps go to Auto until teleop starts, then Teleop (overridable), with Undo. The
+  field display's score updates live. Control still reviews and commits.
+- New **Scorer PIN** (`server.pins.scorer`). Website REEFSCAPE events and `fms.init` generate one; an older
+  event.yaml without it still starts, with scorer logins off until Setup -> PINs sets one.
+- **Scorekeeper is now Control** everywhere it names the `/control` page or its PIN (station list, Setup, the
+  website, the launch banner), so it can't be mixed up with Scorer.
+
 ## v2.1.0: REEFSCAPE
 
 - **REEFSCAPE (2025) can be picked** when you create an event. It's scored by hand: after each match the

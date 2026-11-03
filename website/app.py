@@ -190,13 +190,13 @@ def commands(ev):
 
 def event_public(ev, owner=False):
     st = json.loads(ev["status"] or "null")
-    out = {"slug": ev["slug"], "name": full_cfg(ev)["event"]["name"], "last_seen": ev["last_seen"],
+    cfg = full_cfg(ev)
+    out = {"slug": ev["slug"], "name": cfg["event"]["name"], "game": cfg["event"]["game"], "last_seen": ev["last_seen"],
            "online": bool(ev["last_seen"] and time.time() - ev["last_seen"] < 45),
            "lan_urls": (st or {}).get("lan_urls") or [], "match": (st or {}).get("match"),
            "match_status": (st or {}).get("match_status"), "played": (st or {}).get("played")}
     if owner:
-        cfg = full_cfg(ev)
-        out.update(commands=commands(ev), settings=settings.public(cfg, json.loads(ev["settings"])), game=cfg["event"]["game"],
+        out.update(commands=commands(ev), settings=settings.public(cfg, json.loads(ev["settings"])),
                    created=ev["created"], vision=(st or {}).get("vision"), url=f"{SITE}/e/{ev['slug']}")
     return out
 
@@ -230,14 +230,15 @@ def create_event(body: dict = Body(...), wt: str = Cookie(None)):
         raise HTTPException(400, str(e))
     if "event.name" not in c:
         raise HTTPException(400, "Give the event a name")
+    roles = ("control", "ref", "emcee") + (("scorer",) if game == "reefscape" else ())   # scorer: /score, live counts
     pins = []
-    while len(pins) < 3:
+    while len(pins) < len(roles):
         p = f"{secrets.randbelow(10**6):06d}"
         if p not in pins:
             pins.append(p)
     base = {"event": {**{k.split(".", 1)[1]: v for k, v in c.items()}, "game": game},
             "server": {"port": 8000, "db": "data/fms.sqlite3",
-                       "pins": dict(zip(("control", "ref", "emcee"), pins)),
+                       "pins": dict(zip(roles, pins)),
                        "vision_key": secrets.token_urlsafe(18)},
             "tba": {"enabled": False}}
     slug = slugify(c["event.name"])

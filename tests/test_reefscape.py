@@ -175,3 +175,73 @@ def test_hand_scoring_api(tmp_path, monkeypatch):
     assert {"team_key": "frc101", "Avg Auto": 25, "Avg Barge": 20}.items() <= body["rankings"][0].items()
     flat = _flat(srv.store.match("qm1")["breakdown"]["red"])
     assert (flat["totalPoints"], flat["autoCoralPoints"], flat["endGameBargePoints"], flat["coralBonusAchieved"]) == (130, 10, 20, True)
+
+
+def test_scorer_pin_is_optional_and_distinct(tmp_path, monkeypatch):
+    import yaml
+    from fms import config
+    _, path = _reef_server(tmp_path, monkeypatch)
+    ev = yaml.safe_load(path.read_text())
+    del ev["server"]["pins"]["scorer"]                                 # an event.yaml from before /score
+    path.write_text(yaml.safe_dump(ev))
+    assert config.load(str(path))["server"]["pins"]["scorer"] == ""
+    ev["server"]["pins"]["scorer"] = ev["server"]["pins"]["control"]
+    path.write_text(yaml.safe_dump(ev))
+    with pytest.raises(SystemExit, match="must differ from the ref, emcee and scorer"):
+        config.load(str(path))
+    ev["server"]["pins"]["scorer"] = "CHANGE-ME"
+    path.write_text(yaml.safe_dump(ev))
+    with pytest.raises(SystemExit, match=r"server.pins \(scorer\)"):
+        config.load(str(path))
+
+
+def test_scorer_counts_live(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    srv, _ = _reef_server(tmp_path, monkeypatch)
+    c = TestClient(srv.app)
+    ctl = {"X-FMS-Token": srv.token_for("control")}
+    pins = srv.CFG["server"]["pins"]
+    assert c.get("/score").status_code == 200
+    j = c.post("/api/login", json={"role": "scorer", "pin": pins["scorer"]}).json()
+    sco, ref = {"X-FMS-Token": j["token"]}, {"X-FMS-Token": srv.token_for("ref")}
+    csv = "1,101,102,103,104,105,106\n2,101,102,103,104,105,106"
+    c.post("/api/schedule/save", json={"matches": c.post("/api/schedule/import", json={"csv": csv}, headers=ctl).json()["matches"]},
+           headers=ctl)
+    tap = lambda a, item, period, d, h=sco, key="qm1": c.post(
+        "/api/match/tally", json={"key": key, "alliance": a, "item": item, "period": period, "delta": d}, headers=h)
+    assert tap("red", "L4", "auto", 1).status_code == 409                       # not started yet
+    assert c.post("/api/match/robot", json={"key": "qm1", "alliance": "red", "idx": 0, "leave": True}, headers=sco).status_code == 409
+    c.post("/api/match/start", json={"key": "qm1"}, headers=ctl)
+
+    assert tap("red", "L4", "auto", 1).json()["value"] == 1
+    assert tap("red", "L4", "auto", 1).json() == {"ok": True, "item": "auto_L4", "value": 2}   # a second scorer: adds, never overwrites
+    assert tap("red", "L4", "teleop", 1).json()["value"] == 1
+    assert tap("blue", "net", "teleop", -1).json()["value"] == 0                # floors at 0
+    for d in (1, 1, -1):
+        r = tap("blue", "net", "teleop", d)
+    assert r.json()["value"] == 1
+    assert tap("blue", "processor", "auto", 1, h=ctl).status_code == 200        # Control can tap too
+    assert c.post("/api/match/robot", json={"key": "qm1", "alliance": "red", "idx": 0, "leave": True, "barge": "deep"},
+                  headers=sco).status_code == 200
+    for bad in ({"item": "L5"}, {"period": "endgame"}, {"delta": 2}, {"alliance": "green"}):
+        body = {"key": "qm1", "alliance": "red", "item": "L1", "period": "auto", "delta": 1, **bad}
+        assert c.post("/api/match/tally", json=body, headers=sco).status_code == 400, bad
+    assert tap("red", "L1", "auto", 1, h=ref).status_code == 401                # refs log fouls, not scores
+    # Scorers can't do Control's jobs.
+    assert c.post("/api/match/count", json={"key": "qm1", "alliance": "red", "item": "auto_L1", "value": 9}, headers=sco).status_code == 401
+    assert c.post("/api/match/commit", json={"key": "qm1"}, headers=sco).status_code == 401
+    assert c.post("/api/match/reset", json={"key": "qm1"}, headers=sco).status_code == 401
+
+    # Red: auto L4 2 x 7 = 14, teleop L4 1 x 5 = 5, leave 3, deep 12 -> 34. Blue: net 1 x 4 = 4, auto processor 1 x 6 = 6 -> 10.
+    sc = c.get("/api/match/qm1").json()["score"]
+    assert (sc["red"]["auto_points"], sc["red"]["teleop_points"], sc["red"]["total"]) == (17, 17, 34)
+    assert (sc["blue"]["counts"]["teleop_net"], sc["blue"]["auto_points"], sc["blue"]["total"]) == (1, 6, 10)
+
+    srv.store.update_match("qm1", status="review")
+    assert tap("red", "L1", "teleop", 1).json()["value"] == 1                  # scorers can still fix it in review
+    c.post("/api/match/commit", json={"key": "qm1"}, headers=ctl)
+    assert tap("red", "L1", "teleop", 1).status_code == 409                    # committed: read-only
+    assert tap("red", "L1", "teleop", 1, key="qm9").status_code == 404
+
+    pins["scorer"] = ""                                                        # scorer logins off
+    assert c.post("/api/login", json={"role": "scorer", "pin": ""}).status_code == 403

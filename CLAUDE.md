@@ -17,8 +17,8 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
   `# >>> watchtower-site` markers). `launch.py` runs one event folder (`~/Watchtower/events/<slug>`) on a laptop:
   the FMS plus vision on a generated `config/vision.cameras.yaml` (counter `colour`, hubs empty until
   Setup -> Cameras picks them; `--mock`, `--no-vision`, `--vision-config FILE`).
-- Phone pages (`fms/static/`): `/ref` (fouls), `/emcee` (auto result + hub light cues), `/control`
-  (scorekeeper), `/display` (field TV / OBS overlay; also the live alliance selection screen). Vanilla JS,
+- Phone pages (`fms/static/`): `/ref` (fouls), `/score` (REEFSCAPE scorers: live counts), `/emcee` (auto result +
+  hub light cues), `/control` (labelled "Control" in every UI, never "Scorekeeper": it would read like Scorer), `/display` (field TV / OBS overlay; also the live alliance selection screen). Vanilla JS,
   no build step, no CDN (the venue may have no internet). Live state over one websocket `/ws`.
   Shared look in `style.css`; layouts must work at 390 px wide with no horizontal page scroll.
 
@@ -42,7 +42,8 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
   to the browser via `/api/vision/image/...` with the control token. Saving a fitted size resets `vision.scale`
   for that hub to 1.
 - `fms/config.py` refuses to start on a missing config, `CHANGE-ME`/blank PINs, or a control PIN shared
-  with ref/emcee. Vision takes `vision_key` from `event.yaml` when its own config omits it, and `feeds:` from
+  with ref/emcee/scorer. `pins.scorer` alone may be blank (older event.yaml files lack it): `/api/login` then refuses
+  that role, since an empty PIN would otherwise match an empty entry. Vision takes `vision_key` from `event.yaml` when its own config omits it, and `feeds:` from
   `vision.yaml` when its config has no `feeds` key (so mock runs feed bioarena too; `feeds: []` = off) (`vision/vconfig.py`).
 - Tests and docs use generic teams and event keys, never a real event's.
 
@@ -54,8 +55,10 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
   server picks `RULES` (build_periods, period_names, TIEBREAKS) from it once at startup. `config.load` refuses a
   `game:` key the event's game doesn't have (a REBUILT section left in a REEFSCAPE event.yaml would win silently).
 - REEFSCAPE has no vision, hubs, fuel, `first_inactive` or field feed: launch.py starts no counter, and the REBUILT-only
-  endpoints (`adjust`, `climb`, `first_inactive`) answer 400. Its match `adjust` holds the scorekeeper's counts
-  (`{alliance: {item: n}}`, items `reefscape.ITEMS`, `POST /api/match/count`) and `climbs` holds each robot's
+  endpoints (`adjust`, `climb`, `first_inactive`) answer 400. Its match `adjust` holds the counts
+  (`{alliance: {item: n}}`, items `reefscape.ITEMS`): scorers add +/-1 with `POST /api/match/tally` (never set, so
+  several scorers can share an alliance; floors at 0; only once the match runs, until commit), Control can set one
+  with `POST /api/match/count`. `climbs` holds each robot's
   `{leave, barge}` (`POST /api/match/robot`). Pages branch on state `game_id`; rankings columns come from `rank_cols`.
 - `python -m pytest -q` must pass after every change. Tests use hand-computed expected values; add a
   hand-computed test for any scoring/timeline change. Zero tolerance for arithmetic errors.
@@ -64,7 +67,7 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
 - Shift scoring follows the LOCKED `first_inactive` (what the hub lights actually showed), not a recount of auto.
   Alliance with MORE auto fuel has its hub INACTIVE in Shift 1; tie = coin flip.
 - Manual review overrides are stored as per-period `adjust` deltas on top of vision; vision data stays intact.
-- Committed matches are read-only until reopened. Playoff matches cannot commit while tied (scorekeeper picks).
+- Committed matches are read-only until reopened. Playoff matches cannot commit while tied (Control picks).
 - Every TBA write goes through the SQLite outbox (`fms/tba.py`); never call TBA directly from a request handler.
   Takedowns (`matches/delete`, `matches/delete_all`) go through it too.
 - Alliance screen order is presentation only. Pages draw every red/blue pair in `FMS.sides()` order
@@ -124,7 +127,7 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
   to what bioarena's lights showed.
 
 ## Event constraints
-- Everyone (refs, emcee, scorekeeper) is on the venue WiFi; no hotspot. Some networks isolate clients;
+- Everyone (refs, scorers, emcee, Control) is on the venue WiFi; no hotspot. Some networks isolate clients;
   test phone -> Mac reachability at the venue. The Mac's IP changes per network.
 - Count feeds to a field system (e.g. bioarena) normally run over the same venue WiFi, no wired link. The
   field accepts one source address, so its counter setting must hold the Mac's current IP, and `feeds:`

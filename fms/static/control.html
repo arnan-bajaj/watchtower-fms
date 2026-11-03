@@ -220,12 +220,13 @@
         <div class="muted small" style="margin-top:.4rem"><b>Counts per ball</b>: if one ball counts as 8, set 8 and each hub's count is divided by it. Or press <b>Calibrate</b>, drop some balls in that hub, and enter how many. Cameras and outlines: <b>Cameras</b> at the top of Setup.</div></div>
       <div class="panel"><h2>PINs</h2>
         <div class="form">
-          <label class="field">Scorekeeper <input id="sp_control" data-k="server.pins.control" inputmode="numeric" autocomplete="off"></label>
+          <label class="field">Control <input id="sp_control" data-k="server.pins.control" inputmode="numeric" autocomplete="off"></label>
           <label class="field">Ref <input id="sp_ref" data-k="server.pins.ref" inputmode="numeric" autocomplete="off"></label>
           <label class="field">Emcee <input id="sp_emcee" data-k="server.pins.emcee" inputmode="numeric" autocomplete="off"></label>
+          <label class="field" id="sp_scorer_f">Scorer <input id="sp_scorer" data-k="server.pins.scorer" inputmode="numeric" autocomplete="off" placeholder="off"></label>
         </div>
         <div class="row" style="margin-top:.6rem"><button class="primary" data-save="pins">Save PINs</button><button class="ghost small" id="bpinrand">Random new PINs</button></div>
-        <div class="muted small" style="margin-top:.4rem">4–12 digits; the scorekeeper's must differ from the others. Changing a PIN logs out every device using it.</div></div>
+        <div class="muted small" style="margin-top:.4rem">4–12 digits; Control's must differ from the others. Changing a PIN logs out every device using it.<span data-game="reefscape"> Scorers (/score) count live; leave theirs blank to turn scorer logins off.</span></div></div>
       <div class="panel"><h2>Phone pages</h2><table class="kv" id="urls"></table>
         <div class="muted small" style="margin-top:.5rem">Phones must be on the same WiFi as this computer. Open the page, then Share → Add to Home Screen.</div></div>
       <div class="panel"><h2>Field sides</h2>
@@ -254,7 +255,7 @@
     <div class="panel"><h2>Wipe data</h2>
       <div class="muted small">A backup of the database is saved to <code>data/backups/</code> first. Anything already sent to TBA stays on TBA. Wiping deletes it here only.</div>
       <div class="row" style="margin-top:.6rem">
-        <input id="wpin" type="password" inputmode="numeric" placeholder="Scorekeeper PIN" autocomplete="off" style="width:10rem">
+        <input id="wpin" type="password" inputmode="numeric" placeholder="Control PIN" autocomplete="off" style="width:10rem">
         <button class="ghost danger" data-wipe="playoffs">Wipe playoffs</button>
         <button class="danger" data-wipe="all">Wipe everything</button>
       </div>
@@ -460,7 +461,7 @@ function renderReview(s) {
   box.querySelectorAll("[data-fdel]").forEach((b) => b.onclick = () => api(`/api/fouls/${b.dataset.fdel}`, { delete: true }));
   box.querySelectorAll("[data-fadd]").forEach((b) => b.onclick = () => {
     const [a, k] = b.dataset.fadd.split(":");
-    api("/api/fouls", { key: cur.key, committed_by: a, kind: k, ref: "scorekeeper" });
+    api("/api/fouls", { key: cur.key, committed_by: a, kind: k, ref: "control" });
   });
   const wo = $("#wo"); if (wo) wo.onchange = () => api("/api/match/winner", { key: cur.key, winner: wo.value || null });
   // Save on change too: clicking the button blurs the box, and the deferred re-render that
@@ -685,7 +686,7 @@ async function loadResult(key) {
         ${row("Tower points", "tower_points")}${row("Penalty points drawn", "foul_points")}`}
         <tr><td><b>Total</b></td>${bySide((a) => `<td class="r num"><b>${sc[a].total}</b></td>`)}</tr>
         ${playoff ? "" : `<tr><td>Bonus RP</td>${bySide((a) => `<td class="r small">${bonus(a)}</td>`)}</tr>${row("Ranking points", "rp")}`}</table>
-        <div class="muted small" style="margin-top:.4rem">${reef ? "" : `Hub off first: ${d.first_inactive || "–"}${d.fi_coin ? " (coin flip)" : ""} · start offset ${(d.offset || 0).toFixed(1)} s`}${d.winner_override ? `${reef ? "" : " · "}winner picked by scorekeeper` : ""}</div>
+        <div class="muted small" style="margin-top:.4rem">${reef ? "" : `Hub off first: ${d.first_inactive || "–"}${d.fi_coin ? " (coin flip)" : ""} · start offset ${(d.offset || 0).toFixed(1)} s`}${d.winner_override ? `${reef ? "" : " · "}winner picked by Control` : ""}</div>
         <h2 style="margin-top:1rem">Fouls</h2><table>${fouls}</table>
         ${d.video && d.video !== "none" ? `<div style="margin-top:.6rem">Video: <a href="https://youtu.be/${esc(d.video)}" target="_blank" rel="noopener">${esc(d.video)}</a></div>` : ""}</div>
     </div>`;
@@ -799,7 +800,7 @@ $("#redside").onchange = (e) => api("/api/red_side", { side: e.target.value });
 $("#bredside").onclick = () => api("/api/red_side", { side: null });
 document.querySelectorAll("[data-wipe]").forEach((b) => b.onclick = async () => {
   const scope = b.dataset.wipe, pin = $("#wpin").value;
-  if (!pin) return FMS.toast("Enter the scorekeeper PIN first", true);
+  if (!pin) return FMS.toast("Enter the Control PIN first", true);
   const what = scope === "all" ? "EVERYTHING (schedule, results, fuel, fouls, TBA queue)" : "alliances, alliance selection and all playoff matches";
   if (!confirm(`Wipe ${what}? A backup is saved first.`)) return;
   if (scope === "all" && prompt('Type WIPE to confirm') !== "WIPE") return;
@@ -841,7 +842,7 @@ async function saveSettings(changes, msg) {
   renderCams(true);
 }
 const SAVE_GROUPS = { event: ["event.name", "event.date", "event.utc_offset_hours", "event.tba_event_key", "event.qual_start", "event.cycle_min", "event.teams"],
-                      pins: ["server.pins.control", "server.pins.ref", "server.pins.emcee"],
+                      pins: ["server.pins.control", "server.pins.ref", "server.pins.emcee", "server.pins.scorer"],
                       tba: ["tba.auth_id", "tba.enabled"] };
 document.querySelectorAll("[data-save]").forEach((b) => b.onclick = () => {
   const g = b.dataset.save, changes = {};
@@ -859,7 +860,7 @@ document.querySelectorAll("[data-save]").forEach((b) => b.onclick = () => {
 });
 $("#bpinrand").onclick = () => {
   const used = new Set();
-  ["control", "ref", "emcee"].forEach((r) => {
+  ["control", "ref", "emcee", ...(REEF() ? ["scorer"] : [])].forEach((r) => {
     let p; do { p = String(Math.floor(Math.random() * 1e6)).padStart(6, "0"); } while (used.has(p));
     used.add(p); $("#sp_" + r).value = p;
   });
@@ -1060,7 +1061,7 @@ window.addEventListener("resize", () => sides().forEach(drawCam));
 function renderSetup(s) {
   const local = /^(localhost|127\.)/.test(location.hostname);
   const base = local && LAN.length ? LAN[0] : location.origin;
-  $("#urls").innerHTML = ["ref", "emcee", "display", "control"].map((p) => `<tr><td>${p}</td><td><a href="/${p}">${esc(base)}/${p}</a></td></tr>`).join("")
+  $("#urls").innerHTML = ["ref", ...(REEF() ? ["score"] : []), "emcee", "display", "control"].map((p) => `<tr><td>${p}</td><td><a href="/${p}">${esc(base)}/${p}</a></td></tr>`).join("")
     + (CLOUD && CLOUD.url ? `<tr><td>website</td><td>${CLOUD.linked ? `<span class="pill ok">synced</span>` : `<span class="pill bad">${esc(CLOUD.error || "not synced yet")}</span>`} <span class="small muted">${esc(CLOUD.url)}</span></td></tr>` : "");
   const fd = s.feeds || [], cfgFeeds = sv("field.feeds");
   $("#ftable").innerHTML = (cfgFeeds === null ? `<tr><td>Set by</td><td>vision's config file (feeds:)</td></tr>` : "")
@@ -1113,6 +1114,7 @@ FMS.on((s) => {
   if (first) {
     const reef = REEF();     // the game is fixed for the event: show only its panels
     ["#campanel", "#fieldpanel", "#visionpanel", "#offpanel", "#autobox"].forEach((id) => $(id).hidden = reef);
+    $("#sp_scorer_f").hidden = !reef;
     document.querySelectorAll("[data-game]").forEach((el) => el.hidden = el.dataset.game !== s.game_id);
     $("#sstart").value = s.event.qual_start; $("#scycle").value = s.event.cycle_min; first = false;
     $("#rtcycle").value = s.event.cycle_min;

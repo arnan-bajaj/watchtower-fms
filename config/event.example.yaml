@@ -32,6 +32,7 @@ server:
     control: "CHANGE-ME"
     ref: "CHANGE-ME"
     emcee: "CHANGE-ME"
+    scorer: "CHANGE-ME"         # REEFSCAPE live scorers (/score); "" = no scorer logins
   vision_key: "CHANGE-ME"       # shared with the vision process (it reads this file)
 
 # ---------------------------------------------------------------- TBA trusted API

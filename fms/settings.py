@@ -99,6 +99,11 @@ def _pin(x):
     return x
 
 
+def _pin_or_off(x):
+    """The scorer PIN may be blank: nobody can log in as scorer."""
+    return "" if x in (None, "") or str(x).strip() == "" else _pin(x)
+
+
 def _host(x):
     x = _str(253)(x)
     try:
@@ -180,6 +185,7 @@ FIELDS = {
     "server.pins.control": _pin,
     "server.pins.ref": _pin,
     "server.pins.emcee": _pin,
+    "server.pins.scorer": _pin_or_off,
     "field.feeds": _feeds,
     "vision.scale.red": _num(0.05, 100),
     "vision.scale.blue": _num(0.05, 100),

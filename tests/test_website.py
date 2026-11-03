@@ -39,19 +39,22 @@ def test_signup_login_and_ownership(site):
     assert e["slug"] == "spring-scrimmage" and e["settings"]["event.teams"]["value"] == [101, 102, 103]
     pins = [e["settings"][f"server.pins.{r}"]["value"] for r in ("control", "ref", "emcee")]
     assert len(set(pins)) == 3 and all(len(p) == 6 for p in pins)
+    assert e["settings"]["server.pins.scorer"]["value"] == ""                 # REBUILT has no /score logins
     assert a.post("/api/events", json={"name": "Spring Scrimmage"}).json()["slug"] == "spring-scrimmage-2"
     assert a.post("/api/events", json={"name": ""}).status_code == 400
     assert json.loads(site.event_row("spring-scrimmage")["base"])["event"]["game"] == "rebuilt"   # the default
     assert a.post("/api/events", json={"name": "Next Year", "game": "biocore"}).status_code == 400   # not yet
     r = a.post("/api/events", json={"name": "Last Year", "game": "REEFSCAPE"}).json()           # scored by hand
     assert r["game"] == "reefscape" and json.loads(site.event_row(r["slug"])["base"])["event"]["game"] == "reefscape"
+    pins = [r["settings"][f"server.pins.{x}"]["value"] for x in ("control", "ref", "emcee", "scorer")]
+    assert len(set(pins)) == 4 and all(len(p) == 6 for p in pins)              # REEFSCAPE gets a scorer PIN
     assert a.post("/api/events", json={"name": "Odd", "game": "chess"}).status_code == 400
 
     b = _user(site, "b@team.org")
     assert b.get("/api/events/spring-scrimmage").status_code == 404           # not theirs
     pub = b.get("/api/public/spring-scrimmage").json()
     assert pub["name"] == "Spring Scrimmage!" and "commands" not in pub and "settings" not in pub
-    assert "pins" not in str(pub)
+    assert "pins" not in str(pub) and pub["game"] == "rebuilt"            # the phone links need the game
 
 
 def test_launch_script_event_yaml_and_sync(site):

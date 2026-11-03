@@ -282,7 +282,7 @@ def test_init_creates_configs_with_random_pins(tmp_path):
     assert sorted(r["created"]) == [str(d / "event.yaml"), str(d / "vision.yaml")]
     ev = yaml.safe_load((d / "event.yaml").read_text())
     pins = ev["server"]["pins"]
-    assert pins == r["pins"] and len(set(pins.values())) == 3
+    assert pins == r["pins"] and len(set(pins.values())) == 4 and set(pins) == {"control", "ref", "emcee", "scorer"}
     assert all(len(p) == 6 and p.isdigit() for p in pins.values())
     assert config.PLACEHOLDER not in (d / "event.yaml").read_text()
     assert ev["tba"]["enabled"] is False and ev["event"]["teams"] == []
@@ -304,7 +304,7 @@ def test_config_refuses_placeholder_and_shared_pins(tmp_path):
     with pytest.raises(SystemExit, match="control, ref, emcee"):
         config.load(str(d / "event.yaml"))
     text = (d / "event.example.yaml").read_text()
-    for role, pin in (("control", "1234"), ("ref", "1234"), ("emcee", "5678")):
+    for role, pin in (("control", "1234"), ("ref", "1234"), ("emcee", "5678"), ("scorer", "8765")):
         text = text.replace(f'    {role}: "CHANGE-ME"', f'    {role}: "{pin}"')
     (d / "event.yaml").write_text(text)
     with pytest.raises(SystemExit, match="must differ"):

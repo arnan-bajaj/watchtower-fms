@@ -30,16 +30,21 @@
   <div class="stations">
     <a class="station" href="/ref"><span class="ic" style="background:var(--red-soft);color:var(--red)">!</span>
       <span><b>Referee</b><span class="d">Log minor and major fouls</span></span></a>
+    <a class="station" href="/score" id="scorer" hidden><span class="ic" style="background:var(--ok-soft);color:var(--ok)">+</span>
+      <span><b>Scorer</b><span class="d">Count coral, algae, LEAVE and BARGE live</span></span></a>
     <a class="station" href="/emcee"><span class="ic" style="background:var(--fuel-soft);color:#8a6d00">◉</span>
       <span><b>Emcee</b><span class="d">Auto result and hub light cues</span></span></a>
     <a class="station" href="/display"><span class="ic" style="background:var(--blue-soft);color:var(--blue)">▢</span>
       <span><b>Field display</b><span class="d">Audience screen and stream overlay</span></span></a>
     <a class="station main" href="/control"><span class="ic" style="background:rgba(255,255,255,.12)">≡</span>
-      <span><b>Scorekeeper</b><span class="d">Run matches, review scores, playoffs</span></span></a>
+      <span><b>Control</b><span class="d">Run matches, review scores, playoffs</span></span></a>
   </div>
   <p class="hint" style="text-align:center;margin-top:1.2rem">On a phone: open your page, then Share → Add to Home Screen.</p>
 </main>
 <script>
-fetch("/api/state").then((r) => r.json()).then((s) => { document.getElementById("ev").textContent = s.event.name; }).catch(() => {});
+fetch("/api/state").then((r) => r.json()).then((s) => {
+  document.getElementById("ev").textContent = s.event.name;
+  document.getElementById("scorer").hidden = s.game_id !== "reefscape";
+}).catch(() => {});
 </script>
 </body></html>

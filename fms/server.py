@@ -62,7 +62,7 @@ def token_for(role):
 
 
 def role_of(tok):
-    for r in ("control", "ref", "emcee"):
+    for r in ("control", "ref", "emcee", "scorer"):
         if tok and secrets.compare_digest(tok, token_for(r)):
             return r
     return None
@@ -303,13 +303,14 @@ def index():
     return page("index")
 
 
-for _p in ("control", "ref", "emcee", "display"):
+for _p in ("control", "ref", "emcee", "score", "display"):
     app.add_api_route(f"/{_p}", (lambda n=_p: page(n)), methods=["GET"])
 
 
 @app.get("/manifest/{role}.json")
 def manifest(role: str):
-    names = {"ref": "FMS Ref", "emcee": "FMS Emcee", "control": "FMS Control", "display": "FMS Display"}
+    names = {"ref": "FMS Ref", "emcee": "FMS Emcee", "score": "FMS Scorer", "control": "FMS Control",
+             "display": "FMS Display"}
     return JSONResponse({"name": names.get(role, "FMS"), "short_name": names.get(role, "FMS"),
                          "start_url": f"/{role}", "display": "standalone",
                          "background_color": "#e8e9e4", "theme_color": "#1d2127",
@@ -345,6 +346,8 @@ def login(body: dict = Body(...)):
     if len(_login_fails) >= 10:
         raise HTTPException(429, "Too many wrong PINs. Wait a minute and try again.")
     role, pin = body.get("role"), str(body.get("pin", ""))
+    if role in CFG["server"]["pins"] and not str(CFG["server"]["pins"][role]).strip():
+        raise HTTPException(403, f"No {role} PIN is set. Control sets one in /control -> Setup -> PINs.")
     if role not in CFG["server"]["pins"] or not secrets.compare_digest(pin, str(CFG["server"]["pins"][role])):
         _login_fails.append(now)
         raise HTTPException(401, "Wrong PIN")
@@ -733,7 +736,7 @@ async def first_inactive(body: dict = Body(...), x_fms_token: str = Header(None)
     if a not in game.ALLIANCES:
         raise HTTPException(409, "Auto result not decided yet")
     if role == "emcee" and a != m.get("first_inactive"):
-        raise HTTPException(403, "Only the scorekeeper can override the auto result")
+        raise HTTPException(403, "Only Control can override the auto result")
     store.update_match(m["key"], first_inactive=a, fi_locked=int(bool(body.get("lock", True))))
     mark_dirty()
     return {"ok": True}
@@ -795,7 +798,7 @@ def _reef_only():
 
 @app.post("/api/match/count")
 async def count(body: dict = Body(...), x_fms_token: str = Header(None)):
-    """REEFSCAPE: {"alliance", "item" (reefscape.ITEMS), "value": n} sets one count the scorekeeper typed."""
+    """REEFSCAPE: {"alliance", "item" (reefscape.ITEMS), "value": n} sets one count Control typed."""
     need(x_fms_token)
     _reef_only()
     m = _get(body.get("key"))
@@ -816,13 +819,42 @@ async def count(body: dict = Body(...), x_fms_token: str = Header(None)):
     return {"ok": True}
 
 
+def _scorable(role, m):
+    """REEFSCAPE scoring edits. Scorers (/score) only touch a started match; control can edit any uncommitted one."""
+    _reef_only()
+    _editable(m)
+    if role != "control" and m["status"] not in ("running", "review"):
+        raise HTTPException(409, f"{m['key']} hasn't started yet")
+
+
+@app.post("/api/match/tally")
+async def tally(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """REEFSCAPE live scoring: {"key", "alliance", "item" (L1-L4|processor|net), "period" (auto|teleop), "delta": 1|-1}.
+    Adds to the count instead of setting it, so several scorers can tap the same alliance. Never below 0."""
+    role = need(x_fms_token, "scorer")
+    m = _get(body.get("key"))
+    _scorable(role, m)
+    a, item, period = body.get("alliance"), body.get("item"), body.get("period")
+    if a not in game.ALLIANCES or item not in reefscape.LEVELS + reefscape.ALGAE or period not in ("auto", "teleop"):
+        raise HTTPException(400, "bad alliance/item/period")
+    delta = body.get("delta")
+    if delta not in (1, -1):
+        raise HTTPException(400, "delta must be 1 or -1")
+    k = f"{period}_{item}"
+    c = m.get("adjust") or {}
+    n = max(0, int(c.setdefault(a, {}).get(k, 0) or 0) + delta)
+    c[a][k] = n
+    store.update_match(m["key"], adjust=c)
+    mark_dirty()
+    return {"ok": True, "item": k, "value": n}
+
+
 @app.post("/api/match/robot")
 async def robot(body: dict = Body(...), x_fms_token: str = Header(None)):
     """REEFSCAPE: {"alliance", "idx", "leave": bool, "barge": none|park|shallow|deep} for one robot."""
-    need(x_fms_token)
-    _reef_only()
+    role = need(x_fms_token, "scorer")
     m = _get(body.get("key"))
-    _editable(m)
+    _scorable(role, m)
     a = body.get("alliance")
     if a not in game.ALLIANCES:
         raise HTTPException(400, "bad alliance")
@@ -1110,7 +1142,7 @@ async def set_red_side(body: dict = Body(...), x_fms_token: str = Header(None)):
 async def wipe(body: dict = Body(...), x_fms_token: str = Header(None)):
     need(x_fms_token)
     if str(body.get("pin", "")) != str(CFG["server"]["pins"]["control"]):
-        raise HTTPException(403, "Wrong scorekeeper PIN")
+        raise HTTPException(403, "Wrong Control PIN")
     scope = body.get("scope")
     if scope not in ("all", "playoffs"):
         raise HTTPException(400, "scope must be all or playoffs")

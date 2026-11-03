@@ -1,7 +1,7 @@
 """REEFSCAPE (2025) match timeline + scoring. Pure functions, no I/O.
 
 Every number comes from config -> game: (fms/config.py GAME_RULES["reefscape"], overridable in
-event.yaml). REEFSCAPE has no vision: the scorekeeper types each alliance's counts in review, so
+event.yaml). REEFSCAPE has no vision: scorers tap counts live on /score (Control can type them in review), so
 the match's `adjust` holds the counts themselves ({alliance: {item: n}}) and `climbs` holds each
 robot's LEAVE and BARGE result ({alliance: [{"leave": bool, "barge": "none|park|shallow|deep"}]}).
 """

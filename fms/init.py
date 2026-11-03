@@ -9,7 +9,7 @@ import secrets
 
 from .config import PLACEHOLDER
 
-ROLES = ("control", "ref", "emcee")
+ROLES = ("control", "ref", "emcee", "scorer")
 
 
 def init(config_dir="config"):
@@ -22,7 +22,7 @@ def init(config_dir="config"):
         text = (d / "event.example.yaml").read_text()
         pins = {}
         for role in ROLES:
-            while True:  # distinct, so a ref can't log in as the scorekeeper
+            while True:  # distinct, so a ref can't log in as Control
                 pin = f"{secrets.randbelow(10**6):06d}"
                 if pin not in pins.values():
                     break

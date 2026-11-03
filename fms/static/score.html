@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest/score.json">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<meta name="theme-color" content="#161a1f">
+<link rel="stylesheet" href="/static/style.css">
+<title>FMS Scorer</title>
+<style>
+  .bar #clk { font-size: 1.15rem; font-weight: 800; }
+  .status { display: flex; justify-content: space-between; align-items: center; gap: .6rem; }
+  .status .phase { font-size: 1.05rem; color: var(--ink); }
+  .seg { display: flex; gap: 0; border: 1px solid var(--line-strong); border-radius: var(--r-md); overflow: hidden; }
+  .seg button { flex: 1; border: 0; border-radius: 0; min-height: 44px; font-weight: 700; background: var(--panel); }
+  .seg button + button { border-left: 1px solid var(--line-strong); }
+  .seg button.sel { background: var(--ink); color: #fff; }
+  .seg button[data-pick=red] { color: var(--red); } .seg button[data-pick=blue] { color: var(--blue); }
+  .seg button.sel[data-pick] { color: #fff; }
+  .seg button.sel[data-pick=red] { background: var(--red); } .seg button.sel[data-pick=blue] { background: var(--blue); }
+  .period { display: grid; gap: .5rem; }
+  .period .why { display: flex; justify-content: space-between; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .75rem; }
+  .cols.one { grid-template-columns: minmax(0, 1fr); }
+  .side { border-radius: var(--r-lg); padding: .7rem; border: 1px solid transparent; min-width: 0; }
+  .side.red { background: var(--red-soft); border-color: var(--red-line); }
+  .side.blue { background: var(--blue-soft); border-color: var(--blue-line); }
+  .side .head { display: flex; justify-content: space-between; align-items: baseline; gap: .4rem; }
+  .side .total { font-size: 1.6rem; font-weight: 850; font-variant-numeric: tabular-nums; }
+  .side .teams { font-size: .8rem; margin: .1rem 0 .6rem; opacity: .8; min-height: 1.1em; }
+  .side.red .teams, .side.red h3 { color: var(--red); } .side.blue .teams, .side.blue h3 { color: var(--blue); }
+  .item { display: grid; grid-template-columns: minmax(0, 1fr) 2.6rem; gap: .35rem; margin-bottom: .45rem; }
+  .item:last-child { margin-bottom: 0; }
+  .plus { display: flex; justify-content: space-between; align-items: center; gap: .3rem; min-height: 4.2rem; padding: .4rem .65rem;
+    text-align: left; font-weight: 800; font-size: 1.15rem; border-radius: var(--r-md); box-shadow: 0 2px 0 rgba(0, 0, 0, .18); min-width: 0; }
+  .plus .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .plus .lbl small { display: block; font-size: .72rem; font-weight: 600; opacity: .85; }
+  .plus .n { font-size: 1.7rem; font-variant-numeric: tabular-nums; }
+  .minus { min-height: 4.2rem; padding: 0; font-size: 1.4rem; font-weight: 800; }
+  .plus.hit { filter: brightness(1.25); }
+  .cols.one .plus { min-height: 4.8rem; font-size: 1.3rem; }
+  .cols.one .item { grid-template-columns: minmax(0, 1fr) 4rem; }
+  .robots td { padding: .45rem .35rem; }
+  .robots select { width: 100%; min-width: 0; }
+  .robots button { width: 100%; }
+  .robots button.sel { background: var(--ok); border-color: var(--ok); color: #fff; }
+</style>
+</head><body>
+<div class="bar"><span><span class="conn"></span> <b id="mk">–</b></span><span class="num" id="clk">–:––</span><span class="small" style="opacity:.75">Scorer</span></div>
+<main class="wrap" id="app" hidden>
+  <div class="panel status"><span id="ph" class="phase">–</span><span id="st" class="pill">–</span></div>
+  <div class="panel warnbox" id="note" hidden></div>
+  <div id="live">
+    <div class="panel period">
+      <div class="seg" id="pseg"><button data-period="auto">Auto</button><button data-period="teleop">Teleop</button></div>
+      <div class="why"><span class="small muted" id="pwhy"></span>
+        <span class="row"><button class="ghost small" id="follow" hidden>Follow the clock</button><button class="ghost small" id="undo" disabled>Undo</button></span></div>
+    </div>
+    <div class="row" style="margin-bottom:.6rem">
+      <div class="seg" id="aseg" style="flex:1"></div>
+      <button class="ghost small flip" id="flip">⇄ Flip</button>
+    </div>
+    <div class="cols" id="cols"></div>
+    <div class="panel" id="robots" style="margin-top:1rem"></div>
+  </div>
+</main>
+<script src="/static/common.js"></script>
+<script>
+const { $, esc } = FMS;
+// [item, label when scoring one alliance, label when scoring both (narrow columns)]
+const ITEMS = [["L4", "Coral L4", "L4"], ["L3", "Coral L3", "L3"], ["L2", "Coral L2", "L2"], ["L1", "Coral L1 (trough)", "L1"],
+               ["processor", "Processor", "Proc"], ["net", "Net", "Net"]];
+const BARGE = [["none", "No barge"], ["park", "Park"], ["shallow", "Shallow cage"], ["deep", "Deep cage"]];
+const Cap = (a) => a[0].toUpperCase() + a.slice(1);
+let pick = "both";                    // which alliance(s) this phone scores; per device
+try { pick = localStorage.getItem("fms_score_pick") || "both"; } catch {}
+let manual = null;                    // {period, against}: the scorer's own Auto/Teleop choice until the clock's changes
+let undo = [];                        // this phone's taps on the current match, newest last
+let builtSig = "";
+
+FMS.gate("scorer").then(() => { $("#app").hidden = false; FMS.connect(); });
+FMS.flipToggle($("#flip"));
+
+// Auto until teleop starts (the 3 s gap still counts as auto), teleop after.
+function clockPeriod(cur) {
+  const p = FMS.phase(cur).name;
+  return ["idle", "pre", "auto", "pause"].includes(p) ? "auto" : "teleop";
+}
+function period(cur) {
+  const c = clockPeriod(cur);
+  if (manual && manual.against !== c) manual = null;   // the clock moved on: follow it again
+  return manual ? manual.period : c;
+}
+const alliances = () => pick === "both" ? FMS.sides() : [pick];
+
+function build(s) {
+  const cur = s.current;
+  $("#aseg").innerHTML = [...FMS.sides(), "both"].map((a) =>
+    `<button data-pick="${a}" class="${pick === a ? "sel" : ""}">${a === "both" ? "Both" : Cap(a)}</button>`).join("");
+  $("#aseg").querySelectorAll("[data-pick]").forEach((b) => b.onclick = () => {
+    pick = b.dataset.pick;
+    try { localStorage.setItem("fms_score_pick", pick); } catch {}
+    builtSig = ""; render(FMS.state);
+  });
+  $("#cols").classList.toggle("one", pick !== "both");
+  $("#cols").innerHTML = alliances().map((a) => `<div class="side ${a}" data-side="${a}">
+      <div class="head"><h3>${Cap(a)}</h3><span class="total" data-total="${a}">0</span></div>
+      <div class="teams">${cur ? cur[a].join(" · ") : ""}</div>
+      ${ITEMS.map(([k, long, short]) => [k, pick === "both" ? short : long]).map(([k, label]) => `<div class="item">
+        <button class="plus ${a}" data-a="${a}" data-k="${k}" data-d="1"><span class="lbl">${label}<small data-split="${a}-${k}"></small></span><span class="n" data-n="${a}-${k}">0</span></button>
+        <button class="minus ghost" data-a="${a}" data-k="${k}" data-d="-1" aria-label="${label} minus one">−</button></div>`).join("")}
+    </div>`).join("");
+  $("#cols").querySelectorAll("[data-d]").forEach((b) => b.onclick = () => tap(b));
+  $("#robots").innerHTML = `<h2>Robots</h2>` + alliances().map((a) => `<table class="robots"><tbody>
+      ${(cur ? cur[a] : []).map((t, i) => `<tr><td class="t${a}" style="width:4.2rem"><b>${esc(t)}</b></td>
+        <td style="width:38%"><button class="ghost small" data-leave="${a}-${i}">Leave</button></td>
+        <td><select data-barge="${a}-${i}" aria-label="${esc(t)} barge">${BARGE.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></td></tr>`).join("")}
+    </tbody></table>`).join("");
+  $("#robots").querySelectorAll("[data-leave]").forEach((b) => b.onclick = () => {
+    const [a, i] = b.dataset.leave.split("-");
+    send("/api/match/robot", { alliance: a, idx: +i, leave: !b.classList.contains("sel") });
+  });
+  $("#robots").querySelectorAll("[data-barge]").forEach((el) => el.onchange = () => {
+    const [a, i] = el.dataset.barge.split("-");
+    send("/api/match/robot", { alliance: a, idx: +i, barge: el.value });
+  });
+}
+
+async function send(path, body) {
+  const cur = FMS.state && FMS.state.current;
+  if (!cur) return null;
+  try { return await FMS.api(path, { key: cur.key, ...body }); }
+  catch (e) { FMS.toast(e.message, true); return null; }
+}
+
+async function tap(b, d = +b.dataset.d, p = period(FMS.state.current)) {
+  const cur = FMS.state.current, a = b.dataset.a, k = b.dataset.k;
+  if (navigator.vibrate) navigator.vibrate(d > 0 ? 25 : [15, 40, 15]);
+  const j = await send("/api/match/tally", { alliance: a, item: k, period: p, delta: d });
+  if (!j) return;
+  const plus = $(`.plus[data-a="${a}"][data-k="${k}"]`);
+  if (plus && d > 0) { plus.classList.add("hit"); setTimeout(() => plus.classList.remove("hit"), 150); }
+  undo.push({ key: cur.key, a, k, p, d });
+  if (p === period(FMS.state.current)) { const n = $(`[data-n="${a}-${k}"]`); if (n) n.textContent = j.value; }
+  $("#undo").disabled = false;
+}
+$("#undo").onclick = async () => {
+  const u = undo.pop();
+  $("#undo").disabled = !undo.length;
+  if (!u || !FMS.state.current || u.key !== FMS.state.current.key) return;
+  const j = await send("/api/match/tally", { alliance: u.a, item: u.k, period: u.p, delta: -u.d });
+  if (j) FMS.toast(`Undid ${Cap(u.a)} ${u.k} ${u.d > 0 ? "+1" : "−1"} (${u.p})`);
+};
+$("#pseg").querySelectorAll("[data-period]").forEach((b) => b.onclick = () => {
+  const cur = FMS.state && FMS.state.current, c = clockPeriod(cur);
+  manual = b.dataset.period === c ? null : { period: b.dataset.period, against: c };
+  render(FMS.state);
+});
+$("#follow").onclick = () => { manual = null; render(FMS.state); };
+
+function render(s) {
+  if (!s) return;
+  const cur = s.current, reef = s.game_id === "reefscape";
+  $("#mk").textContent = cur ? cur.key : "–";
+  $("#st").textContent = cur ? cur.status : "–";
+  const note = !reef ? "Live scoring is for REEFSCAPE events. In REBUILT the hub cameras count fuel."
+    : !cur ? "No match selected yet."
+    : cur.status === "scheduled" ? `Waiting for Control to start ${cur.key}.`
+    : cur.status === "committed" ? `${cur.key} is committed. Only Control can reopen it.` : "";
+  $("#note").hidden = !note; $("#note").textContent = note;
+  $("#live").hidden = !reef;
+  if (!reef) return;
+  const sig = JSON.stringify([cur && cur.key, cur && cur.red, cur && cur.blue, pick, FMS.sides()]);
+  if (sig !== builtSig) {
+    if (!cur || builtSig && JSON.parse(builtSig)[0] !== cur.key) { undo = []; manual = null; $("#undo").disabled = true; }
+    builtSig = sig; build(s);
+  }
+  const locked = !cur || !["running", "review"].includes(cur.status);
+  const p = period(cur), sc = cur && cur.score;
+  $("#pseg").querySelectorAll("[data-period]").forEach((b) => b.classList.toggle("sel", b.dataset.period === p));
+  $("#pwhy").textContent = manual ? `Taps count toward ${p} (your choice). The clock says ${clockPeriod(cur)}.`
+                                  : `Taps count toward ${p}; follows the match clock.`;
+  $("#follow").hidden = !manual;
+  for (const a of alliances()) {
+    const c = sc ? sc[a].counts : {};
+    $(`[data-total="${a}"]`).textContent = sc ? sc[a].total : 0;
+    for (const [k] of ITEMS) {
+      $(`[data-n="${a}-${k}"]`).textContent = c[`${p}_${k}`] || 0;
+      $(`[data-split="${a}-${k}"]`).textContent = pick === "both" ? `A ${c["auto_" + k] || 0} · T ${c["teleop_" + k] || 0}`
+                                                                  : `auto ${c["auto_" + k] || 0} · teleop ${c["teleop_" + k] || 0}`;
+    }
+    (cur ? cur[a] : []).forEach((_, i) => {
+      const r = sc ? sc[a].robots[i] : { leave: false, barge: "none" };
+      const lb = $(`[data-leave="${a}-${i}"]`), sel = $(`[data-barge="${a}-${i}"]`);
+      if (!lb) return;
+      lb.classList.toggle("sel", r.leave); lb.textContent = r.leave ? "Left ✓" : "Leave";
+      if (document.activeElement !== sel) sel.value = r.barge;
+      lb.disabled = sel.disabled = locked;
+    });
+  }
+  $("#cols").querySelectorAll("button").forEach((b) => b.disabled = locked);
+  $("#pseg").querySelectorAll("button").forEach((b) => b.disabled = locked);
+}
+FMS.on(render);
+everyFrame(() => {
+  const cur = FMS.state && FMS.state.current, p = FMS.phase(cur);
+  $("#clk").textContent = FMS.mmss(p.clock);
+  $("#ph").textContent = p.label + (p.remaining != null && p.name !== "pre" ? ` · ${FMS.mmss(p.remaining)} left` : "");
+  if (FMS.state && FMS.state.game_id === "reefscape" && !manual) {   // flip Auto -> Teleop on time, not on the next state
+    const want = clockPeriod(cur), on = $("#pseg .sel");
+    if (on && on.dataset.period !== want) render(FMS.state);
+  }
+});
+</script>
+</body></html>

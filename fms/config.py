@@ -29,7 +29,8 @@ DEFAULTS = {
         "host": "0.0.0.0",
         "port": 8000,
         "db": "data/fms.sqlite3",
-        "pins": {"control": PLACEHOLDER, "ref": PLACEHOLDER, "emcee": PLACEHOLDER},
+        "pins": {"control": PLACEHOLDER, "ref": PLACEHOLDER, "emcee": PLACEHOLDER,
+                 "scorer": ""},               # REEFSCAPE live scorers (/score); blank = nobody can log in as scorer
         "vision_key": PLACEHOLDER,
     },
     "tba": {
@@ -116,6 +117,7 @@ def load(path: str | None = None) -> dict:
 
 
 RED_SIDES = ("left", "right")
+OPTIONAL_PINS = ("scorer",)    # older event.yaml files have no scorer PIN; blank = scorer logins off
 
 
 def validate(cfg, path="config/event.yaml"):
@@ -131,10 +133,10 @@ def validate(cfg, path="config/event.yaml"):
     if cfg["display"]["red_side"] not in RED_SIDES:
         raise SystemExit(f"display.red_side in {path} must be left or right.")
     pins = {r: str(v).strip() for r, v in cfg["server"]["pins"].items()}
-    bad = [r for r, v in pins.items() if not v or v == PLACEHOLDER]
+    bad = [r for r, v in pins.items() if v == PLACEHOLDER or (not v and r not in OPTIONAL_PINS)]
     if bad:
         raise SystemExit(f"Set server.pins ({', '.join(bad)}) in {path}, or run `python -m fms.init` on a fresh copy.")
-    if pins["control"] in (pins.get("ref"), pins.get("emcee")):
-        raise SystemExit(f"The control PIN in {path} must differ from the ref and emcee PINs.")
+    if pins["control"] in [v for r, v in pins.items() if r != "control"]:
+        raise SystemExit(f"The control PIN in {path} must differ from the ref, emcee and scorer PINs.")
     if str(cfg["server"]["vision_key"]).strip() in ("", PLACEHOLDER):
         raise SystemExit(f"Set server.vision_key in {path} to any random string.")
