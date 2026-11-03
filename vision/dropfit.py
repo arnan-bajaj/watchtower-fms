@@ -7,6 +7,11 @@ area is not measured or guessed: someone drops a known number of balls into the 
 records every frame's yellow blobs near the outline, and the counter is replayed over those blobs at
 log-spaced areas. The area kept is the middle of the run of areas whose count is nearest the number
 dropped. No cv2 (the blobs come from the camera thread), so tests can run it.
+
+Measure (`estimate`) is the old Hub Counter page's quick look: balls lying still near the hub for
+MEASURE_S seconds, the median area of the blobs that look like one round ball. It is only an estimate:
+it draws the ruler while an outline is drawn and is held up against the drop test's fit, and it
+never becomes the ball size the counter divides by.
 """
 from __future__ import annotations
 
@@ -18,6 +23,8 @@ AREA_LO, AREA_HI = 30.0, 30000.0
 COARSE, FINE = 25, 17        # 33% apart over the whole range, then 4% apart around the best
 RECORD_BOX_AREA = 4000.0     # record a generous box (the area isn't known yet), as hubcount.measure does
 MAX_FRAMES = 60 * 60 * 3     # 3 minutes at 60 fps
+MEASURE_S = 5.0              # Measure: seconds of still balls, as the old page's Measure
+MEASURE_MIN_BLOBS = 8        # fewer lone round blobs than this is no measurement
 BLUR = HC.DEFAULT_BLUR       # what the live counter uses (vision/hubcounter/fms_counter.py)
 
 
@@ -80,3 +87,15 @@ def fit(poly, frames, n, w, h, blur=BLUR) -> dict:
     area = lo * (hi / lo) ** 0.25
     return {"area": round(area, 1), "got": replay(poly, frames, area, w, h, blur), "n": n,
             "lo": round(lo, 1), "hi": round(hi, 1)}
+
+
+def estimate(areas, frames: int) -> dict:
+    """Measure: one ball's area from the lone round blobs seen near the outline (hubcount's
+    isolated_ball_areas, per frame) over MEASURE_S seconds."""
+    if len(areas) < MEASURE_MIN_BLOBS:
+        raise ValueError(f"Only {len(areas)} lone balls seen in {frames} frames. Put a few balls near the hub, "
+                         "apart from each other and not moving, and measure again.")
+    s = sorted(areas)
+    mid = len(s) // 2
+    med = s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
+    return {"area": round(med, 1), "blobs": len(s), "frames": frames}

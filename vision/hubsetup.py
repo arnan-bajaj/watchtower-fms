@@ -1,13 +1,16 @@
-"""Setup -> Cameras: a hub's camera, outline and ball size from /control, as the config its counter runs on.
-The ball size comes from the drop test (dropfit.py).
+"""Setup -> Cameras: a hub's camera, outline, exit line and ball size from /control, as the config its
+counter runs on. The ball size comes from the drop test (dropfit.py); Measure's estimate (`measured`)
+only draws the ruler and cross-checks it, so it never reaches the counter.
 
-/control stores each hub as the live setting `vision.hubs.<hub>` = {source, size, outline, ball_area}
-(fms/settings.py); vision fetches it with the rest of /api/vision/config. None keeps the vision config
-file's hub. No cv2 here, so tests can import it.
+/control stores each hub as the live setting `vision.hubs.<hub>` = {source, size, outline, exit,
+ball_area, measured} (fms/settings.py); `exit` is None or {"line": [[x, y], [x, y]], "out": [x, y]}.
+Vision fetches it with the rest of /api/vision/config. None keeps the vision config file's hub.
+No cv2 here, so tests can import it.
 """
 from __future__ import annotations
 
 DRAWN = ("outline", "roi", "line", "setup")   # any of these gives the colour counter a zone
+SCALED = ("outline", "line")                   # point lists drawn at `setup_size`
 COLOUR = ("colour", "tbavid-colour")
 
 
@@ -18,25 +21,33 @@ def merge(base: dict, setup) -> dict:
     if not setup:
         return cfg
     cfg["source"] = str(setup["source"])
-    for k in DRAWN:
+    for k in (*DRAWN, "out", "ball_area"):
         cfg.pop(k, None)
-    cfg.pop("ball_area", None)
     if setup.get("outline"):
         cfg["outline"] = [list(p) for p in setup["outline"]]
         cfg["setup_size"] = list(setup.get("size") or [0, 0])
         if setup.get("ball_area"):
             cfg["ball_area"] = float(setup["ball_area"])
+        ex = setup.get("exit")
+        if ex and ex.get("line") and ex.get("out"):        # counted alongside the outline (counters/colour.py)
+            cfg["line"] = [list(p) for p in ex["line"]]
+            cfg["out"] = list(ex["out"])
     return cfg
 
 
 def fit(cfg: dict, w: int, h: int) -> dict:
-    """Ready for a w x h picture: a Setup outline drawn at another size is scaled to this one, with
-    its ball area. Nothing is guessed: a hub without a ball area waits for its drop test (dropfit.py)."""
+    """Ready for a w x h picture: a Setup outline (and exit line) drawn at another size is scaled to this
+    one, with its ball area. Nothing is guessed: a hub without a ball area waits for its drop test
+    (dropfit.py)."""
     cfg = dict(cfg)
     size = cfg.pop("setup_size", None)
     if cfg.get("outline") and size and size[0] and size[1] and (size[0], size[1]) != (w, h):
         sx, sy = w / size[0], h / size[1]
-        cfg["outline"] = [[x * sx, y * sy] for x, y in cfg["outline"]]
+        for k in SCALED:
+            if cfg.get(k):
+                cfg[k] = [[x * sx, y * sy] for x, y in cfg[k]]
+        if cfg.get("out"):
+            cfg["out"] = [cfg["out"][0] * sx, cfg["out"][1] * sy]
         if cfg.get("ball_area"):
             cfg["ball_area"] = cfg["ball_area"] * sx * sy
     return cfg

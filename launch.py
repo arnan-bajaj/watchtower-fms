@@ -34,9 +34,11 @@ defaults: {{counter: mock, rate_per_s: 3}}
 hubs: {{red: {{source: none}}, blue: {{source: none}}}}
 """
 CAMERAS = """# Written by launch.py on every start. Each hub's camera, outline and ball size are set in
-# /control -> Setup -> Cameras; the shipped colour counter needs no model.
+# /control -> Setup -> Cameras; the shipped colour counter needs no model. Setup -> Test -> Record
+# saves each hub camera into test_dir (the event folder's recordings/).
 fms_url: http://127.0.0.1:{port}
 record_dir: ""
+test_dir: '{tests}'
 defaults: {{counter: colour, width: 1920, height: 1080, fps: 60}}
 hubs: {{red: {{}}, blue: {{}}}}
 """
@@ -116,7 +118,7 @@ def main():
         vcfg = pathlib.Path(args.vision_config).expanduser().resolve()
     elif not args.no_vision:
         vcfg = ev / "config" / "vision.cameras.yaml"
-        vcfg.write_text(CAMERAS.format(port=port))
+        vcfg.write_text(CAMERAS.format(port=port, tests=(ev / "recordings").as_posix()))
     if vcfg:
         try:
             import cv2  # noqa: F401

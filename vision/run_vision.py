@@ -22,7 +22,11 @@ changed and rebuilds its counter; the other hub keeps counting.
 The same reply says what Setup -> Cameras wants: pictures from each hub camera (about one a
 second while the page is open), a scan for cameras, or a hub's drop test: record every frame's
 yellow blobs near its outline while someone drops balls in, then fit the one-ball size to the
-number dropped (dropfit.py) and send it back.
+number dropped (dropfit.py) and send it back. Also from there: Measure (5 s of still balls near the
+outline: an estimate for the ruler, never the ball size), Test -> Record (every hub camera into
+`test_dir`, default `recordings`), and Test -> Check a recording (re-count one of those files, or a
+match recording, with the hub's current setup against a hand count). Each hub reports its
+capture-to-sent latency against the field feed's spec (hubcount.latency_summary).
 """
 from __future__ import annotations
 
@@ -40,6 +44,7 @@ import requests
 import dropfit
 import hubsetup
 import vconfig
+from hubcounter import hubcount as HC
 from count_feed import CountFeed, targets
 from scaler import Scaler
 from counters import (add_plugin, add_plugin_paths, list_counters, load_counter,
@@ -47,6 +52,8 @@ from counters import (add_plugin, add_plugin_paths, list_counters, load_counter,
 
 STOP = threading.Event()
 SCAN_MAX = 6               # camera indexes tried by Find cameras
+LATENCY_KEEP = 300         # recent counts the latency check looks at
+FILES_EVERY_S = 5.0        # how often the recordings folder is listed for Test -> Check a recording
 
 
 def snapshot(frame, max_w=960):
@@ -102,7 +109,14 @@ class Sender(threading.Thread):
         self.want_frames = False            # Setup -> Cameras is open: send hub pictures
         self.frames = {}                    # hub -> latest snapshot() to send
         self.measured = {}                  # hub -> drop-test result to send
+        self.sized = {}                     # hub -> Measure result to send
         self.scan_seen = None               # last Find cameras id started
+        self.dirs = {}                      # "match" / "test" -> folder of recordings (Test -> Check)
+        self.test_record = None             # Test -> Record: the recording's id while it runs
+        self.check_seen = None              # last Check a recording id started
+        self.check_prog = None              # {"id", "frames", "frac"} while a recording is re-counted
+        self.checked = None                 # its result, to send
+        self._files, self._files_t = [], 0.0
 
     def _clock_sample(self, t_send, t_recv, server_now):
         if server_now is None:
@@ -121,8 +135,10 @@ class Sender(threading.Thread):
             if h in self.scalers and float(sc) != self.scalers[h].scale:
                 self.scalers[h].set(sc)
                 print(f"[config] {h}: {sc} counts per ball")
+        def counted(e):                     # Measure's estimate changes nothing the counter uses
+            return {k: v for k, v in e.items() if k != "measured"} if e else e
         for h, entry in (c.get("hubs") or {}).items():
-            if h in ("red", "blue") and entry != self.hub_setup.get(h):
+            if h in ("red", "blue") and counted(entry) != counted(self.hub_setup.get(h)):
                 self.hub_setup[h] = entry
                 print(f"[config] {h}: " + (f"camera {entry['source']}" + (", outline drawn" if entry.get("outline") else "")
                                           if entry else "camera from the config file"))
@@ -168,9 +184,16 @@ class Sender(threading.Thread):
     def handle_want(self, want):
         """What Setup -> Cameras asks for, from the FMS's reply."""
         self.want_frames = bool(want.get("frames"))
-        drops = want.get("drop") or {}
+        drops, sizes = want.get("drop") or {}, want.get("size") or {}
         for h, w in self.workers.items():
             w.drop_req = drops.get(h)           # {"id", "n"}: recording until n arrives; None: no test
+            w.size_req = sizes.get(h)           # {"id"}: Measure
+        self.test_record = want.get("record") or None
+        chk = want.get("check")
+        if chk and chk.get("id") != self.check_seen:
+            self.check_seen = chk["id"]
+            self.check_prog = {"id": chk["id"], "frames": 0, "frac": 0.0}
+            threading.Thread(target=self.check_recording, args=(chk,), daemon=True).start()
         sid = want.get("scan")
         if sid and sid != self.scan_seen:
             self.scan_seen = sid
@@ -189,6 +212,90 @@ class Sender(threading.Thread):
         except Exception as e:                  # noqa: BLE001
             print(f"[cameras] couldn't send the scan: {e}")
 
+    def files(self):
+        """The recordings Test -> Check a recording can pick from, newest first."""
+        if time.time() - self._files_t < FILES_EVERY_S:
+            return self._files
+        self._files_t, out, seen = time.time(), [], set()
+        for kind, d in self.dirs.items():
+            if not d or not d.is_dir() or d.resolve() in seen:
+                continue
+            seen.add(d.resolve())
+            for f in d.glob("*.mp4"):
+                try:
+                    st = f.stat()
+                except OSError:
+                    continue
+                hub = f.stem.rsplit("_", 1)[-1]
+                out.append({"name": f.name, "dir": kind, "hub": hub if hub in ("red", "blue") else None,
+                            "mb": round(st.st_size / 1e6, 1), "t": round(st.st_mtime)})
+        self._files = sorted(out, key=lambda f: -f["t"])[:40]
+        return self._files
+
+    def check_recording(self, req):
+        res = {"id": req["id"], "name": req.get("name"), "hub": req.get("hub")}
+        try:
+            res.update(self._check(req))
+        except Exception as e:                  # noqa: BLE001  ValueError says why
+            res["error"] = str(e)
+        print(f"[check] {res}")
+        with self.lock:
+            self.checked, self.check_prog = res, None
+
+    def _check(self, req):
+        """Re-count one recording with this hub's setup as it is now: the hub's count, and with an exit
+        line also the outline and the exit line alone, each against the hand count."""
+        w = self.workers.get(req.get("hub"))
+        if w is None:
+            raise ValueError("Vision isn't running that hub.")
+        d = self.dirs.get(req.get("dir"))
+        path = d / pathlib.Path(str(req.get("name") or "")).name if d else None
+        if path is None or not path.is_file():
+            raise ValueError("That recording isn't there any more.")
+        cfg = hubsetup.merge(w.base, w.setup)
+        why = hubsetup.waiting({**cfg, "source": str(path)})
+        if why:
+            raise ValueError(f"This hub can't count yet: {why}.")
+        hand = int(req["hand"]) if req.get("hand") else None
+        cap = cv2.VideoCapture(str(path))
+        try:
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            n_all = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+            stamps = path.with_suffix(".csv")
+            ts = [float(r["t"]) for r in csv.DictReader(open(stamps))] if stamps.exists() else None
+            ok, frame = cap.read()
+            if not ok:
+                raise ValueError("Couldn't read that recording.")
+            fh, fw = frame.shape[:2]
+            fitted = hubsetup.fit(cfg, fw, fh)
+            ways = [("what the hub counts now", fitted)]
+            if fitted.get("line") and fitted.get("outline"):
+                ways += [("outline alone", {k: v for k, v in fitted.items() if k not in ("line", "out")}),
+                         ("exit line alone", {k: v for k, v in fitted.items() if k != "outline"})]
+            counters = [(label, load_counter(c, w.plugins, warn=lambda *_: None)) for label, c in ways]
+            i = 0
+            while ok and not STOP.is_set():
+                t = ts[i] if ts and i < len(ts) else i / fps
+                for _, c in counters:
+                    c.process(frame, t)
+                i += 1
+                if i % 30 == 0:
+                    self.check_prog = {"id": req["id"], "frames": i, "frac": round(i / n_all, 3) if n_all else None}
+                ok, frame = cap.read()
+        finally:
+            cap.release()
+        scale, rows = self.scalers[req["hub"]].scale, []
+        for label, c in counters:
+            n = int(c.total / scale + 1e-9)          # counts per ball, as the live count
+            row = {"label": label, "count": n}
+            if hand:
+                row.update(error=n - hand, pct=round(100 * abs(n - hand) / hand, 1))
+            rows.append(row)
+            close = getattr(c, "close", None)
+            if callable(close):
+                close()
+        return {"rows": rows, "hand": hand, "frames": i, "seconds": round(i / fps, 1)}
+
     def send_frames(self):
         with self.lock:
             frames, self.frames = self.frames, {}
@@ -205,20 +312,27 @@ class Sender(threading.Thread):
             with self.lock:
                 batch = {h: v[:] for h, v in self.buf.items()}
                 status = dict(self.status)
-                measured = dict(self.measured)
+                measured, sized, checked = dict(self.measured), dict(self.sized), self.checked
             if self.feeds:
                 status["feeds"] = [f.status() for f in self.feeds]
+            status["files"] = self.files()
+            if self.check_prog:
+                status["checking"] = dict(self.check_prog)
             try:
                 t_send = time.time()
                 r = requests.post(f"{self.url}/api/vision/events", timeout=2,
                                   headers={"X-Vision-Key": self.key},
-                                  json={"events": batch, "status": status, "source": "live", "measured": measured})
+                                  json={"events": batch, "status": status, "source": "live", "measured": measured,
+                                        "sized": sized, "checked": checked})
                 r.raise_for_status()
                 j = r.json()
                 with self.lock:
-                    for h in measured:
-                        if self.measured.get(h) is measured[h]:
-                            del self.measured[h]
+                    for got, sent in ((self.measured, measured), (self.sized, sized)):
+                        for h in sent:
+                            if got.get(h) is sent[h]:
+                                del got[h]
+                    if self.checked is checked:
+                        self.checked = None
                 self.handle_want(j.get("want") or {})
                 self.send_frames()
                 self._clock_sample(t_send, time.time(), j.get("now"))
@@ -275,11 +389,14 @@ class HubWorker(threading.Thread):
     """One hub: its camera, its counter, and Setup -> Cameras' pictures and drop test.
     A camera with no counter yet (outline not drawn) still sends pictures, so it can be drawn on."""
 
-    def __init__(self, hub, base, sender, rec_dir, preview, plugins=None):
+    def __init__(self, hub, base, sender, rec_dir, preview, plugins=None, test_dir=None):
         super().__init__(daemon=True)
         self.plugins = plugins
         self.hub, self.base, self.sender, self.preview = hub, {**base, "hub": hub}, sender, preview
-        self.recorder = Recorder(rec_dir, hub) if rec_dir else None
+        self.recorder = Recorder(rec_dir, hub) if rec_dir else None      # every match (record_dir)
+        self.tester = Recorder(test_dir, hub) if test_dir else None      # Test -> Record
+        self.size_req, self.sizing, self.size_done = None, None, set()  # Measure: request, recording, answered
+        self.lat = []                           # capture-to-sent ms of recent counts
         self.frame_out = None
         self.setup = sender.hub_setup.get(hub)  # Setup -> Cameras entry; None: the config file's hub
         self.changed = threading.Event()
@@ -317,8 +434,9 @@ class HubWorker(threading.Thread):
             self.count(cfg)
         if self.cap is not None:
             self.cap.release()
-        if self.recorder:
-            self.recorder.close()
+        for r in (self.recorder, self.tester):
+            if r:
+                r.close()
 
     def count(self, cfg):
         """Count with `cfg` until Setup changes this hub (or vision stops)."""
@@ -343,6 +461,8 @@ class HubWorker(threading.Thread):
                 ok, frame = True, np.zeros((360, 640, 3), np.uint8)
             else:
                 ok, frame = cap.read()
+            mono = time.monotonic()
+            captured = HC.frame_time(cap.get(cv2.CAP_PROP_POS_MSEC), mono) if cap is not None and not is_file else mono
             if not ok:
                 if is_file and cfg.get("loop", True):
                     cap.release()
@@ -379,8 +499,12 @@ class HubWorker(threading.Thread):
                 if n:
                     for f in self.sender.feeds:  # first: these are on the field's auto deadline
                         f.add(self.hub, n, t)
+                    self.lat = (self.lat + [(time.monotonic() - captured) * 1000])[-LATENCY_KEEP:]
                     self.sender.add(self.hub, t + self.sender.offset, n)
             self.drop_step(frame, fitted, w, h)
+            self.size_step(frame, fitted, w, h)
+            if self.tester:
+                self.tester.update(self.sender.test_record, frame, t + self.sender.offset, fps_nominal)
             if self.sender.want_frames and time.time() - t_snap >= 1.0:
                 t_snap = time.time()
                 with self.sender.lock:
@@ -402,6 +526,12 @@ class HubWorker(threading.Thread):
                     st.update(idle=True, detail=why)
                 if self.drop:
                     st["drop"] = {"s": round(time.time() - self.drop["t0"]), "frames": len(self.drop["frames"])}
+                if self.sizing:
+                    st["sizing"] = {"s": round(time.time() - self.sizing["t0"], 1)}
+                if self.lat:
+                    st["latency"] = HC.latency_summary(self.lat)
+                if self.tester and self.tester.vw is not None:
+                    st["recording"] = {"name": f"{self.tester.cur}_{self.hub}.mp4", "frames": self.tester.n}
                 self.sender.status[self.hub] = st
             if self.preview:
                 self.frame_out = counter.draw(frame.copy()) if counter is not None else frame
@@ -439,6 +569,35 @@ class HubWorker(threading.Thread):
             threading.Thread(target=self.drop_fit, args=(d, int(req["n"]), w, h), daemon=True).start()
         elif len(d["frames"]) < dropfit.MAX_FRAMES:
             d["frames"].append(d["eye"].blobs(frame))
+
+    def size_step(self, frame, fitted, w, h):
+        """Setup -> Measure: for MEASURE_S seconds, the areas of lone round blobs near the outline (the old
+        page's Measure, hubcount.measure), then their median as an estimate. Counting carries on."""
+        req = self.size_req
+        if not req or req["id"] in self.size_done:
+            self.sizing = None
+            return
+        if self.sizing is None or self.sizing["id"] != req["id"]:
+            poly = [tuple(p) for p in (fitted or {}).get("outline") or []]
+            if not poly:
+                self.size_done.add(req["id"])
+                self.sender.sized[self.hub] = {"id": req["id"], "error": "Draw the hub's outline first: balls are measured near it."}
+                return
+            self.sizing = {"id": req["id"], "box": dropfit.record_box(poly, w, h), "areas": [], "frames": 0, "t0": time.time()}
+        sz = self.sizing
+        sz["areas"] += HC.isolated_ball_areas(frame, sz["box"])
+        sz["frames"] += 1
+        if time.time() - sz["t0"] >= dropfit.MEASURE_S:
+            self.size_done.add(sz["id"])
+            self.sizing = None
+            res = {"id": sz["id"], "size": [w, h]}
+            try:
+                res.update(dropfit.estimate(sz["areas"], sz["frames"]))
+            except ValueError as e:
+                res["error"] = str(e)
+            print(f"[measure] {self.hub}: {res}")
+            with self.sender.lock:
+                self.sender.sized[self.hub] = res
 
     def drop_fit(self, d, n, w, h):
         res = {"id": d["id"], "n": n, "size": [w, h], "frames": len(d["frames"])}
@@ -484,6 +643,8 @@ def main():
         f.start()
         print(f"count feed {f.name_} -> {f.dest[0]}:{f.dest[1]} session {f.session}")
     sender = Sender(cfg["fms_url"], cfg["vision_key"], feeds=feeds)
+    test_dir = cfg.get("test_dir") or cfg.get("record_dir") or "recordings"     # Test -> Record
+    sender.dirs = {k: pathlib.Path(d) for k, d in (("match", cfg.get("record_dir")), ("test", test_dir)) if d}
     try:                                   # Setup's cameras before the first frame, if the FMS is up
         sender.apply_config()
     except Exception:                      # noqa: BLE001  the first reply will bring them
@@ -494,7 +655,7 @@ def main():
         hc = (cfg.get("hubs") or {}).get(hub) or {}
         if hc.get("enabled", True):
             w = HubWorker(hub, {**defaults, **hc}, sender,
-                          cfg.get("record_dir"), args.preview, cfg.get("plugins"))
+                          cfg.get("record_dir"), args.preview, cfg.get("plugins"), test_dir)
             sender.workers[hub] = w
             workers.append(w)
     sender.start()

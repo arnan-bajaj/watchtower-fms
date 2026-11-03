@@ -297,7 +297,8 @@ TBA credentials don't go in this file. See [The Blue Alliance](#the-blue-allianc
 |---|---|
 | `fms_url` | Where vision sends events (`http://127.0.0.1:8000` on the same laptop) |
 | `vision_key` | Optional. Leave it out to use `server.vision_key` from `config/event.yaml` |
-| `record_dir` | Raw hub video per match; `""` disables recording |
+| `record_dir` | Raw hub video per match; `""` disables recording (the launch command's config does) |
+| `test_dir` | Where Setup → Test → **Record** saves each hub camera (default: `record_dir`, else `recordings`). The launch command uses the event folder's `recordings/` |
 | `defaults.counter` | `zone`, `linecross`, `mock`, or `"module:Class"` |
 | `defaults.weights` | Path to the model, e.g. `models/fuel_best.pt` |
 | `hubs.red/blue.source` | Camera index (`0`, `1`), a video file path, or an `rtsp://` URL |

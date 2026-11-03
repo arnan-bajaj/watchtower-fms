@@ -45,8 +45,8 @@ PLUGIN_API = 1                       # bump on a breaking change to the contract
 ENTRY_POINT_GROUP = "watchtower.counters"
 
 BUILTIN = {
-    "colour": "hubcounter.fms_counter:ColourCounter",
-    "tbavid-colour": "hubcounter.fms_counter:ColourCounter",
+    "colour": "counters.colour:Colour",              # hubcounter's ColourCounter + Setup's exit line
+    "tbavid-colour": "counters.colour:Colour",
     "zone": "counters.zone:ZoneCounter",
     "linecross": "counters.linecross:LineCrossCounter",
     "mock": "counters.mock:MockCounter",
