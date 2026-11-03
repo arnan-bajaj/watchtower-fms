@@ -3,6 +3,15 @@
 Versions are git tags. v0.x were alphas built toward our first scrimmage; v1 is the build that ran the
 10th Street Showdown (2026-10-10); v2 is the website revamp.
 
+## v2.3.0: stream overlay
+
+- **Stream overlay (`/overlay`)** for OBS: a score bar over the stream camera on an otherwise transparent page
+  (Browser Source, 1920x1080; `?pos=top` for the top). It shows teams, live scores, the match, the clock and the
+  period, a hub-active strip (REBUILT), then Final, the winner and quals RP after commit, and one line during
+  alliance selection. `/display` stays the full-screen TV scoreboard.
+- The overlay is listed on the FMS station page and on the website's event page, with its OBS address.
+- The website's game picker no longer calls REEFSCAPE "scored by hand" (scorers count live on /score since v2.2.0).
+
 ## v2.2.0: live REEFSCAPE scorers
 
 - **Scorer page (`/score`)** for REEFSCAPE: scorers on their phones tap coral (L1 to L4), processor and net for one

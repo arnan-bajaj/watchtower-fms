@@ -18,7 +18,7 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
   the FMS plus vision on a generated `config/vision.cameras.yaml` (counter `colour`, hubs empty until
   Setup -> Cameras picks them; `--mock`, `--no-vision`, `--vision-config FILE`).
 - Phone pages (`fms/static/`): `/ref` (fouls), `/score` (REEFSCAPE scorers: live counts), `/emcee` (auto result +
-  hub light cues), `/control` (labelled "Control" in every UI, never "Scorekeeper": it would read like Scorer), `/display` (field TV / OBS overlay; also the live alliance selection screen). Vanilla JS,
+  hub light cues), `/control` (labelled "Control" in every UI, never "Scorekeeper": it would read like Scorer), `/display` (field TV; also the live alliance selection screen), `/overlay` (OBS Browser Source: a score bar on a transparent page, `?pos=top`; one line during selection). Vanilla JS,
   no build step, no CDN (the venue may have no internet). Live state over one websocket `/ws`.
   Shared look in `style.css`; layouts must work at 390 px wide with no horizontal page scroll.
 

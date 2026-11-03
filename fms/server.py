@@ -303,7 +303,7 @@ def index():
     return page("index")
 
 
-for _p in ("control", "ref", "emcee", "score", "display"):
+for _p in ("control", "ref", "emcee", "score", "display", "overlay"):
     app.add_api_route(f"/{_p}", (lambda n=_p: page(n)), methods=["GET"])
 
 

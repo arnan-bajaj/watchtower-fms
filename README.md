@@ -7,7 +7,7 @@ A free, open-source field management system for **FRC offseason events and scrim
 - **Control** runs matches, reviews and corrects scores, and runs **live alliance selection** that shows on the field display.
 - **Quals schedule generator**, **rankings**, and a **4-alliance double-elimination playoff** with best-of-3 finals.
 - **The Blue Alliance**: schedule, scores, rankings, alliances and match videos are pushed automatically, and queue up while the venue is offline.
-- **Field display / OBS overlay** for the audience and the stream.
+- **Field display** for the audience TV, and a transparent **stream overlay** (score bar) for OBS.
 
 It doesn't control robots or talk to driver stations. It's the scoring, timing and event-management layer around a field you run by hand.
 
@@ -111,8 +111,9 @@ Two independent processes. The FMS never touches the model, and vision never tou
  hub cam RED ──┐                                          ┌─ /ref      ref phones: fouls
                ├─ vision/run_vision.py ─(t, hub, n)──▶ FMS server ──┼─ /emcee    emcee phone: auto result, hub light cues
  hub cam BLUE ─┘   counter plugin + YOLO     HTTP      FastAPI    ├─ /control  Control laptop: start, review, commit
-                                                     + SQLite   ├─ /display  field TV / OBS overlay
- stream cam ──▶ OBS ──▶ YouTube live                     │       └─▶ TBA outbox (retries until delivered)
+                                                     + SQLite   ├─ /display  field TV
+ stream cam ──▶ OBS ──▶ YouTube live                     │       ├─ /overlay  OBS score bar over the stream
+                                                         │       └─▶ TBA outbox (retries until delivered)
 ```
 
 **Vision only reports timestamped fuel events:** which hub, when, and how many. It knows nothing about periods, shifts or points.
@@ -142,7 +143,7 @@ fms/
   settings.py      live settings (/control -> Setup) on top of event.yaml; newest-wins merge
   cloud.py         optional sync with the website (settings + status; never matches)
   init.py          first-run setup: python -m fms.init
-  static/          control / ref / score / emcee / display pages (vanilla JS, no CDN)
+  static/          control / ref / score / emcee / display / overlay pages (vanilla JS, no CDN)
 vision/
   run_vision.py    cameras -> counter -> FMS; records match video; takes feeds, calibration and
                    Setup -> Cameras (camera, outline, drop test, pictures) from the FMS
@@ -434,6 +435,7 @@ alliance, and nothing about the data, scoring or TBA changes.
   - `/control`: next to the match status on the Match tab. Setup → Field sides says when this device is flipped.
   - `/display`: bottom-right corner, shown only while a mouse moves over the page, so it never appears in an OBS
     Browser Source or on an idle TV. Each OBS source has its own storage, so flipping it there means interacting with the source.
+  - `/overlay`: top-right corner, the same way (OBS: right-click the source → Interact, then move the mouse).
 
 ### Emcee (`/emcee`)
 
@@ -467,7 +469,17 @@ alliance, and nothing about the data, scoring or TBA changes.
 
 ### Field display (`/display`)
 
-Full-screen scoreboard for a TV, or add it as a **Browser Source** in OBS for the stream overlay. It shows live provisional scores, the clock, and hub-active indicators, then the final breakdown with the winner after commit. No PIN. Move the mouse to reveal **⇄ Flip sides** for this screen only.
+Full-screen scoreboard for a TV. It shows live provisional scores, the clock, and hub-active indicators, then the final breakdown with the winner after commit. No PIN. Move the mouse to reveal **⇄ Flip sides** for this screen only. For the stream, use `/overlay` instead: `/display` has a solid background and covers the whole camera picture.
+
+### Stream overlay (`/overlay`)
+
+A score bar for OBS, drawn over your stream camera. The rest of the page is transparent.
+
+- In OBS add a **Browser Source** with URL `http://<mac-ip>:8000/overlay`, width 1920, height 1080, and put it above the camera in the scene. The website's event page shows the full address while Watchtower is running.
+- The bar sits at the bottom. `/overlay?pos=top` puts it at the top.
+- It shows both alliances' teams (with the alliance number in playoffs), live provisional scores, the match, the clock and the period. A yellow strip on an alliance's edge means its hub is active (REBUILT only). After commit it shows **Final**, the winner, and each alliance's RP in quals.
+- During live alliance selection it becomes one line: who's picking and the last pick.
+- It hides when no match is loaded. No PIN. It follows Setup → Field sides, and **⇄ Flip sides** works as on `/display`.
 
 ### Scoring rules as implemented
 
@@ -895,7 +907,7 @@ TBA doesn't host video. Match videos are links into your YouTube livestream at t
 
 **Removing a wrong video:** TBA's API can add videos but not remove them. In the match's review panel set Video to `none` and **Save video**, then Schedule → All matches → **Off TBA** on that match, then **Send schedule to TBA**: the match is re-created on TBA with its score and no videos.
 
-1. Stream the third camera with OBS to YouTube. Add `/display` as a Browser Source for the score overlay.
+1. Stream the third camera with OBS to YouTube. Add `/overlay` as a Browser Source over the camera for the score bar ([Stream overlay](#stream-overlay-overlay)).
 2. In `/control` → Setup, enter the livestream's **YouTube video ID** and click **Save**.
 3. Click **Stream went live now** the moment OBS goes live.
 4. Every committed match gets `<videoID>?t=<seconds>`, starting 10 s before auto. You can override it per match in review.

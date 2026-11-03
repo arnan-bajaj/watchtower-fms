@@ -393,6 +393,21 @@ def test_red_side_defaults_from_event_yaml_and_setup_overrides_it(tmp_path, monk
         config.validate(bad)
 
 
+def test_every_station_page_is_served_and_linked(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    srv, _ = _server(tmp_path, monkeypatch)
+    c = TestClient(srv.app)
+    for p in ("control", "ref", "emcee", "score", "display", "overlay"):
+        r = c.get("/" + p)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-store", p
+    assert "background: transparent" in c.get("/overlay").text       # OBS draws only the bar over the camera
+    home = c.get("/").text
+    site = (srv.STATIC.parents[1] / "website" / "site.html").read_text()
+    for p in ("ref", "emcee", "display", "overlay", "control"):
+        assert f'href="/{p}"' in home, p                                 # the FMS station list
+        assert f'"{p}"' in site, p                                       # the website's event page
+
+
 def test_schedule_times_skip_lunch():
     times = lambda n, start, cyc, lunch=None: [m["scheduled"] for m in schedule.add_times([{} for _ in range(n)], start, cyc, lunch)]
     # no lunch: straight through, as before

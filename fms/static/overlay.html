@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+<title>FMS Stream Overlay</title>
+<style>
+  /* OBS Browser Source (1920x1080): the page is transparent, only the score bar is drawn over the camera.
+     ?pos=top puts the bar at the top instead of the bottom. Sized in vh so it scales with the source. */
+  :root, body { background: transparent; }   /* style.css paints :root, not just body */
+  body { color: #fff; overflow: hidden; min-height: 0; height: 100vh; }
+  [hidden] { display: none !important; }
+  .sb { position: fixed; left: 50%; transform: translateX(-50%); bottom: 3vh; width: min(94vw, 150vh);
+    display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch;
+    border-radius: 1.4vh; overflow: hidden; box-shadow: 0 .6vh 3vh rgba(0,0,0,.45); font-size: 2.6vh; }
+  body.top .sb { bottom: auto; top: 3vh; }
+  .side { display: flex; align-items: center; gap: 1.6vh; padding: 0 1.8vh; min-width: 0; min-height: 8vh; position: relative; }
+  .side.red { background: var(--red); } .side.blue { background: var(--blue); }
+  .side.r { flex-direction: row-reverse; }
+  .side .tm { flex: 1; min-width: 0; display: flex; gap: 1.4vh; font-weight: 700; font-size: 3vh; white-space: nowrap; overflow: hidden; }
+  .side.r .tm { justify-content: flex-end; }
+  .side .al { font-size: 2vh; font-weight: 650; padding: .3vh .9vh; border-radius: 99px; background: rgba(0,0,0,.25); }
+  .side .al:empty { display: none; }
+  .side .s { font-size: 5.6vh; font-weight: 800; line-height: 1; min-width: 7vh; text-align: center; }
+  .side .rp { font-size: 1.9vh; font-weight: 700; opacity: .85; white-space: nowrap; }
+  .side .rp:empty { display: none; }
+  /* hub light strip along the bar's edge, REBUILT only */
+  .side .lt { position: absolute; left: 0; right: 0; top: 0; height: .7vh; background: rgba(0,0,0,.3); }
+  .side .lt.on { background: var(--fuel); box-shadow: 0 0 1.4vh var(--fuel); }
+  .side.win .s { color: var(--fuel); }
+  .mid { background: var(--ink); text-align: center; padding: .6vh 2.4vh; min-width: 19vh;
+    display: flex; flex-direction: column; justify-content: center; }
+  .mid .k { font-size: 1.8vh; color: #c9ccc4; font-weight: 650; letter-spacing: .05em; white-space: nowrap; }
+  .mid .clk { font-size: 4vh; font-weight: 800; line-height: 1.05; }
+  .mid .ph { font-size: 1.8vh; color: #c9ccc4; white-space: nowrap; }
+  .mid .ph.res { color: var(--fuel); font-weight: 800; font-size: 2.2vh; }
+  /* alliance selection: one line in the same spot */
+  .selbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 3vh; max-width: 94vw; background: var(--ink);
+    border-radius: 1.4vh; padding: 1.6vh 3vh; font-size: 2.8vh; box-shadow: 0 .6vh 3vh rgba(0,0,0,.45); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  body.top .selbar { bottom: auto; top: 3vh; }
+  .selbar b { color: var(--fuel); }
+  /* only shows while a mouse moves over the page (OBS: Interact), so it never appears on the stream */
+  #flip { position: fixed; right: 1.5vw; top: 1.5vh; z-index: 5; color: #fff; background: var(--ink); border-color: rgba(255,255,255,.35);
+    opacity: 0; pointer-events: none; transition: opacity .3s; }
+  body.mouse #flip { opacity: 1; pointer-events: auto; }
+  #flip.sel { background: #fff; color: var(--ink); }
+</style>
+</head><body>
+<div class="sb" id="bar" hidden>
+  <div class="side red"><div class="lt" id="rh"></div><div class="tm num" id="rt"></div><div class="rp num" id="rrp"></div><div class="s num" id="rs">0</div></div>
+  <div class="mid"><div class="k" id="mk"></div><div class="clk num" id="clk">–:––</div><div class="ph" id="ph"></div></div>
+  <div class="side blue"><div class="lt" id="bh"></div><div class="tm num" id="bt"></div><div class="rp num" id="brp"></div><div class="s num" id="bs">0</div></div>
+</div>
+<div class="selbar" id="selbar" hidden></div>
+<button class="ghost small flip" id="flip">⇄ Flip sides</button>
+<script src="/static/common.js"></script>
+<script>
+const { $, esc } = FMS;
+if (new URLSearchParams(location.search).get("pos") === "top") document.body.classList.add("top");
+FMS.connect();
+FMS.flipToggle($("#flip"));
+let mouseT;
+document.addEventListener("mousemove", () => {
+  document.body.classList.add("mouse");
+  clearTimeout(mouseT); mouseT = setTimeout(() => document.body.classList.remove("mouse"), 3000);
+});
+const LEVEL = { qm: "Qual", sf: "Playoff", f: "Final" };
+function matchLabel(cur) {
+  const n = cur.comp_level === "qm" ? cur.match_number : cur.comp_level === "f" ? cur.match_number : cur.set_number;
+  return `${LEVEL[cur.comp_level] || cur.comp_level.toUpperCase()} ${n ?? ""}`.trim();
+}
+let committed = false;
+FMS.on((s) => {
+  const showSel = s.display === "selection" && s.selection;
+  const cur = s.current;
+  $("#selbar").hidden = !showSel;
+  $("#bar").hidden = !!showSel || !cur;
+  if (showSel) {
+    const sel = s.selection, last = sel.history[sel.history.length - 1];
+    $("#selbar").innerHTML = sel.done ? `${esc(s.event.name)} · <b>Alliances are set</b>`
+      : `Alliance Selection · Round ${sel.round} · <b>Alliance ${sel.picking}</b> captain ${esc(sel.alliances[sel.picking - 1][0])} is picking`
+        + (last ? ` · last pick: A${last.alliance} took ${esc(last.team)}` : "");
+  }
+  if (!cur) return;
+  FMS.placeSides({ red: $(".side.red"), blue: $(".side.blue") });
+  const [left] = FMS.sides();
+  for (const a of ["red", "blue"]) $(".side." + a).classList.toggle("r", a !== left);   // score sits next to the clock
+  $("#mk").textContent = `${matchLabel(cur)} · ${s.event.name}`;
+  const sc = cur.score;
+  committed = cur.status === "committed" && !!sc;
+  for (const a of ["red", "blue"]) {
+    const c = a[0], al = cur[a + "_alliance"];
+    $(`#${c}t`).innerHTML = (al ? `<span class="al">A${esc(al)}</span>` : "") + cur[a].map((t) => `<span>${esc(t)}</span>`).join("");
+    $(`#${c}s`).textContent = sc ? sc[a].total : 0;
+    $(`#${c}rp`).textContent = committed && cur.comp_level === "qm" ? `${sc[a].rp} RP` : "";
+    $(".side." + a).classList.toggle("win", committed && sc.winner === a);
+  }
+  if (committed) {
+    $("#ph").textContent = sc.winner === "tie" ? "Tie" : (sc.winner === "red" ? "Red" : "Blue") + " wins";
+  }
+  $("#ph").classList.toggle("res", committed);
+});
+everyFrame(() => {
+  const s = FMS.state, cur = s && s.current;
+  if (!cur) return;
+  const p = FMS.phase(cur);
+  $("#clk").textContent = committed ? "Final" : FMS.mmss(p.clock);
+  if (!committed) $("#ph").textContent = cur.status === "scheduled" && !cur.periods ? "Up next" : p.label;
+  const live = !committed && p.active && !["pre", "post", "pause"].includes(p.name) && s.game_id !== "reefscape";   // no hubs in REEFSCAPE
+  for (const a of ["red", "blue"]) {
+    const el = $(a === "red" ? "#rh" : "#bh");
+    el.hidden = !live;
+    el.classList.toggle("on", !!(live && p.active[a]));
+  }
+});
+</script>
+</body></html>

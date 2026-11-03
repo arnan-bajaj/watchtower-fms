@@ -122,7 +122,7 @@ async function eventsView() {
   <div class="panel"><h2>New event</h2>
     <div class="small muted" style="margin-bottom:.35rem">Game</div>
     <div class="games" role="radiogroup" aria-label="Game">
-      <button role="radio" aria-checked="false" data-game="reefscape" title="REEFSCAPE (2025): scored by hand, no hub cameras"><b>REEFSCAPE</b><span class="small">2025 · scored by hand</span></button>
+      <button role="radio" aria-checked="false" data-game="reefscape" title="REEFSCAPE (2025): scorers count live on their phones, no hub cameras"><b>REEFSCAPE</b><span class="small">2025 season</span></button>
       <button class="sel" role="radio" aria-checked="true" data-game="rebuilt"><b>REBUILT</b><span class="small">2026 season</span></button>
       <button disabled role="radio" aria-checked="false" data-game="biocore" title="BIOCORE is next season's game"><b>BIOCORE</b><span class="small">2027 · coming next season</span></button>
     </div>
@@ -150,8 +150,10 @@ function phoneLinks(e) {
   if (!e.online || !e.lan_urls.length) return `<p class="muted">Watchtower isn't running for this event right now (it runs on the Control laptop). Check back when it is.</p>`;
   const u = e.lan_urls[0];
   return `<p class="small muted">On the venue WiFi, open your station:</p>
-    ${["ref", ...(e.game === "reefscape" ? ["score"] : []), "emcee", "display", "control"].map((p) => `<a class="bigbtn" href="${esc(u)}/${p}">${{ ref: "Referee", score: "Scorer", emcee: "Emcee", display: "Field display", control: "Control" }[p]}</a>`).join("")}
-    <p class="small muted">Address: <code>${esc(u)}</code>. If it doesn't open, you're not on the same WiFi as the Control laptop.</p>`;
+    ${["ref", ...(e.game === "reefscape" ? ["score"] : []), "emcee", "display", "overlay", "control"].map((p) => `<a class="bigbtn" href="${esc(u)}/${p}">${{ ref: "Referee", score: "Scorer", emcee: "Emcee", display: "Field display", overlay: "Stream overlay", control: "Control" }[p]}</a>`).join("")}
+    <p class="small muted">Address: <code>${esc(u)}</code>. If it doesn't open, you're not on the same WiFi as the Control laptop.</p>
+    <p class="small muted">Streaming: in OBS add a Browser Source with URL <code>${esc(u)}/overlay</code> at 1920×1080. It draws a score bar over your camera
+      (add <code>?pos=top</code> to put it at the top).</p>`;
 }
 
 async function eventView(slug) {
@@ -203,7 +205,7 @@ function renderOwner(e) {
         ${reef ? `<div><span class="small muted">Scorer</span><b>${esc(v("server.pins.scorer") || "off")}</b></div>` : ""}</div>
       <p class="small muted">Change them in Watchtower: /control → Setup.</p></div>
     ${reef ? `<div class="panel"><h2>Scoring</h2>
-      <p class="small muted">REEFSCAPE (2025) is scored by hand, no cameras. Scorers count coral, algae, LEAVE and BARGE live on /score (Scorer PIN); Control (/control) checks the totals and commits.</p></div>`
+      <p class="small muted">REEFSCAPE (2025) uses no cameras. Scorers count coral, algae, LEAVE and BARGE live on /score (Scorer PIN); Control (/control) checks the totals and commits.</p></div>`
     : `<div class="panel"><h2>Hub cameras</h2>
       ${["red", "blue"].map((h) => { const cam = S["vision.hubs." + h] && S["vision.hubs." + h].value, f = e.vision && e.vision[h];
         return `<div class="small"><b>${h}</b>: ${!cam ? "no camera picked" : `camera ${esc(cam.source)}, ${cam.outline && cam.outline.length ? "outline drawn" : "outline not drawn yet"}`}${e.online && f ? ` · ${f} fps` : ""}</div>`; }).join("")}
