@@ -3,6 +3,18 @@
 Versions are git tags. v0.x were alphas built toward our first scrimmage; v1 is the build that ran the
 10th Street Showdown (2026-10-10); v2 is the website revamp.
 
+## v2.4.0: the old Hub Counter page's tools, back in Setup
+
+- **Exit line** per hub (Setup -> Cameras): drawn beside the outline; the hub counts the larger of the two,
+  with the exits-against-outline check in its status.
+- **Measure ball**: 5 s of still balls gives an estimate that draws a ball-width ruler while you draw the
+  outline and is checked against the drop test. Only the drop test sets the size counted with.
+- **Run**: live counts per hub, a practice count from zero, the field link, and the cameras locked while a
+  match runs (Unlock for this match).
+- **Test**: ball test (pass/fail, changes nothing), speed against the field feed's spec, Record the cameras
+  into the event folder's `recordings/`, and Check a recording against a hand count.
+- The Setup page's address list includes the stream overlay.
+
 ## v2.3.0: stream overlay
 
 - **Stream overlay (`/overlay`)** for OBS: a score bar over the stream camera on an otherwise transparent page

@@ -46,10 +46,17 @@ vision_status: dict = {}
 feed_status: list = []        # live count feeds to field systems, relayed by vision (count_feed.py)
 feed_seen = 0.0
 # Setup -> Cameras, in memory only: what /control asks vision for, and the pictures it sends back.
-vision_want = {"frames_until": 0.0, "scan": 0, "drop": {}}   # drop: hub -> {"id", "n"} (drop test)
+# drop: hub -> {"id", "n"} (drop test); size: hub -> {"id"} (Measure); record: Test -> Record's id or None;
+# check: Test -> Check a recording {"id", "dir", "name", "hub", "hand"} or None
+vision_want = {"frames_until": 0.0, "scan": 0, "drop": {}, "size": {}, "record": None, "check": None}
 vision_frames: dict = {}      # hub -> {"jpeg": bytes, "w", "h", "source", "t"}
 vision_cams: dict = {"id": 0, "t": 0, "cameras": [], "in_use": {}, "error": None}
 vision_drop: dict = {}        # hub -> {"ok", "msg", "t"} (the last drop test's outcome)
+vision_size: dict = {}        # hub -> {"ok", "msg", "t"} (the last Measure's outcome)
+vision_files: list = []       # recordings vision can re-count (Test -> Check a recording)
+vision_check: dict = {"progress": None, "result": None}
+vision_unlock = {"key": None}  # the running match whose cameras Control unlocked (Setup -> Run)
+LOCKED = "Cameras are locked while a match runs. Unlock them in Setup → Run first."
 _field_applied: set = set()   # (match key, auto_start) whose auto result came from a field's lights
 _dirty = threading.Event()  # set from any thread; tick loop broadcasts
 
@@ -379,10 +386,23 @@ def get_settings(x_fms_token: str = Header(None)):
             "cloud": {"url": CFG["cloud"]["url"], "event": CFG["cloud"]["event"], **cloud.status}}
 
 
+def running_match():
+    return next((m for m in store.matches() if m["status"] == "running"), None)
+
+
+def cams_locked():
+    """Setup -> Cameras can't change a hub's camera, outline or ball size while a match runs (a stray
+    click would change the count mid-match), unless Control unlocked it for this match."""
+    m = running_match()
+    return bool(m) and vision_unlock["key"] != m["key"]
+
+
 @app.post("/api/settings")
 def post_settings(body: dict = Body(...), x_fms_token: str = Header(None)):
     """{"changes": {key: value}}; a value of null puts that key back to event.yaml."""
     need(x_fms_token)
+    if any(str(k).startswith("vision.hubs.") for k in body.get("changes") or {}) and cams_locked():
+        raise HTTPException(409, LOCKED)
     try:
         changes = settings.clean(body.get("changes") or {})
         apply_settings(settings.merge(settings_entries(), settings.stamp(changes, time.time())))
@@ -1282,6 +1302,15 @@ def vision_events(body: dict = Body(...), x_vision_key: str = Header(None)):
     if isinstance(status.get("feeds"), list):
         feed_status[:] = [f for f in status.pop("feeds") if isinstance(f, dict)]
         feed_seen = time.time()
+    if isinstance(status.get("files"), list):
+        vision_files[:] = [f for f in status.pop("files") if isinstance(f, dict)]
+    chk = vision_want["check"]
+    prog = status.pop("checking", None)
+    vision_check["progress"] = prog if chk and isinstance(prog, dict) and prog.get("id") == chk["id"] else None
+    res = body.get("checked")
+    if chk and isinstance(res, dict) and res.get("id") == chk["id"]:
+        vision_check.update(result={**res, "t": time.time()}, progress=None)
+        vision_want["check"] = None
     for hub, st in status.items():
         vision_status[hub] = {**st, "seen": time.time()}
     if rows:
@@ -1297,11 +1326,49 @@ def vision_events(body: dict = Body(...), x_vision_key: str = Header(None)):
         if hub in game.ALLIANCES and isinstance(res, dict) and d and res.get("id") == d["id"]:
             vision_want["drop"].pop(hub, None)
             _calibrated(hub, res)
+    for hub, res in (body.get("sized") or {}).items():
+        d = vision_want["size"].get(hub)
+        if hub in game.ALLIANCES and isinstance(res, dict) and d and res.get("id") == d["id"]:
+            vision_want["size"].pop(hub, None)
+            _sized(hub, res)
     # config_rev: vision re-fetches /api/vision/config when it changes. now: its clock check.
     # want: what Setup -> Cameras is waiting for (pictures, a camera scan, a drop test).
     return {"record": rec, "config_rev": store.get("vision_rev") or 0, "now": time.time(),
             "want": {"frames": time.time() < vision_want["frames_until"], "scan": vision_want["scan"],
-                     "drop": copy.deepcopy(vision_want["drop"])}}
+                     "drop": copy.deepcopy(vision_want["drop"]), "size": copy.deepcopy(vision_want["size"]),
+                     "record": vision_want["record"], "check": copy.deepcopy(vision_want["check"])}}
+
+
+def _at_setup_size(area, size, cur):
+    """A pixel area vision measured on a w x h picture, at the size the hub's outline was drawn on."""
+    (w, h), (sw, sh) = size or [0, 0], cur.get("size") or [0, 0]
+    return area * (sw * sh) / (w * h) if w and h and sw and sh else area
+
+
+def _sized(hub, res):
+    """Measure's estimate from vision (dropfit.estimate): saved as the hub's `measured`, which draws the
+    ruler and checks the drop test. The ball size counted with stays the drop test's."""
+    cur = CFG["vision"]["hubs"].get(hub)
+    now = time.time()
+    if res.get("error") or not res.get("area"):
+        vision_size[hub] = {"ok": False, "msg": res.get("error") or "Nothing measured.", "t": now}
+    elif not cur:
+        vision_size[hub] = {"ok": False, "msg": "Pick this hub's camera in Setup first.", "t": now}
+    else:
+        area = _at_setup_size(res["area"], res.get("size"), cur)
+        try:
+            apply_settings(settings.merge(settings_entries(), settings.stamp(settings.clean(
+                {f"vision.hubs.{hub}": {**cur, "measured": round(area, 1)}}), now)))
+            cloud.poke()
+            msg = (f"Measured: one ball ≈ {area:.0f} px ({res.get('blobs')} lone balls in {res.get('frames')} frames). "
+                   "The ruler now shows ball widths while you draw. Calibrate still sets the size it counts with.")
+            off = cur.get("ball_area") and not 0.67 <= area / cur["ball_area"] <= 1.5
+            vision_size[hub] = {"ok": not off, "t": now, "msg": msg + (
+                f" The drop test fitted {cur['ball_area']:.0f} px, which is far from this: check the balls were "
+                "apart and still, and that the outline covers the whole opening." if off else "")}
+        except ValueError as e:
+            vision_size[hub] = {"ok": False, "msg": str(e), "t": now}
+    mark_dirty()
 
 
 def _calibrated(hub, res):
@@ -1314,8 +1381,7 @@ def _calibrated(hub, res):
     elif not cur:
         vision_drop[hub] = {"ok": False, "msg": "Pick this hub's camera in Setup first.", "t": now}
     else:
-        (w, h), (sw, sh) = res.get("size") or [0, 0], cur.get("size") or [0, 0]
-        area = res["area"] * (sw * sh) / (w * h) if w and h and sw and sh else res["area"]
+        area = _at_setup_size(res["area"], res.get("size"), cur)
         try:
             apply_settings(settings.merge(settings_entries(), settings.stamp(settings.clean(
                 {f"vision.hubs.{hub}": {**cur, "ball_area": round(area, 1)}, f"vision.scale.{hub}": 1}), now)))
@@ -1323,8 +1389,11 @@ def _calibrated(hub, res):
             got, n = res.get("got"), res.get("n")
             msg = f"Calibrated: one ball = {area:.0f} px. Replaying the test with it counts {got} of the {n} balls dropped."
             off = got is not None and n and abs(got - n) > max(1, 0.1 * n)
-            vision_drop[hub] = {"ok": not off, "t": now, "msg": msg + (
-                " That's not close: check the outline covers the whole opening and run the test again." if off else "")}
+            meas = cur.get("measured")
+            far = meas and not 0.67 <= area / meas <= 1.5            # Measure's still balls disagree
+            vision_drop[hub] = {"ok": not (off or far), "t": now, "msg": msg + (
+                " That's not close: check the outline covers the whole opening and run the test again." if off else "") + (
+                f" Measure said about {meas:.0f} px, far from this: check how many balls you typed, or Measure again." if far else "")}
         except ValueError as e:
             vision_drop[hub] = {"ok": False, "msg": str(e), "t": now}
     mark_dirty()
@@ -1355,8 +1424,39 @@ def vision_cameras_in(body: dict = Body(...), x_vision_key: str = Header(None)):
 @app.post("/api/vision/want")
 def vision_want_post(body: dict = Body(...), x_fms_token: str = Header(None)):
     """Setup -> Cameras: {"frames": true} (keep pictures coming ~15 s), {"scan": true}, and the drop test:
-    {"drop": hub} starts recording, {"drop": hub, "n": balls} ends it (vision fits), {"drop": hub, "cancel": true}."""
+    {"drop": hub} starts recording, {"drop": hub, "n": balls} ends it (vision fits), {"drop": hub, "cancel": true}.
+    {"measure": hub} (5 s of still balls); Setup -> Run: {"unlock": true/false} for the running match;
+    Setup -> Test: {"record": true/false}, {"check": {"dir", "name", "hub", "hand"}} or {"check": false}."""
     need(x_fms_token)
+    if "unlock" in body:
+        m = running_match()
+        vision_unlock["key"] = m["key"] if m and body["unlock"] else None
+    if (body.get("drop") in game.ALLIANCES and not body.get("cancel") or body.get("measure") in game.ALLIANCES) and cams_locked():
+        raise HTTPException(409, LOCKED)
+    hub = body.get("measure")
+    if hub in game.ALLIANCES:
+        vision_want["size"][hub] = {"id": int(time.time() * 1000)}
+        vision_size.pop(hub, None)
+    if "record" in body:
+        vision_want["record"] = time.strftime("test_%Y%m%d_%H%M%S") if body["record"] else None
+    chk = body.get("check")
+    if chk is False:
+        vision_want["check"] = None
+        vision_check["progress"] = None
+    elif isinstance(chk, dict):
+        if running_match():
+            raise HTTPException(409, "Not during a match: re-counting a recording slows the live count.")
+        if chk.get("hub") not in game.ALLIANCES or chk.get("dir") not in ("test", "match") or not chk.get("name"):
+            raise HTTPException(400, "Pick a recording and its hub")
+        try:
+            hand = int(chk["hand"]) if chk.get("hand") not in (None, "") else None
+        except (TypeError, ValueError):
+            hand = 0
+        if hand is not None and not 1 <= hand <= 10000:
+            raise HTTPException(400, "Enter how many balls went in by hand")
+        vision_want["check"] = {"id": int(time.time() * 1000), "dir": chk["dir"], "name": str(chk["name"]),
+                                "hub": chk["hub"], "hand": hand}
+        vision_check.update(progress=None, result=None)
     if body.get("frames"):
         vision_want["frames_until"] = time.time() + 15
     if body.get("scan"):
@@ -1392,6 +1492,10 @@ def vision_setup(x_fms_token: str = Header(None)):
                      "error": vision_cams["error"], "in_use": vision_cams["in_use"],
                      "cameras": [{k: c[k] for k in ("source", "w", "h")} for c in vision_cams["cameras"]]},
             "drop": {h: {"n": d["n"]} for h, d in vision_want["drop"].items()}, "drop_result": vision_drop,
+            "size": {h: {} for h in vision_want["size"]}, "size_result": vision_size,
+            "record": vision_want["record"], "files": vision_files,
+            "check": vision_want["check"], "check_progress": vision_check["progress"], "check_result": vision_check["result"],
+            "match": (lambda m: m["key"] if m else None)(running_match()), "locked": cams_locked(),
             # live, unlike /ws state (pushed only on changes when no match runs)
             "vision": {h: {**v, "age": round(now - v["seen"], 1)} for h, v in vision_status.items()}}
 

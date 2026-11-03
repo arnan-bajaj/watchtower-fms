@@ -139,7 +139,7 @@ def test_vision_config_follows_setup(tmp_path, monkeypatch):
                   "scale": {"red": 9.0, "blue": 1.0}, "hubs": {"red": None, "blue": None}}
     r = c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}}).json()
     assert r["config_rev"] == 1 and abs(r["now"] - __import__("time").time()) < 5
-    assert r["want"] == {"frames": False, "scan": 0, "drop": {}}
+    assert r["want"] == {"frames": False, "scan": 0, "drop": {}, "size": {}, "record": None, "check": None}
 
 
 def test_setup_cameras_flow(tmp_path, monkeypatch):
@@ -169,7 +169,8 @@ def test_setup_cameras_flow(tmp_path, monkeypatch):
     bad = {"source": "1", "size": [1920, 1080], "outline": [[1, 2], [3, 4]]}
     assert c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": bad}}).status_code == 400
     c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": {"source": 1}}})
-    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"] == {"source": "1", "size": [0, 0], "outline": [], "ball_area": None}
+    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"] == {"source": "1", "size": [0, 0], "outline": [], "exit": None,
+                                                                      "ball_area": None, "measured": None}
     c.post("/api/vision/frames", headers=vk, json={"red": {"jpeg": jpg, "w": 1280, "h": 720, "source": "1"}})
     assert c.get("/api/vision/setup", headers=ctl).json()["frames"]["red"]["w"] == 1280
     assert c.get("/api/vision/image/hub/red", headers=ctl).content == b"\xff\xd8fake"
@@ -232,3 +233,88 @@ def test_cloud_sync_merges_website_edits(tmp_path, monkeypatch):
     assert set(sent["status"]) >= {"match", "lan_urls", "played"}
     st = c.get("/api/state").json()["event"]
     assert st["name"] == "Local name" and st["teams"] == [101, 102, 103, 104, 105]
+
+
+def test_measure_exit_line_lock_record_and_check(tmp_path, monkeypatch):
+    """Setup -> Cameras' Measure and exit line, Setup -> Run's lock, Setup -> Test's Record and Check a
+    recording, as the FMS relays them to vision and back."""
+    srv, ev = _server(tmp_path, monkeypatch)
+    c = TestClient(srv.app)
+    ctl, vk = {"X-FMS-Token": srv.token_for("control")}, {"X-Vision-Key": ev["server"]["vision_key"]}
+    events = lambda **kw: c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}, **kw}).json()
+    box = [[400, 300], [800, 300], [780, 420], [420, 420]]
+    hub = {"source": "1", "size": [1280, 720], "outline": box, "ball_area": 400}
+    c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": hub}})
+
+    # Measure: 5 s of still balls on vision's 1920x1080 picture -> 900 px there = 400 px at the outline's 720p;
+    # saved as `measured`, the drop test's ball_area untouched
+    c.post("/api/vision/want", headers=ctl, json={"measure": "red"})
+    sid = events()["want"]["size"]["red"]["id"]
+    events(sized={"red": {"id": sid, "area": 900.0, "blobs": 40, "frames": 150, "size": [1920, 1080]}})
+    st = c.get("/api/vision/setup", headers=ctl).json()
+    assert st["size"] == {} and st["size_result"]["red"]["ok"] and "400 px" in st["size_result"]["red"]["msg"]
+    red = c.get("/api/vision/config", headers=vk).json()["hubs"]["red"]
+    assert (red["measured"], red["ball_area"]) == (400.0, 400.0)
+    # a Measure far from the drop test's size says so
+    c.post("/api/vision/want", headers=ctl, json={"measure": "red"})
+    sid = events()["want"]["size"]["red"]["id"]
+    events(sized={"red": {"id": sid, "area": 2700.0, "blobs": 12, "frames": 150, "size": [1920, 1080]}})
+    st = c.get("/api/vision/setup", headers=ctl).json()
+    assert not st["size_result"]["red"]["ok"] and "far from this" in st["size_result"]["red"]["msg"]
+    # and a drop test far from Measure (1200 px now) says so too, but keeps its fit
+    c.post("/api/vision/want", headers=ctl, json={"drop": "red"})
+    did = events()["want"]["drop"]["red"]["id"]
+    c.post("/api/vision/want", headers=ctl, json={"drop": "red", "n": 20})
+    events(measured={"red": {"id": did, "area": 900.0, "got": 20, "n": 20, "size": [1920, 1080]}})
+    st = c.get("/api/vision/setup", headers=ctl).json()
+    assert not st["drop_result"]["red"]["ok"] and "Measure said about 1200 px" in st["drop_result"]["red"]["msg"]
+    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"]["ball_area"] == 400.0
+
+    # exit line beside the outline: needs an outline, two ends, and the out side off the line
+    ex = {"line": [[420, 480], [780, 480]], "out": [600, 560]}
+    for bad in ({**hub, "outline": [], "exit": ex}, {**hub, "exit": {**ex, "out": [600, 480]}},
+                {**hub, "exit": {**ex, "line": [[420, 480], [420, 480]]}}):
+        assert c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": bad}}).status_code == 400
+    c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": {**hub, "exit": ex}}})
+    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"]["exit"] == {
+        "line": [[420.0, 480.0], [780.0, 480.0]], "out": [600.0, 560.0]}
+
+    # Test -> Record: a named recording until stopped
+    rec = c.post("/api/vision/want", headers=ctl, json={"record": True}).json()["record"]
+    assert rec.startswith("test_") and events()["want"]["record"] == rec
+    assert c.post("/api/vision/want", headers=ctl, json={"record": False}).json()["record"] is None
+    # Test -> Check a recording: vision lists its files, re-counts one, reports progress then rows
+    files = [{"name": f"{rec}_red.mp4", "dir": "test", "hub": "red", "mb": 3.1, "t": 1}]
+    c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {"files": files}})
+    assert c.get("/api/vision/setup", headers=ctl).json()["files"] == files
+    for bad in ({"dir": "test", "name": files[0]["name"], "hub": "green"}, {"dir": "/etc", "name": "x", "hub": "red"},
+                {"dir": "test", "name": files[0]["name"], "hub": "red", "hand": "lots"}):
+        assert c.post("/api/vision/want", headers=ctl, json={"check": bad}).status_code == 400
+    c.post("/api/vision/want", headers=ctl, json={"check": {"dir": "test", "name": files[0]["name"], "hub": "red", "hand": 12}})
+    want = events()["want"]["check"]
+    assert {k: want[k] for k in ("dir", "name", "hub", "hand")} == {"dir": "test", "name": files[0]["name"], "hub": "red", "hand": 12}
+    c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {"checking": {"id": want["id"], "frames": 300, "frac": 0.5}}})
+    assert c.get("/api/vision/setup", headers=ctl).json()["check_progress"]["frac"] == 0.5
+    rows = [{"label": "what the hub counts now", "count": 12, "error": 0, "pct": 0.0}]
+    r = events(checked={"id": want["id"], "rows": rows, "hand": 12, "frames": 600, "seconds": 10.0})
+    assert r["want"]["check"] is None
+    st = c.get("/api/vision/setup", headers=ctl).json()
+    assert st["check"] is None and st["check_progress"] is None and st["check_result"]["rows"] == rows
+
+    # Setup -> Run: while a match runs, the cameras are locked (settings, drop test, Measure) and a
+    # recording can't be re-counted; Unlock opens them for that match only
+    srv.store.insert_match({"key": "qm1", "comp_level": "qm", "set_number": 1, "match_number": 1, "ord": 1,
+                            "red": [101, 102, 103], "blue": [104, 105, 106], "surrogates": [], "scheduled": None,
+                            "status": "scheduled", "adjust": {}, "climbs": {}})
+    assert c.post("/api/match/start", headers=ctl, json={"key": "qm1"}).status_code == 200
+    st = c.get("/api/vision/setup", headers=ctl).json()
+    assert st["locked"] and st["match"] == "qm1"
+    assert c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": hub}}).status_code == 409
+    assert c.post("/api/vision/want", headers=ctl, json={"measure": "red"}).status_code == 409
+    assert c.post("/api/vision/want", headers=ctl, json={"drop": "red"}).status_code == 409
+    assert c.post("/api/vision/want", headers=ctl, json={"check": {"dir": "test", "name": "x.mp4", "hub": "red"}}).status_code == 409
+    assert c.post("/api/settings", headers=ctl, json={"changes": {"event.name": "Still editable"}}).status_code == 200
+    assert c.post("/api/vision/want", headers=ctl, json={"record": True}).status_code == 200     # recording is fine
+    assert not c.post("/api/vision/want", headers=ctl, json={"unlock": True}).json()["locked"]
+    assert c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": hub}}).status_code == 200
+    assert c.post("/api/vision/want", headers=ctl, json={"unlock": False}).json()["locked"]

@@ -61,6 +61,14 @@
   .camview canvas { cursor: crosshair; }
   .camview .camwait { position: absolute; inset: 0; display: grid; place-items: center; color: #cfd3d8; font-size: .9rem; padding: 1rem; text-align: center; }
   .camsteps { margin: .3rem 0 0; padding-left: 1.2rem; } .camsteps li { margin: .15rem 0; } .camsteps li.done { color: var(--ok); }
+  /* Setup -> Run / Test */
+  .runhubs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
+  .runhub { border-radius: var(--r-md); padding: .6rem .7rem; color: #fff; min-width: 0; overflow-wrap: anywhere; }
+  .runhub.red { background: var(--red); } .runhub.blue { background: var(--blue); }
+  .runhub .n { font-size: 2.6rem; font-weight: 850; line-height: 1.05; }
+  .runhub .d { font-size: .8rem; opacity: .92; }
+  .tstep + .tstep { border-top: 1px solid var(--line); margin-top: .7rem; padding-top: .7rem; }
+  #testbox select { min-width: 0; }
 </style>
 </head><body>
 <div class="bar">
@@ -193,6 +201,10 @@
         <div class="row" style="margin-top:.4rem"><input id="camsrc" placeholder="rtsp://192.168.1.20:554/stream or a file path" autocapitalize="off" spellcheck="false">
           <span id="camsrcbtns"></span></div></details>
       <div class="hubcams" id="hubcams"></div>
+    </div>
+    <div class="grid2">
+      <div class="panel" id="runpanel"><h2>Run</h2><div id="runbox"><span class="muted small">Open while the hub counter runs.</span></div></div>
+      <div class="panel" id="testpanel"><h2>Test</h2><div id="testbox"><span class="muted small">Check the counter on your own cameras before trusting it with a match.</span></div></div>
     </div>
     <div class="grid2">
       <div class="panel"><h2>Event</h2>
@@ -903,11 +915,16 @@ function renderCalib(s) {
   });
 }
 
-// ---- Setup -> Cameras: pick each hub's camera, draw its outline, calibrate by drop test (vision/hubsetup.py, dropfit.py)
+// ---- Setup -> Cameras: pick each hub's camera, draw its outline (and optionally an exit line), Measure
+// and calibrate by drop test (vision/hubsetup.py, dropfit.py). Setup -> Run and Test below it.
 let CAM = null, scanAsked = 0, lastWant = 0;
-const camDraft = {}, camImg = {}, camImgT = {};     // per hub (outline being drawn, picture); camImg also "cam:<source>"
+const camDraft = {}, camImg = {}, camImgT = {};     // per hub: {kind: "outline" | "exit", pts} being drawn; picture; camImg also "cam:<source>"
+const camHover = {};                                // hub -> [x, y] under the pointer while drawing an outline (the ruler)
+let practice = null, ballTest = null, btResult = null;   // Run's practice count / Test's ball test: each hub's count at Start
 const hubCam = (h) => sv("vision.hubs." + h);
 const setupOpen = () => !document.querySelector('section[data-tab="setup"]').hidden && document.visibilityState === "visible";
+const camLocked = () => !!(CAM && CAM.locked);
+const LOCKMSG = "Locked while a match runs. Unlock in Setup → Run.";
 async function camFetch(key, url) {
   try {
     const r = await fetch(url, { headers: { "X-FMS-Token": localStorage.getItem("fms_token_control") || "" } });
@@ -923,8 +940,8 @@ async function pollCams() {
     if (now - lastWant > 5000) { lastWant = now; CAM = await FMS.api("/api/vision/want", { frames: true }); }
     else CAM = await FMS.api("/api/vision/setup", undefined, "GET");
   } catch { return; }
-  // a drop test's fit is saved by the server: fetch the settings again to show it
-  const resT = Object.values(CAM.drop_result).map((r) => r.t).join();
+  // a drop test's fit (or Measure's estimate) is saved by the server: fetch the settings again to show it
+  const resT = [...Object.values(CAM.drop_result), ...Object.values(CAM.size_result)].map((r) => r.t).join();
   if (resT !== camImgT.res) { const first = camImgT.res === undefined; camImgT.res = resT; if (!first) await loadSettings(); }
   const jobs = [];
   for (const [h, f] of Object.entries(CAM.frames)) if (camImgT[h] !== f.t) { camImgT[h] = f.t; jobs.push(camFetch(h, `/api/vision/image/hub/${h}`)); }
@@ -933,7 +950,7 @@ async function pollCams() {
     jobs.push(...CAM.scan.cameras.map((c) => camFetch("cam:" + c.source, `/api/vision/image/cam/${encodeURIComponent(c.source)}`)));
   }
   await Promise.all(jobs);
-  renderCams();
+  renderCams(); renderRun(); renderTest();
 }
 setInterval(pollCams, 1000);
 $("#bscan").onclick = async () => {
@@ -946,12 +963,20 @@ function pickCam(h, source) {
   const other = h === "red" ? "blue" : "red", oc = hubCam(other);
   if (oc && oc.source === source) return FMS.toast(`That's the ${other} hub's camera. Give it a different one, or remove it there first.`, true);
   delete camDraft[h];
-  saveSettings({ ["vision.hubs." + h]: { source, size: [0, 0], outline: [], ball_area: null } }, `${Cap(h)} hub: camera ${source}. Now click around the hub's opening.`);
+  saveSettings({ ["vision.hubs." + h]: { source, size: [0, 0], outline: [], exit: null, ball_area: null, measured: null } }, `${Cap(h)} hub: camera ${source}. Now click around the hub's opening.`);
 }
 function camFrameSize(h) { const f = CAM && CAM.frames[h]; return f && f.w ? [f.w, f.h] : null; }
-function savedOutline(h, fw, fh) {        // the saved outline in the current picture's pixels
-  const c = hubCam(h); if (!c || !c.outline.length) return [];
-  const [sw, sh] = c.size; return c.outline.map(([x, y]) => [x * fw / (sw || fw), y * fh / (sh || fh)]);
+// Saved points are in the pixels of the picture the outline was drawn on (c.size); the picture now may differ.
+const scalePts = (pts, [fw, fh], [tw, th]) => pts.map(([x, y]) => [Math.round(x * tw / (fw || tw) * 10) / 10, Math.round(y * th / (fh || th) * 10) / 10]);
+function savedOutline(h, fw, fh) {
+  const c = hubCam(h); return c && c.outline.length ? scalePts(c.outline, c.size, [fw, fh]) : [];
+}
+function savedExit(h, fw, fh) {          // [one end, other end, out]
+  const c = hubCam(h); return c && c.exit ? scalePts([...c.exit.line, c.exit.out], c.size, [fw, fh]) : [];
+}
+function ballPx(h, fw, fh) {             // one ball's area on the current picture: Measure's, else the drop test's
+  const c = hubCam(h), a = c && (c.measured || c.ball_area);
+  return a && c.size[0] ? a * (fw * fh) / (c.size[0] * c.size[1]) : null;
 }
 function drawCam(h) {
   const box = document.querySelector(`.hubcam[data-hub="${h}"]`); if (!box) return;
@@ -959,13 +984,38 @@ function drawCam(h) {
   const r = cv.getBoundingClientRect(), k = r.width / fs[0], dpr = window.devicePixelRatio || 1;
   cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
   const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, r.width, r.height);
-  const pts = camDraft[h] || savedOutline(h, fs[0], fs[1]), col = h === "red" ? "#ff4d64" : "#3d8bff";
+  const d = camDraft[h], col = h === "red" ? "#ff4d64" : "#3d8bff";
+  const dot = (x, y, c) => { g.fillStyle = c; g.beginPath(); g.arc(x * k, y * k, 5, 0, 7); g.fill(); };
+  const pts = d && d.kind === "outline" ? d.pts : savedOutline(h, fs[0], fs[1]);
   if (pts.length) {
     g.lineWidth = 2.5; g.strokeStyle = "#f4c300"; g.fillStyle = "rgba(244,195,0,.18)";
     g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x * k, y * k) : g.moveTo(x * k, y * k));
-    if (!camDraft[h] || pts.length > 2) g.closePath();
+    if (!(d && d.kind === "outline") || pts.length > 2) g.closePath();
     g.fill(); g.stroke();
-    pts.forEach(([x, y], i) => { g.fillStyle = i === 0 && camDraft[h] ? "#fff" : col; g.beginPath(); g.arc(x * k, y * k, 5, 0, 7); g.fill(); });
+    pts.forEach(([x, y], i) => dot(x, y, i === 0 && d && d.kind === "outline" ? "#fff" : col));
+  }
+  // the exit line, with an arrow from its middle towards the side balls go out to
+  const ex = d && d.kind === "exit" ? d.pts : savedExit(h, fs[0], fs[1]);
+  if (ex.length) {
+    g.lineWidth = 3; g.strokeStyle = "#22d3ee";
+    if (ex.length >= 2) { g.beginPath(); g.moveTo(ex[0][0] * k, ex[0][1] * k); g.lineTo(ex[1][0] * k, ex[1][1] * k); g.stroke(); }
+    if (ex.length === 3) {
+      const mx = (ex[0][0] + ex[1][0]) / 2 * k, my = (ex[0][1] + ex[1][1]) / 2 * k, ox = ex[2][0] * k, oy = ex[2][1] * k;
+      const a = Math.atan2(oy - my, ox - mx);
+      g.lineWidth = 2; g.beginPath(); g.moveTo(mx, my); g.lineTo(ox, oy);
+      g.moveTo(ox, oy); g.lineTo(ox - 10 * Math.cos(a - .5), oy - 10 * Math.sin(a - .5));
+      g.moveTo(ox, oy); g.lineTo(ox - 10 * Math.cos(a + .5), oy - 10 * Math.sin(a + .5)); g.stroke();
+    }
+    ex.slice(0, 2).forEach(([x, y]) => dot(x, y, "#22d3ee"));
+  }
+  // the ruler: four ball widths hanging below the pointer. The outline's top edge goes 3-4 balls above the hood.
+  const hv = camHover[h], area = ballPx(h, fs[0], fs[1]);
+  if (d && d.kind === "outline" && hv && area) {
+    const rad = Math.sqrt(area / Math.PI);
+    const ring = (i) => { g.beginPath(); g.arc(hv[0] * k, (hv[1] + rad * (1 + 2 * i)) * k, rad * k, 0, 7); g.stroke(); };
+    g.lineWidth = 3; g.strokeStyle = "rgba(0,0,0,.55)"; for (let i = 0; i < 4; i++) ring(i);    // dark edge: readable on any picture
+    g.lineWidth = 1.5; g.strokeStyle = "#fff"; g.setLineDash([4, 3]); for (let i = 0; i < 4; i++) ring(i);
+    g.setLineDash([]);
   }
 }
 function camPoint(h, ev) {
@@ -975,11 +1025,16 @@ function camPoint(h, ev) {
 function wireCam(box, h) {
   const cv = box.querySelector("canvas"); if (!cv) return;
   cv.onpointerdown = (ev) => {
-    if (!camFrameSize(h) || !camDraft[h]) return;
-    if (camDraft[h].length >= 24) return FMS.toast("That's plenty of points. Save the outline.", true);
-    camDraft[h].push(camPoint(h, ev)); renderCams(true);
+    const d = camDraft[h]; if (!camFrameSize(h) || !d) return;
+    if (d.kind === "exit" && d.pts.length >= 3) return FMS.toast("That's the exit line. Save it, or Undo point.", true);
+    if (d.pts.length >= 24) return FMS.toast("That's plenty of points. Save the outline.", true);
+    d.pts.push(camPoint(h, ev)); renderCams(true);
   };
+  cv.onpointermove = (ev) => { if (camDraft[h] && camDraft[h].kind === "outline" && camFrameSize(h)) { camHover[h] = camPoint(h, ev); drawCam(h); } };
+  cv.onpointerleave = () => { delete camHover[h]; drawCam(h); };
 }
+const EXIT_HELP = ["Click one end of the exit line, across the chute where balls leave the hub.", "Now click its other end.",
+                   "Now click a point on the side balls go to once they're out.", "Save the exit line."];
 function renderCams(force) {
   const panel = $("#campanel");
   if (!SET || (!force && panel.contains(document.activeElement) && document.activeElement.tagName === "INPUT")) return;
@@ -993,36 +1048,51 @@ function renderCams(force) {
     : sc && sc.error ? `<span style="color:var(--warn)">${esc(sc.error)}</span>`
     : sc && sc.id && !sc.cameras.length && !Object.keys(sc.in_use).length ? `<span style="color:var(--warn)">No cameras found. Plug one in and press Find cameras again.${mac ? " If macOS asked about the camera, allow Terminal (System Settings → Privacy &amp; Security → Camera), then stop Watchtower (Ctrl+C) and run the command again." : ""}</span>`
     : sc && sc.id ? `${sc.cameras.length} camera${sc.cameras.length === 1 ? "" : "s"} free${Object.keys(sc.in_use).length ? `, ${Object.keys(sc.in_use).length} in use by a hub` : ""}.` : "";
-  const hubBtns = (src) => sides().map((h) => `<button class="small ${hubCam(h) && hubCam(h).source === src ? "primary" : "ghost"}" data-pick="${h}" data-src="${esc(src)}">${Cap(h)} hub</button>`).join("");
+  const lk = camLocked(), dis = lk ? `disabled title="${LOCKMSG}"` : "";
+  const hubBtns = (src) => sides().map((h) => `<button class="small ${hubCam(h) && hubCam(h).source === src ? "primary" : "ghost"}" data-pick="${h}" data-src="${esc(src)}" ${dis}>${Cap(h)} hub</button>`).join("");
   $("#camlist").innerHTML = sc && sc.id && !waiting ? sc.cameras.map((c) =>
     `<figure class="camcard"><img alt="" src="${camImg["cam:" + c.source] || ""}"><figcaption><b>Camera ${esc(c.source)}</b><span class="muted small">${c.w}×${c.h}</span>${hubBtns(c.source)}</figcaption></figure>`).join("") : "";
-  if (document.activeElement !== $("#camsrc")) $("#camsrcbtns").innerHTML = sides().map((h) => `<button class="small ghost" data-picksrc="${h}">${Cap(h)} hub</button>`).join("");
+  if (document.activeElement !== $("#camsrc")) $("#camsrcbtns").innerHTML = sides().map((h) => `<button class="small ghost" data-picksrc="${h}" ${dis}>${Cap(h)} hub</button>`).join("");
   $("#hubcams").innerHTML = sides().map((h) => {
     const c = hubCam(h), x = v[h] && v[h].age <= 5 ? v[h] : null, fs = camFrameSize(h);
     const drop = CAM && CAM.drop[h], res = CAM && CAM.drop_result[h];
+    const sizing = CAM && CAM.size[h], sres = CAM && CAM.size_result[h];
     if (!c) return `<div class="hubcam ${h}" data-hub="${h}"><b class="t${h}">${Cap(h)} hub</b><div class="muted small" style="margin-top:.3rem">No camera yet. Press <b>Find cameras</b> and choose <b>${Cap(h)} hub</b> under the one that sees this hub.</div></div>`;
-    const drawing = !!camDraft[h], hasOutline = c.outline.length > 0, counting = x && x.session_total != null;
+    const d = camDraft[h], hasOutline = c.outline.length > 0, counting = x && x.session_total != null;
     const steps = [[true, `Camera ${esc(c.source)}${fs ? ` · ${fs[0]}×${fs[1]}` : ""}`],
-      [hasOutline, hasOutline ? "Outline drawn" : "Draw the outline: click the corners of the hub's opening, where balls drop in, going round. Then Save outline."],
-      [!!c.ball_area, c.ball_area ? `Calibrated (one ball = ${Math.round(c.ball_area)} px)` : "Calibrate: press Calibrate, drop 20 or more balls into the hub (some one at a time, some in handfuls, like robots do), type how many, press Done."],
+      [hasOutline, hasOutline ? "Outline drawn" + (c.exit ? ", with an exit line" : "") : "Draw the outline: click the corners of the hub's opening, where balls drop in, going round. Put its top edge 3–4 balls above the hood. Then Save outline."],
+      [!!c.ball_area, c.ball_area ? `Calibrated (one ball = ${Math.round(c.ball_area)} px${c.measured ? `; Measure: ${Math.round(c.measured)} px` : ""})`
+        : "Calibrate: press Calibrate, drop 20 or more balls into the hub (some one at a time, some in handfuls, like robots do), type how many, press Done." + (c.measured ? ` (Measure: about ${Math.round(c.measured)} px.)` : "")],
       [counting, counting ? `Counting: ${x.session_total} so far` : "Counting starts once it's calibrated."]];
-    const help = drawing ? `${camDraft[h].length} point${camDraft[h].length === 1 ? "" : "s"}. Keep clicking round the opening; Save when done.`
+    const help = d && d.kind === "outline" ? `${d.pts.length} point${d.pts.length === 1 ? "" : "s"}. Keep clicking round the opening; Save when done.` + (ballPx(h, ...(fs || [1, 1])) ? " The dashed circles are 4 ball widths." : "")
+      : d ? EXIT_HELP[d.pts.length]
       : drop && drop.n ? "Working out the ball size from the test (up to a minute)…"
-      : drop ? `Recording${x && x.drop ? ` (${x.drop.s} s)` : ""}. Drop balls into the ${h} hub now, then type how many and press Done.` : "";
-    const buttons = drawing
-      ? `<button class="small primary" data-camsave="${h}" ${camDraft[h].length < 3 ? "disabled" : ""}>Save outline</button><button class="small ghost" data-camundo="${h}">Undo point</button><button class="small ghost" data-camcancel="${h}">Cancel</button>`
+      : drop ? `Recording${x && x.drop ? ` (${x.drop.s} s)` : ""}. Drop balls into the ${h} hub now, then type how many and press Done.`
+      : sizing ? `Measuring${x && x.sizing ? ` (${Math.floor(x.sizing.s)} s of 5)` : ""}. Keep a few balls lying still near the hub, apart from each other.` : "";
+    const buttons = d && d.kind === "outline"
+      ? `<button class="small primary" data-camsave="${h}" ${d.pts.length < 3 ? "disabled" : ""}>Save outline</button><button class="small ghost" data-camundo="${h}">Undo point</button><button class="small ghost" data-camcancel="${h}">Cancel</button>`
+      : d ? `<button class="small primary" data-exitsave="${h}" ${d.pts.length < 3 ? "disabled" : ""}>Save exit line</button><button class="small ghost" data-camundo="${h}">Undo point</button><button class="small ghost" data-camcancel="${h}">Cancel</button>`
       : drop && !drop.n ? `<input type="number" min="1" max="1000" placeholder="balls" data-dropn="${h}" style="width:6rem"><button class="small primary" data-dropdone="${h}">Done</button><button class="small ghost" data-dropcancel="${h}">Cancel</button>`
       : drop ? `<button class="small ghost" data-dropcancel="${h}">Cancel</button>`
-      : `<button class="small ${hasOutline ? "ghost" : "primary"}" data-camdraw="${h}" ${fs ? "" : "disabled"}>${hasOutline ? "Redraw outline" : "Draw outline"}</button>
-         <button class="small ${hasOutline && !c.ball_area ? "primary" : "ghost"}" data-dropstart="${h}" ${hasOutline && x ? "" : "disabled"}>${c.ball_area ? "Calibrate again" : "Calibrate"}</button>`;
+      : sizing ? ""
+      : `<button class="small ${hasOutline ? "ghost" : "primary"}" data-camdraw="${h}" ${fs && !lk ? "" : "disabled"} ${dis}>${hasOutline ? "Redraw outline" : "Draw outline"}</button>
+         <button class="small ghost" data-measure="${h}" ${hasOutline && x && !lk ? "" : "disabled"} ${dis} title="5 s of balls lying still near the hub: an estimate for the ruler and to check the drop test">Measure ball</button>
+         <button class="small ${hasOutline && !c.ball_area ? "primary" : "ghost"}" data-dropstart="${h}" ${hasOutline && x && !lk ? "" : "disabled"} ${dis}>${c.ball_area ? "Calibrate again" : "Calibrate"}</button>`;
+    const exitRow = d || drop || sizing || !hasOutline ? "" : `<div class="row small" style="margin-top:.4rem"><span class="muted">Exit line (optional, untested):</span>
+      <button class="small ghost" data-exitdraw="${h}" ${fs && !lk ? "" : "disabled"} ${dis}>${c.exit ? "Redraw" : "Add exit line"}</button>
+      ${c.exit ? `<button class="small ghost" data-exitoff="${h}" ${dis}>Remove</button>` : ""}</div>
+      ${c.exit ? "" : `<div class="muted small">Only for a camera aimed right at the chute below the hub. The hub then counts the larger of the outline and the exit line (they see the same balls), never both. Check it with Test → Check a recording.</div>`}`;
+    const msg = (r) => r ? `<div class="small" style="margin-top:.3rem;color:${r.ok ? "var(--ok)" : "var(--warn)"}">${esc(r.msg)}</div>` : "";
     return `<div class="hubcam ${h}" data-hub="${h}">
       <div class="row" style="justify-content:space-between"><b class="t${h}">${Cap(h)} hub</b>
         <span>${x ? (x.error ? `<span class="pill bad">${esc(x.error)}</span>` : `<span class="pill ok">${x.fps} fps</span>`) : `<span class="pill bad">no picture</span>`}
-        <button class="ghost small" data-camoff="${h}">Remove camera</button></span></div>
+        <button class="ghost small" data-camoff="${h}" ${dis}>Remove camera</button></span></div>
       <div class="camview" style="${fs ? `aspect-ratio:${fs[0]} / ${fs[1]}` : ""}">${fs && camImg[h] ? `<img alt="" src="${camImg[h]}"><canvas></canvas>` : `<div class="camwait">${running ? "Waiting for a picture from camera " + esc(c.source) + "…" : "The hub counter isn't running."}</div>`}</div>
       ${help ? `<div class="small"><b>${help}</b></div>` : ""}
+      ${lk ? `<div class="small" style="color:var(--warn)">${LOCKMSG}</div>` : ""}
       <div class="row" style="margin-top:.4rem">${buttons}</div>
-      ${res && !drop ? `<div class="small" style="margin-top:.3rem;color:${res.ok ? "var(--ok)" : "var(--warn)"}">${esc(res.msg)}</div>` : ""}
+      ${exitRow}
+      ${!drop ? msg(res) : ""}${!sizing ? msg(sres) : ""}
       <ol class="camsteps small">${steps.map(([ok, t]) => `<li class="${ok ? "done" : ""}">${ok ? "✓ " : ""}${t}</li>`).join("")}</ol>
     </div>`;
   }).join("");
@@ -1034,14 +1104,28 @@ function renderCams(force) {
     delete camDraft[b.dataset.camoff];
     saveSettings({ ["vision.hubs." + b.dataset.camoff]: null }, `${Cap(b.dataset.camoff)} hub: no camera`);
   });
-  box.querySelectorAll("[data-camdraw]").forEach((b) => b.onclick = () => { camDraft[b.dataset.camdraw] = []; renderCams(true); });
-  box.querySelectorAll("[data-camundo]").forEach((b) => b.onclick = () => { camDraft[b.dataset.camundo].pop(); renderCams(true); });
+  box.querySelectorAll("[data-camdraw]").forEach((b) => b.onclick = () => { camDraft[b.dataset.camdraw] = { kind: "outline", pts: [] }; renderCams(true); });
+  box.querySelectorAll("[data-exitdraw]").forEach((b) => b.onclick = () => { camDraft[b.dataset.exitdraw] = { kind: "exit", pts: [] }; renderCams(true); });
+  box.querySelectorAll("[data-camundo]").forEach((b) => b.onclick = () => { camDraft[b.dataset.camundo].pts.pop(); renderCams(true); });
   box.querySelectorAll("[data-camcancel]").forEach((b) => b.onclick = () => { delete camDraft[b.dataset.camcancel]; renderCams(true); });
   box.querySelectorAll("[data-camsave]").forEach((b) => b.onclick = () => {
-    const h = b.dataset.camsave, c = hubCam(h), [fw, fh] = camFrameSize(h);
-    // a new outline needs a new drop test: the ball size was fitted to the old one
-    const outline = camDraft[h]; delete camDraft[h];
-    saveSettings({ ["vision.hubs." + h]: { ...c, size: [fw, fh], outline, ball_area: null } }, `${Cap(h)} hub outline saved. Now Calibrate.`);
+    const h = b.dataset.camsave, c = hubCam(h), fs = camFrameSize(h), sz = c.size[0] ? c.size : fs;
+    // a new outline needs a new drop test: the ball size was fitted to the old one. The exit line and
+    // Measure's estimate stay, moved to the size this outline is drawn at.
+    const outline = camDraft[h].pts; delete camDraft[h];
+    const exit = c.exit ? (([a, e, o]) => ({ line: [a, e], out: o }))(scalePts([...c.exit.line, c.exit.out], sz, fs)) : null;
+    const measured = c.measured ? Math.round(c.measured * (fs[0] * fs[1]) / (sz[0] * sz[1]) * 10) / 10 : null;
+    saveSettings({ ["vision.hubs." + h]: { ...c, size: fs, outline, exit, measured, ball_area: null } }, `${Cap(h)} hub outline saved. Now Calibrate.`);
+  });
+  box.querySelectorAll("[data-exitsave]").forEach((b) => b.onclick = () => {
+    const h = b.dataset.exitsave, c = hubCam(h), [a, e, o] = scalePts(camDraft[h].pts, camFrameSize(h), c.size);
+    delete camDraft[h];
+    saveSettings({ ["vision.hubs." + h]: { ...c, exit: { line: [a, e], out: o } } }, `${Cap(h)} hub: exit line saved. It counts beside the outline; the hub takes the larger.`);
+  });
+  box.querySelectorAll("[data-exitoff]").forEach((b) => b.onclick = () =>
+    saveSettings({ ["vision.hubs." + b.dataset.exitoff]: { ...hubCam(b.dataset.exitoff), exit: null } }, `${Cap(b.dataset.exitoff)} hub: exit line removed`));
+  box.querySelectorAll("[data-measure]").forEach((b) => b.onclick = async () => {
+    CAM = await api("/api/vision/want", { measure: b.dataset.measure }); renderCams(true);
   });
   box.querySelectorAll("[data-dropstart]").forEach((b) => b.onclick = async () => {
     CAM = await api("/api/vision/want", { drop: b.dataset.dropstart }); renderCams(true);
@@ -1058,10 +1142,125 @@ function renderCams(force) {
 }
 window.addEventListener("resize", () => sides().forEach(drawCam));
 
+// Re-rendered every second: keep what's typed in [data-keep] fields, and don't redraw under a focused one.
+function keepRender(box, html) {
+  const a = document.activeElement;
+  if (box.contains(a) && (a.tagName === "INPUT" || a.tagName === "SELECT")) return false;
+  const kept = {};
+  box.querySelectorAll("[data-keep]").forEach((el) => kept[el.dataset.keep] = el.value);
+  box.innerHTML = html;
+  box.querySelectorAll("[data-keep]").forEach((el) => { if (kept[el.dataset.keep] != null && kept[el.dataset.keep] !== "") el.value = kept[el.dataset.keep]; });
+  return true;
+}
+const liveHub = (h) => { const x = CAM && CAM.vision[h]; return x && x.age <= 5 ? x : null; };
+const counted = (h) => { const x = liveHub(h); return x && x.counted != null ? x.counted : null; };
+const baseOf = () => Object.fromEntries(["red", "blue"].map((h) => [h, counted(h)]));
+
+// ---- Setup -> Run: what the cameras count right now, the field link, and the lock while a match runs
+function renderRun() {
+  const box = $("#runbox");
+  if (!SET || REEF()) return;
+  const tiles = sides().map((h) => {
+    const x = liveHub(h), n = counted(h), b = practice && practice[h];
+    const state = !x ? "no picture" : x.error ? x.error : x.idle ? (x.detail || "not counting yet") : `${x.fps} fps · counting`;
+    return `<div class="runhub ${h}"><div class="d">${Cap(h)} hub · ${practice ? "since Start" : "since vision started"}</div>
+      <div class="n num">${n == null ? "–" : b != null ? n - b : n}</div><div class="d">${esc(state)}</div></div>`;
+  }).join("");
+  const fd = (S() && S().feeds) || [];
+  const field = fd.length ? fd.map((f) => `${esc(f.dest)}: ${f.link ? `<span class="pill ok">answering</span>` : `<span class="pill bad">${esc(f.error || "no answer")}</span>`}`).join(" ")
+    : `<span class="muted">No field system (Setup → Field system).</span>`;
+  const m = CAM && CAM.match;
+  const lock = !m ? `<span class="muted">Unlocked. The cameras lock themselves while a match runs, so a stray click can't change the count mid-match.</span>`
+    : CAM.locked ? `<b>Locked</b> while ${esc(m.toUpperCase())} runs: cameras, outlines and ball size can't change. <button class="small ghost" data-unlock="1">Unlock for this match</button>`
+    : `<b style="color:var(--warn)">Unlocked</b> for ${esc(m.toUpperCase())}: changes apply at once. <button class="small ghost" data-unlock="0">Lock again</button>`;
+  keepRender(box, `<div class="runhubs">${tiles}</div>
+    <div class="row" style="margin-top:.6rem">${practice ? `<button class="primary" data-practice="0">Stop</button>`
+      : `<button class="primary" data-practice="1" ${sides().some((h) => counted(h) != null) ? "" : "disabled"}>Start practice count</button>`}
+      <span class="muted small">Vision counts all the time; the match decides which balls score. Start counts from zero, e.g. while robots practise shooting.</span></div>
+    <div class="small" style="margin-top:.6rem">Field: ${field}</div>
+    <div class="small" style="margin-top:.4rem">${lock}</div>`);
+  box.querySelectorAll("[data-practice]").forEach((b) => b.onclick = () => { practice = b.dataset.practice === "1" ? baseOf() : null; renderRun(); });
+  box.querySelectorAll("[data-unlock]").forEach((b) => b.onclick = async () => {
+    CAM = await api("/api/vision/want", { unlock: b.dataset.unlock === "1" }); renderRun(); renderCams(true);
+  });
+}
+
+// ---- Setup -> Test: ball test, speed, recording the cameras, and re-counting a recording against a hand count
+function renderTest() {
+  const box = $("#testbox");
+  if (!SET || REEF() || !CAM) return;
+  const any = sides().some((h) => counted(h) != null);
+  const bt = ballTest ? `<div class="kvs">${sides().map((h) => `<div class="row"><b class="t${h}" style="min-width:3.5rem">${Cap(h)}</b>
+        <span class="small">counted so far <b class="num">${counted(h) != null && ballTest[h] != null ? counted(h) - ballTest[h] : "–"}</b></span>
+        <input type="number" min="0" max="1000" placeholder="by hand" data-keep="bt_${h}" data-bthand="${h}" style="width:6rem"></div>`).join("")}</div>
+      <div class="row" style="margin-top:.4rem"><button class="small primary" data-bt="check">Check</button><button class="small ghost" data-bt="cancel">Cancel</button></div>`
+    : `<div class="row"><button class="small" data-bt="start" ${any ? "" : "disabled title='No hub is counting yet'"}>Start ball test</button></div>`;
+  const btRes = btResult ? `<table class="kv" style="margin-top:.4rem"><tr><td>Hub</td><td>By hand</td><td>Counted</td><td></td></tr>
+      ${btResult.rows.map((r) => `<tr><td class="t${r.hub}">${Cap(r.hub)}</td><td class="num">${r.hand}</td><td class="num">${r.counted}</td><td>${r.off === 0 ? "✓" : (r.off > 0 ? "+" : "") + r.off}</td></tr>`).join("")}</table>
+      <div class="small" style="color:${btResult.pass ? "var(--ok)" : "var(--warn)"}"><b>${btResult.pass ? "Passed: every hub matched." : "Not yet."}</b> ${btResult.pass
+        ? "That's bioarena's bar for letting the count decide AUTO (Counted mode)."
+        : "Check the outline (top edge 3–4 balls above the hood), the calibration, and the frame rate, then test again."}</div>` : "";
+  const speed = sides().map((h) => {
+    const l = liveHub(h) && liveHub(h).latency;
+    return `<div class="small"><b class="t${h}">${Cap(h)}</b> ${!l ? `<span class="muted">count some balls to measure</span>`
+      : `<span class="pill ${l.ok ? "ok" : "bad"}">${l.median_ms} ms typical · ${l.p99_ms} ms worst</span> <span class="muted">(last ${l.n} counts)</span>`}</div>`;
+  }).join("");
+  const recs = sides().map((h) => liveHub(h) && liveHub(h).recording ? `<div class="small muted">${Cap(h)}: ${esc(liveHub(h).recording.name)} · ${liveHub(h).recording.frames} frames</div>` : "").join("");
+  const files = CAM.files || [], chk = CAM.check, prog = CAM.check_progress, cres = CAM.check_result;
+  const label = (f) => `${f.name} · ${f.mb} MB · ${new Date(f.t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`;
+  const check = chk ? `<div class="small"><b>Re-counting ${esc(chk.name)} (${Cap(chk.hub)})${prog ? ` · ${prog.frac != null ? Math.round(prog.frac * 100) + "%" : prog.frames + " frames"}` : ""}…</b>
+        <button class="small ghost" data-chk="cancel">Cancel</button></div>`
+    : !files.length ? `<div class="muted small">No recordings yet. Record the cameras while someone drops balls in and counts them, then check it here.</div>`
+    : `<div class="row"><select data-keep="chk_file" id="chk_file" style="max-width:100%">${files.map((f, i) => `<option value="${i}">${esc(label(f))}</option>`).join("")}</select></div>
+       <div class="row" style="margin-top:.4rem"><select data-keep="chk_hub" id="chk_hub">${sides().map((h) => `<option value="${h}">${Cap(h)} hub's setup</option>`).join("")}</select>
+         <input type="number" min="1" max="10000" placeholder="balls by hand" data-keep="chk_hand" id="chk_hand" style="width:8rem">
+         <button class="small primary" data-chk="go" ${CAM.match ? `disabled title="Not during a match"` : ""}>Check</button></div>`;
+  const best = cres && cres.rows ? Math.min(...cres.rows.map((r) => Math.abs(r.error ?? 1e9))) : null;
+  const checkRes = !cres || chk ? "" : cres.error ? `<div class="small" style="color:var(--warn)">${esc(cres.error)}</div>`
+    : `<table class="kv" style="margin-top:.4rem"><tr><td colspan="3" class="muted">${esc(cres.name)} · ${cres.seconds} s${cres.hand ? ` · ${cres.hand} by hand` : ""}</td></tr>
+       ${cres.rows.map((r) => `<tr${cres.hand && Math.abs(r.error) === best ? ` style="font-weight:700"` : ""}><td>${esc(r.label)}</td><td class="num">${r.count}</td>
+         <td class="num">${r.error == null ? "" : r.error === 0 ? "✓" : `${r.error > 0 ? "+" : ""}${r.error} (${r.pct}%)`}</td></tr>`).join("")}</table>`;
+  if (!keepRender(box, `
+    <div class="tstep"><b>Ball test</b> <span class="muted small">drop balls in by hand, count them, compare. Zero difference passes. Changes nothing.</span>
+      <div style="margin-top:.4rem">${bt}</div>${btRes}</div>
+    <div class="tstep"><b>Speed</b> <span class="muted small">camera to count sent, against the field feed's spec: typical ≤ 80 ms, worst ≤ 200 ms.</span>
+      <div style="margin-top:.3rem">${speed}</div></div>
+    <div class="tstep"><b>Record the cameras</b> <span class="muted small">every hub camera, into the event folder's recordings/.</span>
+      <div class="row" style="margin-top:.4rem">${CAM.record ? `<button class="small primary" data-rec="0">■ Stop recording</button>` : `<button class="small" data-rec="1" ${any || Object.keys(CAM.frames).length ? "" : "disabled"}>● Record</button>`}</div>${recs}</div>
+    <div class="tstep"><b>Check a recording</b> <span class="muted small">re-count it with a hub's setup as it is now, against your hand count. With an exit line, the outline and the exit line alone too.</span>
+      <div style="margin-top:.4rem">${check}</div>${checkRes}</div>`)) return;
+  const fsel = $("#chk_file"), hsel = $("#chk_hub");
+  if (fsel && hsel && !hsel.dataset.touched) { const f = files[+fsel.value]; if (f && f.hub) hsel.value = f.hub; }
+  if (fsel) fsel.onchange = () => { const f = files[+fsel.value]; if (f && f.hub && hsel) hsel.value = f.hub; };
+  if (hsel) hsel.onchange = () => hsel.dataset.touched = "1";
+  box.querySelectorAll("[data-bt]").forEach((b) => b.onclick = () => {
+    if (b.dataset.bt === "start") { ballTest = baseOf(); btResult = null; }
+    else if (b.dataset.bt === "cancel") ballTest = null;
+    else {
+      const rows = sides().map((h) => {
+        const el = box.querySelector(`[data-bthand="${h}"]`), hand = el.value === "" ? null : parseInt(el.value, 10);
+        if (hand == null || counted(h) == null || ballTest[h] == null) return null;
+        const got = counted(h) - ballTest[h]; return { hub: h, hand, counted: got, off: got - hand };
+      }).filter(Boolean);
+      if (!rows.length) return FMS.toast("Type how many balls went into at least one hub", true);
+      btResult = { rows, pass: rows.every((r) => r.off === 0) }; ballTest = null;
+      box.querySelectorAll("[data-bthand]").forEach((el) => el.value = "");
+    }
+    renderTest();
+  });
+  box.querySelectorAll("[data-rec]").forEach((b) => b.onclick = async () => { CAM = await api("/api/vision/want", { record: b.dataset.rec === "1" }); renderTest(); });
+  box.querySelectorAll("[data-chk]").forEach((b) => b.onclick = async () => {
+    if (b.dataset.chk === "cancel") { CAM = await api("/api/vision/want", { check: false }); return renderTest(); }
+    const f = files[+$("#chk_file").value];
+    CAM = await api("/api/vision/want", { check: { dir: f.dir, name: f.name, hub: $("#chk_hub").value, hand: $("#chk_hand").value } });
+    renderTest();
+  });
+}
+
 function renderSetup(s) {
   const local = /^(localhost|127\.)/.test(location.hostname);
   const base = local && LAN.length ? LAN[0] : location.origin;
-  $("#urls").innerHTML = ["ref", ...(REEF() ? ["score"] : []), "emcee", "display", "control"].map((p) => `<tr><td>${p}</td><td><a href="/${p}">${esc(base)}/${p}</a></td></tr>`).join("")
+  $("#urls").innerHTML = ["ref", ...(REEF() ? ["score"] : []), "emcee", "display", "overlay", "control"].map((p) => `<tr><td>${p}</td><td><a href="/${p}">${esc(base)}/${p}</a></td></tr>`).join("")
     + (CLOUD && CLOUD.url ? `<tr><td>website</td><td>${CLOUD.linked ? `<span class="pill ok">synced</span>` : `<span class="pill bad">${esc(CLOUD.error || "not synced yet")}</span>`} <span class="small muted">${esc(CLOUD.url)}</span></td></tr>` : "");
   const fd = s.feeds || [], cfgFeeds = sv("field.feeds");
   $("#ftable").innerHTML = (cfgFeeds === null ? `<tr><td>Set by</td><td>vision's config file (feeds:)</td></tr>` : "")
@@ -1113,7 +1312,7 @@ FMS.on((s) => {
   $("#evname").textContent = s.event.name;
   if (first) {
     const reef = REEF();     // the game is fixed for the event: show only its panels
-    ["#campanel", "#fieldpanel", "#visionpanel", "#offpanel", "#autobox"].forEach((id) => $(id).hidden = reef);
+    ["#campanel", "#runpanel", "#testpanel", "#fieldpanel", "#visionpanel", "#offpanel", "#autobox"].forEach((id) => $(id).hidden = reef);
     $("#sp_scorer_f").hidden = !reef;
     document.querySelectorAll("[data-game]").forEach((el) => el.hidden = el.dataset.game !== s.game_id);
     $("#sstart").value = s.event.qual_start; $("#scycle").value = s.event.cycle_min; first = false;

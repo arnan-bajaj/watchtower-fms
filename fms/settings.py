@@ -136,10 +136,19 @@ def _feeds(x):
     return out
 
 
+def _point(p, what):
+    if not (isinstance(p, (list, tuple)) and len(p) == 2):
+        raise ValueError(f"{what} points are [x, y]")
+    return [round(float(_num(0, 10000)(v)), 1) for v in p]
+
+
 def _hubcam(x):
     """Setup -> Cameras, one hub: None = vision's config file decides; else {"source": camera index or
     address, "size": [w, h] of the picture the outline was drawn on, "outline": [[x, y], ...] in those
-    pixels (or [] = not drawn yet), "ball_area": one ball's pixel area at that size (None = guessed)}."""
+    pixels (or [] = not drawn yet), "exit": None or {"line": [[x, y], [x, y]], "out": [x, y]} (an exit
+    line counted beside the outline; out = a point on the side balls leave towards), "ball_area": one
+    ball's pixel area at that size from the drop test (None = not calibrated), "measured": Measure's
+    estimate of it (draws the ruler, checks the drop test; never counted with)}."""
     if x is None:
         return None
     if not isinstance(x, dict):
@@ -151,18 +160,28 @@ def _hubcam(x):
     if not (isinstance(size, (list, tuple)) and len(size) == 2):
         raise ValueError("size is [width, height]")
     w, h = (int(_num(0, 10000)(v)) for v in size)
-    pts = []
-    for p in x.get("outline") or []:
-        if not (isinstance(p, (list, tuple)) and len(p) == 2):
-            raise ValueError("outline points are [x, y]")
-        pts.append([round(float(_num(0, 10000)(v)), 1) for v in p])
+    pts = [_point(p, "outline") for p in x.get("outline") or []]
     if pts and not 3 <= len(pts) <= 24:
         raise ValueError("an outline needs 3 to 24 points")
     if pts and not (w and h):
         raise ValueError("an outline needs the picture size it was drawn on")
-    ball = x.get("ball_area")
-    ball = None if ball in (None, "") else round(float(_num(1, 1e6)(ball)), 1)
-    return {"source": src, "size": [w, h], "outline": pts, "ball_area": ball}
+    ex = x.get("exit") or None
+    if ex is not None:
+        if not isinstance(ex, dict):
+            raise ValueError("an exit line is {line: [[x, y], [x, y]], out: [x, y]}")
+        if not pts:
+            raise ValueError("draw the outline before the exit line")
+        line = [_point(p, "exit line") for p in ex.get("line") or []]
+        if len(line) != 2 or line[0] == line[1]:
+            raise ValueError("an exit line needs two different ends")
+        out = _point(ex.get("out"), "exit line")
+        (ax, ay), (bx, by), (ox, oy) = line[0], line[1], out
+        if abs((bx - ax) * (oy - ay) - (by - ay) * (ox - ax)) < 1e-6:
+            raise ValueError("click the exit line's out side off the line, where balls go once they're out")
+        ex = {"line": line, "out": out}
+    ball, meas = (None if v in (None, "") else round(float(_num(1, 1e6)(v)), 1)
+                  for v in (x.get("ball_area"), x.get("measured")))
+    return {"source": src, "size": [w, h], "outline": pts, "exit": ex, "ball_area": ball, "measured": meas}
 
 
 # key -> validator. Dotted keys are paths into the event.yaml structure.

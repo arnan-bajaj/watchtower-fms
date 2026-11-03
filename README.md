@@ -255,7 +255,7 @@ starting point; a Setup value wins over it, and **Use event.yaml** puts one back
 | **Event** | name, date, UTC offset, TBA event key, first match, cycle, teams |
 | **The Blue Alliance** | Auth ID, secret (never shown again after saving), Send to TBA on/off |
 | **Field system (bioarena)** | the field's IP and UDP port; shows this laptop's IP to enter in the field's counter setting |
-| **Cameras** | per hub: camera (USB index, or a network camera / video file), the outline drawn on its live picture, and the drop-test calibration ([Hub cameras from Setup](#hub-cameras-from-setup)) |
+| **Cameras** | per hub: camera (USB index, or a network camera / video file), the outline drawn on its live picture (and optionally an exit line), Measure, and the drop-test calibration; then **Run** (live counts, the lock during a match) and **Test** (ball test, speed, recording, re-counting a recording) ([Hub cameras from Setup](#hub-cameras-from-setup)) |
 | **Vision & calibration** | per hub: status, counts per ball, and a **Calibrate** button (for counters other than the built-in colour one) |
 | **PINs** | Control, ref, emcee, scorer (REEFSCAPE); **Random new PINs**. A changed PIN logs out every device using it |
 
@@ -688,6 +688,35 @@ What the launch command gives every team, with nothing to edit or install:
    (`vision/dropfit.py`); the size whose count matches is saved, and the hub starts counting.
    A hub with an outline but no calibration does not count. A new outline needs a new drop test.
 
+Optional, on each hub's card:
+
+- **Measure ball**: put a few balls near the hub, apart and still, and press it. For 5 s vision takes the
+  median area of the blobs that look like one round ball (the old Hub Counter page's Measure). The estimate
+  only draws the **ruler** (four dashed ball widths under the pointer while you draw an outline, so the top
+  edge lands 3–4 balls above the hood) and is held against the drop test: when the two are more than 1.5×
+  apart, both results say so. It never becomes the ball size the hub counts with.
+- **Exit line** (untested): click one end of the chute where balls leave the hub, the other end, then a point
+  on the side they go out to. The hub then counts the larger of the outline and the exit line, never both
+  (they see the same balls), and its status shows the exits against the outline. Only for a camera aimed
+  right at the chute; check it with **Check a recording** below before trusting it.
+
+**Run** shows each hub's count since vision started (or since **Start practice count**), its state, and the
+field link. While a match runs the cameras are **locked**: camera, outline, exit line, Measure and the drop
+test refuse changes (409), so a stray click can't change the count mid-match. **Unlock for this match**
+opens them until the next match starts.
+
+**Test**:
+
+- **Ball test**: Start, drop balls in by hand, type how many went into each hub, Check. Zero difference
+  passes (bioarena's acceptance test for Counted mode). It changes nothing.
+- **Speed**: each hub's capture-to-sent time over its last 300 counts, against the field feed's spec
+  (typical ≤ 80 ms, worst ≤ 200 ms).
+- **Record**: every hub camera into the event folder's `recordings/` (`test_dir`), with per-frame times.
+- **Check a recording**: pick one of those (or a match recording), the hub whose setup to use and the hand
+  count. Vision re-counts it as the hub is set up now (the counts-per-ball setting included) and shows the
+  count and the error, plus the outline and the exit line alone when the hub has both. Not during a match:
+  it would slow the live count.
+
 Why a drop test and not a measured or guessed ball size: the count depends steeply on it. On the
 2026-10-10 recording, half the right size counted 302 balls against 112, double counted 46, and measuring
 lone balls mid-match gave 150–230 px against the right 693 (the event's ~9x overcount was a wrong size).
@@ -695,8 +724,8 @@ Fitted from 20–60 s stretches of that recording (counted by the hand-tuned set
 the whole 100 s within 6% in five of six tries (15% low in the sixth). A real practice-hub drop test hasn't
 been run yet: check the count on a few drops after calibrating.
 
-The choices are live settings (`vision.hubs.red` / `vision.hubs.blue`: camera, outline, picture size, ball
-size), so they sync with the website and apply without a restart; changing one hub rebuilds only that hub's
+The choices are live settings (`vision.hubs.red` / `vision.hubs.blue`: camera, outline, exit line, picture
+size, ball size, Measure's estimate), so they sync with the website and apply without a restart; changing one hub rebuilds only that hub's
 counter (same camera: it stays open). **Remove camera** puts a hub back to the vision config
 file. `launch.py` writes `config/vision.cameras.yaml` on each start (counter `colour`, 1920×1080 at 60 fps, no
 recording); `--vision-config FILE` runs your own config instead, and Setup still overrides its hubs.

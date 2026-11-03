@@ -33,14 +33,19 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
   goes to a browser. Tokens include the PIN. A data wipe keeps settings. Server-side paths (db, port) aren't settings.
 - Vision fetches `/api/vision/config` when the FMS's `config_rev` changes: Setup's feeds replace the file's
   (null = use the file), and `vision.scale` (counts per ball) divides each hub's count before the feed and the FMS.
-- Setup -> Cameras (`vision.hubs.<hub>` = {source, size, outline, ball_area}; null = the vision file's hub):
+- Setup -> Cameras (`vision.hubs.<hub>` = {source, size, outline, exit, ball_area, measured}; null = the vision file's hub):
   `vision/hubsetup.py` merges it into the hub config and rescales an outline drawn at another picture size.
   The colour counter never counts on a guessed ball size: a hub with an outline but no `ball_area` waits for
   its drop test (`vision/dropfit.py`: record blobs near the outline, replay the counter at log-spaced areas,
   keep the area whose count matches the balls dropped). The FMS relays pictures, Find cameras and the drop
   test through the `want` field of its `/api/vision/events` reply (in memory only, never stored); pictures go
   to the browser via `/api/vision/image/...` with the control token. Saving a fitted size resets `vision.scale`
-  for that hub to 1.
+  for that hub to 1. `exit` ({line, out}) is counted beside the outline by `vision/counters/colour.py` (a subclass
+  of the copied ColourCounter: the hub takes the larger, never the sum). `measured` (Measure: 5 s of still balls,
+  `dropfit.estimate`) only draws the ruler and cross-checks the drop test; it never becomes `ball_area`.
+  While a match runs, `vision.hubs.*` changes, Measure and the drop test answer 409 unless Control unlocked
+  that match (Setup -> Run). Setup -> Test: ball test (browser only), latency (`hubcount.latency_summary`),
+  Record (`want.record` -> `test_dir`) and Check a recording (`want.check`, refused during a match).
 - `fms/config.py` refuses to start on a missing config, `CHANGE-ME`/blank PINs, or a control PIN shared
   with ref/emcee/scorer. `pins.scorer` alone may be blank (older event.yaml files lack it): `/api/login` then refuses
   that role, since an empty PIN would otherwise match an empty entry. Vision takes `vision_key` from `event.yaml` when its own config omits it, and `feeds:` from
