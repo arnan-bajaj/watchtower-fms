@@ -139,7 +139,7 @@ def test_vision_config_follows_setup(tmp_path, monkeypatch):
                   "scale": {"red": 9.0, "blue": 1.0}, "hubs": {"red": None, "blue": None}}
     r = c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}}).json()
     assert r["config_rev"] == 1 and abs(r["now"] - __import__("time").time()) < 5
-    assert r["want"] == {"frames": False, "scan": 0, "drop": {}, "size": {}, "record": None, "check": None}
+    assert r["want"] == {"frames": False, "scan": 0, "drop": {}, "size": {}, "record": None, "check": None, "preview": {}}
 
 
 def test_setup_cameras_flow(tmp_path, monkeypatch):
@@ -170,7 +170,8 @@ def test_setup_cameras_flow(tmp_path, monkeypatch):
     assert c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": bad}}).status_code == 400
     c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": {"source": 1}}})
     assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"] == {"source": "1", "size": [0, 0], "outline": [], "exit": None,
-                                                                      "ball_area": None, "measured": None}
+                                                                      "ball_area": None, "measured": None,
+                                                                      "picture": None, "colour": None}
     c.post("/api/vision/frames", headers=vk, json={"red": {"jpeg": jpg, "w": 1280, "h": 720, "source": "1"}})
     assert c.get("/api/vision/setup", headers=ctl).json()["frames"]["red"]["w"] == 1280
     assert c.get("/api/vision/image/hub/red", headers=ctl).content == b"\xff\xd8fake"
@@ -318,3 +319,40 @@ def test_measure_exit_line_lock_record_and_check(tmp_path, monkeypatch):
     assert not c.post("/api/vision/want", headers=ctl, json={"unlock": True}).json()["locked"]
     assert c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": hub}}).status_code == 200
     assert c.post("/api/vision/want", headers=ctl, json={"unlock": False}).json()["locked"]
+
+
+def test_picture_settings_fuel_colour_and_the_magenta_preview(tmp_path, monkeypatch):
+    srv, ev = _server(tmp_path, monkeypatch)
+    c = TestClient(srv.app)
+    ctl, vk = {"X-FMS-Token": srv.token_for("control")}, {"X-Vision-Key": ev["server"]["vision_key"]}
+    hub = {"source": "0", "size": [1280, 720], "outline": [[400, 300], [800, 300], [780, 420]], "ball_area": 700}
+    pic = {"fps": "60", "size": "1280×720", "fourcc": "mjpg", "auto_exposure": False, "exposure_ms": "8",
+           "auto_wb": None, "wb_kelvin": "", "brightness": None, "contrast": "", "saturation": None, "gain": None}
+    col = {"hue_lo": 18, "hue_hi": 38, "sat_min": 70.4, "val_min": 50}
+    assert c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": {**hub, "picture": pic, "colour": col}}}).status_code == 200
+    red = c.get("/api/vision/config", headers=vk).json()["hubs"]["red"]
+    assert red["picture"] == {"fps": 60, "size": [1280, 720], "fourcc": "MJPG", "auto_exposure": False, "exposure_ms": 8.0,
+                              "auto_wb": None, "wb_kelvin": None, "brightness": None, "contrast": None, "saturation": None, "gain": None}
+    assert red["colour"] == {"hue_lo": 18, "hue_hi": 38, "sat_min": 70, "val_min": 50}
+    # nothing set = the camera's own picture; bad values refused
+    c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": {**hub, "picture": {"fps": "", "size": ""}}}})
+    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"]["picture"] is None
+    for bad in ({"picture": {"fps": 1000}}, {"picture": {"size": "1280"}}, {"picture": {"fourcc": "MJPEG"}},
+                {"picture": {"exposure_ms": 500}}, {"colour": {"hue_lo": 40, "hue_hi": 15}}, {"colour": {"sat_min": 300}}):
+        assert c.post("/api/settings", headers=ctl, json={"changes": {"vision.hubs.red": {**hub, **bad}}}).status_code == 400, bad
+
+    # Show what counts as fuel: a colour range not saved, sent to vision for 20 s, then dropped
+    assert c.post("/api/vision/want", headers=ctl, json={"preview": {"red": {"hue_lo": 50, "hue_hi": 20}}}).status_code == 400
+    st = c.post("/api/vision/want", headers=ctl, json={"preview": {"red": col}}).json()
+    assert st["preview"] == {"red": {"hue_lo": 18, "hue_hi": 38, "sat_min": 70, "val_min": 50}}
+    want = c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}}).json()["want"]
+    assert want["preview"] == st["preview"]
+    assert c.get("/api/vision/config", headers=vk).json()["hubs"]["red"]["colour"] is None      # not saved
+    srv.vision_want["preview"]["red"]["until"] -= 21
+    assert c.post("/api/vision/events", headers=vk, json={"events": {}, "status": {}}).json()["want"]["preview"] == {}
+    c.post("/api/vision/want", headers=ctl, json={"preview": {"red": col}})
+    assert c.post("/api/vision/want", headers=ctl, json={"preview": {"red": None}}).json()["preview"] == {}
+    # a magenta picture is marked as one
+    import base64
+    c.post("/api/vision/frames", headers=vk, json={"red": {"jpeg": base64.b64encode(b"x").decode(), "w": 1280, "h": 720, "fuel": True}})
+    assert c.get("/api/vision/setup", headers=ctl).json()["frames"]["red"]["fuel"] is True

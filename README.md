@@ -674,7 +674,12 @@ These recordings are also your best training data, because they come from the re
 
 ### Hub cameras from Setup
 
-What the launch command gives every team, with nothing to edit or install:
+What the launch command gives every team, with nothing to edit or install. Setup → Cameras carries these
+instructions itself: each hub's card is a numbered list of steps, each with its own buttons, and a step
+appears once the step it needs is done (Exit line and Calibrate after the outline, Test it after Calibrate).
+
+Before you start, mount one camera per hub, fixed rigidly, with a clear view of balls dropping into the hub's
+opening, and light the field evenly. Aim for 60 fps. If a camera moves, redraw its outline and calibrate again.
 
 1. **Find cameras** lists a picture from every camera index that opens (0–5), besides those a hub already
    uses. Pick **Red hub** / **Blue hub** under the right one, or type a network camera address
@@ -690,7 +695,18 @@ What the launch command gives every team, with nothing to edit or install:
 
 Optional, on each hub's card:
 
-- **Measure ball**: put a few balls near the hub, apart and still, and press it. For 5 s vision takes the
+- **Picture** (USB cameras only; a network camera or video file keeps its own): frame rate, size, video format
+  (MJPG for 60 fps over USB), automatic or fixed exposure (under 16 ms keeps 60 fps and blurs balls less; 8 ms
+  is a good start), automatic or fixed white balance, brightness, contrast, saturation, gain. Blank = the
+  camera's own. Saving reopens the camera; settings its driver ignored are listed (macOS takes few of them).
+  The fps pill turns red under 55 fps.
+- **Fuel colour**: **Show what counts as fuel** paints everything the colour range takes as fuel magenta on
+  the hub's picture, live while you drag Hue from / Hue to / Min. colour / Min. brightness (nothing is saved
+  until **Save fuel colour**; **Back to standard** is 15 / 40 / 55 / 45). Every ball should turn magenta and
+  little else. The range is what the counter, the drop test and Measure take as fuel. Saving a new picture or
+  fuel colour on a calibrated hub asks first, then needs a new Calibrate (a ball looks different).
+- **Measure ball**: put a few balls near the hub (or anywhere in view, before the outline is drawn), apart and
+  still, and press it. For 5 s vision takes the
   median area of the blobs that look like one round ball (the old Hub Counter page's Measure). The estimate
   only draws the **ruler** (four dashed ball widths under the pointer while you draw an outline, so the top
   edge lands 3–4 balls above the hood) and is held against the drop test: when the two are more than 1.5×
@@ -725,7 +741,7 @@ the whole 100 s within 6% in five of six tries (15% low in the sixth). A real pr
 been run yet: check the count on a few drops after calibrating.
 
 The choices are live settings (`vision.hubs.red` / `vision.hubs.blue`: camera, outline, exit line, picture
-size, ball size, Measure's estimate), so they sync with the website and apply without a restart; changing one hub rebuilds only that hub's
+size, ball size, Measure's estimate, camera picture settings, fuel colour), so they sync with the website and apply without a restart; changing one hub rebuilds only that hub's
 counter (same camera: it stays open). **Remove camera** puts a hub back to the vision config
 file. `launch.py` writes `config/vision.cameras.yaml` on each start (counter `colour`, 1920×1080 at 60 fps, no
 recording); `--vision-config FILE` runs your own config instead, and Setup still overrides its hubs.

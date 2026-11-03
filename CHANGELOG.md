@@ -3,6 +3,16 @@
 Versions are git tags. v0.x were alphas built toward our first scrimmage; v1 is the build that ran the
 10th Street Showdown (2026-10-10); v2 is the website revamp.
 
+## v2.5.0: camera picture, fuel colour, and the setup guide on the page
+
+- **Picture** per hub: frame rate, size, video format, exposure, white balance, brightness, contrast,
+  saturation and gain for a USB camera, applied when it opens; settings the driver ignored are listed.
+- **Fuel colour** per hub: **Show what counts as fuel** paints what the colour range takes as fuel magenta,
+  live while you tune it; saved ranges are what the counter, drop test and Measure use.
+- **Measure ball** works before an outline is drawn, so the ball-width ruler helps draw the first one.
+- Each hub's card is now the setup guide: numbered steps with their own buttons, each shown once the step it
+  needs is done. Changing the picture or fuel colour of a calibrated hub asks, then needs a new Calibrate.
+
 ## v2.4.0: the old Hub Counter page's tools, back in Setup
 
 - **Exit line** per hub (Setup -> Cameras): drawn beside the outline; the hub counts the larger of the two,

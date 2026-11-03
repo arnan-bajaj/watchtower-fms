@@ -33,7 +33,7 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
   goes to a browser. Tokens include the PIN. A data wipe keeps settings. Server-side paths (db, port) aren't settings.
 - Vision fetches `/api/vision/config` when the FMS's `config_rev` changes: Setup's feeds replace the file's
   (null = use the file), and `vision.scale` (counts per ball) divides each hub's count before the feed and the FMS.
-- Setup -> Cameras (`vision.hubs.<hub>` = {source, size, outline, exit, ball_area, measured}; null = the vision file's hub):
+- Setup -> Cameras (`vision.hubs.<hub>` = {source, size, outline, exit, ball_area, measured, picture, colour}; null = the vision file's hub):
   `vision/hubsetup.py` merges it into the hub config and rescales an outline drawn at another picture size.
   The colour counter never counts on a guessed ball size: a hub with an outline but no `ball_area` waits for
   its drop test (`vision/dropfit.py`: record blobs near the outline, replay the counter at log-spaced areas,
@@ -42,7 +42,11 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
   to the browser via `/api/vision/image/...` with the control token. Saving a fitted size resets `vision.scale`
   for that hub to 1. `exit` ({line, out}) is counted beside the outline by `vision/counters/colour.py` (a subclass
   of the copied ColourCounter: the hub takes the larger, never the sum). `measured` (Measure: 5 s of still balls,
-  `dropfit.estimate`) only draws the ruler and cross-checks the drop test; it never becomes `ball_area`.
+  `dropfit.estimate`; anywhere in the picture before an outline) only draws the ruler and cross-checks the drop
+  test; it never becomes `ball_area`. `picture` (camprofile's image keys + fps/size) is applied when vision opens a
+  USB camera and a change reopens it; `colour` (HSV range, null = standard) is what the counter, drop test and
+  Measure take as fuel. Fuel colour's magenta preview is `want.preview` (in memory, 20 s, never stored). The hub
+  card is the setup instructions: steps appear once their dependency is done; keep it the only setup guide.
   While a match runs, `vision.hubs.*` changes, Measure and the drop test answer 409 unless Control unlocked
   that match (Setup -> Run). Setup -> Test: ball test (browser only), latency (`hubcount.latency_summary`),
   Record (`want.record` -> `test_dir`) and Check a recording (`want.check`, refused during a match).

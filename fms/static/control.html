@@ -60,7 +60,19 @@
   .camview img, .camview canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   .camview canvas { cursor: crosshair; }
   .camview .camwait { position: absolute; inset: 0; display: grid; place-items: center; color: #cfd3d8; font-size: .9rem; padding: 1rem; text-align: center; }
-  .camsteps { margin: .3rem 0 0; padding-left: 1.2rem; } .camsteps li { margin: .15rem 0; } .camsteps li.done { color: var(--ok); }
+  .camsteps { margin: .5rem 0 0; padding: 0; list-style: none; counter-reset: st; }
+  .camsteps > li { counter-increment: st; border-top: 1px solid var(--line); padding: .5rem 0; min-width: 0; }
+  .camsteps .stt::before { content: counter(st) ". "; font-weight: 700; }
+  .camsteps li.done > .stt { color: var(--ok); }
+  .camsteps li.cur { background: var(--panel-2); margin: 0 -.7rem; padding: .5rem .7rem; }
+  .camsteps .tag { font-size: .72rem; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 0 .4rem; margin-left: .2rem; white-space: nowrap; }
+  .camsteps .sx { margin-top: .2rem; }
+  .camsteps details { margin-top: .35rem; } .camsteps summary { cursor: pointer; font-weight: 600; }
+  .camsteps .form { margin-top: .4rem; }
+  .slider { display: flex; align-items: center; gap: .5rem; margin: .25rem 0; } .slider span { width: 7.2rem; flex: none; }
+  .slider input { flex: 1; min-width: 0; } .slider b { width: 2.2rem; text-align: right; flex: none; }
+  .switchrow { display: flex; gap: .45rem; align-items: center; margin: .45rem 0 .2rem; }
+  .fuelbadge { position: absolute; left: .4rem; top: .4rem; background: rgba(0,0,0,.7); color: #ff7dff; font-size: .75rem; font-weight: 700; padding: .1rem .45rem; border-radius: 99px; pointer-events: none; }
   /* Setup -> Run / Test */
   .runhubs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
   .runhub { border-radius: var(--r-md); padding: .6rem .7rem; color: #fff; min-width: 0; overflow-wrap: anywhere; }
@@ -194,7 +206,10 @@
   <!-- SETUP -->
   <section data-tab="setup" hidden>
     <div class="panel" id="campanel"><h2>Cameras</h2>
-      <div class="muted small">Plug the hub cameras into this computer (USB), or use a network camera. Press <b>Find cameras</b>, give each hub its camera, then click around the hub's opening on its picture. The counter is built in: nothing to install, no model.</div>
+      <div class="muted small"><b>Before you start:</b> mount one camera per hub, fixed rigidly, with a clear view of balls dropping into the hub's opening, and light the field evenly.
+        Aim for 60 fps. Plug the cameras into this computer (USB), or use a network camera. The counter is built in: nothing to install, no model.</div>
+      <div class="muted small" style="margin-top:.3rem"><b>Then:</b> press <b>Find cameras</b> and give each hub its camera. Each hub's card below then walks you through the rest a step at a time:
+        picture, fuel colour, Measure, outline, Calibrate, and testing it. Steps appear once the step they need is done.</div>
       <div class="row" style="margin-top:.6rem"><button class="primary" id="bscan">Find cameras</button><span class="muted small" id="scanmsg"></span></div>
       <div class="camgrid" id="camlist"></div>
       <details style="margin-top:.6rem"><summary class="small">Network camera or video file</summary>
@@ -937,7 +952,7 @@ async function pollCams() {
   if (!setupOpen() || !SET || REEF()) return;
   try {
     const now = Date.now();
-    if (now - lastWant > 5000) { lastWant = now; CAM = await FMS.api("/api/vision/want", { frames: true }); }
+    if (now - lastWant > 5000) { lastWant = now; CAM = await FMS.api("/api/vision/want", { frames: true, preview: previews() }); }
     else CAM = await FMS.api("/api/vision/setup", undefined, "GET");
   } catch { return; }
   // a drop test's fit (or Measure's estimate) is saved by the server: fetch the settings again to show it
@@ -963,7 +978,9 @@ function pickCam(h, source) {
   const other = h === "red" ? "blue" : "red", oc = hubCam(other);
   if (oc && oc.source === source) return FMS.toast(`That's the ${other} hub's camera. Give it a different one, or remove it there first.`, true);
   delete camDraft[h];
-  saveSettings({ ["vision.hubs." + h]: { source, size: [0, 0], outline: [], exit: null, ball_area: null, measured: null } }, `${Cap(h)} hub: camera ${source}. Now click around the hub's opening.`);
+  delete picDraft[h]; delete colDraft[h];
+  saveSettings({ ["vision.hubs." + h]: { source, size: [0, 0], outline: [], exit: null, ball_area: null, measured: null, picture: null, colour: null } },
+               `${Cap(h)} hub: camera ${source}. Its card below takes you through the rest.`);
 }
 function camFrameSize(h) { const f = CAM && CAM.frames[h]; return f && f.w ? [f.w, f.h] : null; }
 // Saved points are in the pixels of the picture the outline was drawn on (c.size); the picture now may differ.
@@ -1035,9 +1052,123 @@ function wireCam(box, h) {
 }
 const EXIT_HELP = ["Click one end of the exit line, across the chute where balls leave the hub.", "Now click its other end.",
                    "Now click a point on the side balls go to once they're out.", "Save the exit line."];
+const camOpen = {};                       // "<hub>:pic" / "<hub>:col": that section is open (kept across the redraw every second)
+const picDraft = {}, colDraft = {};       // hub -> Picture / Fuel colour values not saved yet
+const camFuel = {};                       // hub -> Show what counts as fuel is on
+const STD_COLOUR = { hue_lo: 15, hue_hi: 40, sat_min: 55, val_min: 45 };
+const colourOf = (h) => colDraft[h] || (hubCam(h) && hubCam(h).colour) || STD_COLOUR;
+const sameColour = (a, b) => Object.keys(STD_COLOUR).every((k) => +a[k] === +b[k]);
+const previews = () => Object.fromEntries(sides().filter((h) => camFuel[h]).map((h) => [h, colourOf(h)]));
+let previewT = 0;
+function sendPreview(now) {               // the magenta view shows a colour range before it's saved
+  clearTimeout(previewT);
+  previewT = setTimeout(async () => {
+    try { CAM = await FMS.api("/api/vision/want", { frames: true, preview: Object.fromEntries(sides().map((h) => [h, camFuel[h] ? colourOf(h) : null])) }); } catch {}
+  }, now ? 0 : 250);
+}
+function saveHub(h, patch, msg) {
+  // the picture and the fuel colour change what the camera sees as a ball, so the drop test's size no longer fits
+  const c = hubCam(h), recal = c.ball_area && ("picture" in patch || "colour" in patch);
+  if (recal && !confirm(`${Cap(h)} hub: this changes how a ball looks to the counter, so the hub stops counting until you Calibrate again. Save?`)) return;
+  return saveSettings({ ["vision.hubs." + h]: { ...c, ...patch, ...(recal ? { ball_area: null } : {}) } }, msg + (recal ? " Now Calibrate again." : ""));
+}
+const isDevice = (c) => /^\d+$/.test(String(c.source));
+function pictureForm(h, c, x, dis) {
+  const p = picDraft[h] || c.picture || {}, v = (k) => p[k] == null ? "" : esc(p[k]);
+  const num = (k, label, attrs, off) => `<label class="field">${label}<input type="number" data-pic="${k}" data-hub="${h}" value="${v(k)}" placeholder="camera's own" ${attrs} ${off ? "disabled" : dis}></label>`;
+  const sw = (k, label) => `<label class="switchrow"><input type="checkbox" data-pic="${k}" data-hub="${h}" ${p[k] !== false ? "checked" : ""} ${dis}> ${label}</label>`;
+  const size = Array.isArray(p.size) ? p.size.join("x") : (p.size || "");
+  return `<div class="form">
+      <label class="field">Frame rate <input type="number" data-pic="fps" data-hub="${h}" value="${v("fps")}" placeholder="${esc(sv("vision.hubs." + h) ? "60" : "")}" min="1" max="240" ${dis}></label>
+      <label class="field">Size <input data-pic="size" data-hub="${h}" value="${esc(size)}" placeholder="1920x1080" autocapitalize="off" ${dis}></label>
+      <label class="field">Video format <select data-pic="fourcc" data-hub="${h}" ${dis}><option value="">camera's own</option>
+        ${["MJPG", "YUYV"].map((f) => `<option value="${f}" ${p.fourcc === f ? "selected" : ""}>${f === "MJPG" ? "MJPG (compressed: needed for 60 fps over USB)" : "YUYV (uncompressed)"}</option>`).join("")}</select></label></div>
+    ${sw("auto_exposure", "Automatic exposure")}
+    <div class="form">${num("exposure_ms", "Exposure (ms)", `min="0.1" max="100" step="0.5"`, p.auto_exposure !== false)}</div>
+    ${sw("auto_wb", "Automatic white balance")}
+    <div class="form">${num("wb_kelvin", "White balance (K)", `min="2000" max="8000" step="100"`, p.auto_wb !== false)}</div>
+    <div class="form">${num("brightness", "Brightness", "")}${num("contrast", "Contrast", "")}${num("saturation", "Saturation", "")}${num("gain", "Gain", "")}</div>
+    <div class="muted small" style="margin-top:.3rem">Exposure under 16 ms keeps 60 fps; shorter also blurs fast balls less (8 ms is a good start; raise it if the picture is too dark).
+      Fixed white balance keeps the yellow steady when the field lights change. Brightness, contrast, saturation and gain use the camera's own numbers. Saving reopens the camera.</div>
+    ${x && x.ignored ? `<div class="small" style="color:var(--warn)">This camera's driver ignored: ${esc(x.ignored.join(", "))}. It keeps its own for those (macOS takes few of these settings).</div>` : ""}
+    <div class="row" style="margin-top:.4rem"><button class="small primary" data-picsave="${h}" ${picDraft[h] ? "" : "disabled"} ${dis}>Save picture</button>
+      <button class="small ghost" data-picown="${h}" ${c.picture || picDraft[h] ? "" : "disabled"} ${dis}>Camera's own</button></div>`;
+}
+function colourForm(h, c, dis) {
+  const col = colourOf(h), dirty = !sameColour(col, c.colour || STD_COLOUR);
+  const sl = (k, label, max) => `<div class="slider"><span class="muted small">${label}</span><input type="range" min="0" max="${max}" data-col="${k}" data-hub="${h}" value="${col[k]}" ${dis}><b class="num small" data-colv="${h}:${k}">${col[k]}</b></div>`;
+  return `<label class="switchrow"><input type="checkbox" data-fuel="${h}" ${camFuel[h] ? "checked" : ""}> Show what counts as fuel <b style="color:#d61fd6">(magenta)</b></label>
+    ${sl("hue_lo", "Hue from", 90)}${sl("hue_hi", "Hue to", 90)}${sl("sat_min", "Min. colour", 255)}${sl("val_min", "Min. brightness", 255)}
+    <div class="muted small" style="margin-top:.3rem">Every ball should turn magenta and little else. Shirts, the floor or the field walls turning magenta: raise the minimums or narrow the hue. Balls in shadow missed: lower the minimums. The picture updates about once a second.</div>
+    <div class="row" style="margin-top:.4rem"><button class="small primary" data-colsave="${h}" ${dirty ? "" : "disabled"} ${dis}>Save fuel colour</button>
+      <button class="small ghost" data-colstd="${h}" ${sameColour(col, STD_COLOUR) ? "disabled" : ""} ${dis}>Back to standard</button></div>`;
+}
+// The hub card is the instructions: one step after another, each shown once the step it needs is done.
+function hubSteps(h, c, x, fs, lk, dis) {
+  const drop = CAM && CAM.drop[h], res = CAM && CAM.drop_result[h], sizing = CAM && CAM.size[h], sres = CAM && CAM.size_result[h];
+  const d = camDraft[h], busy = !!(d || drop || sizing), hasOutline = c.outline.length > 0, calibrated = !!c.ball_area;
+  const counting = x && x.session_total != null, off = (cond) => cond && !busy && !lk ? "" : `disabled ${dis}`;
+  const msg = (r) => r ? `<div class="small" style="margin-top:.3rem;color:${r.ok ? "var(--ok)" : "var(--warn)"}">${esc(r.msg)}</div>` : "";
+  const open = (k) => camOpen[`${h}:${k}`] ? "open" : "";
+  const passed = btResult && btResult.rows.some((r) => r.hub === h && r.off === 0);
+  const steps = [];
+  const step = (state, title, tag, body) => steps.push({ state, title, tag, body });
+  const slow = x && isDevice(c) && x.fps && x.fps < 55;
+  step("done", `Camera ${esc(c.source)}`, "", `<span class="muted">${fs ? `${fs[0]}×${fs[1]}` : "waiting for a picture"}${x ? ` · getting ${x.fps} fps` : ""}.
+      If this camera moves later, redraw the outline and calibrate again.</span>
+    ${slow ? `<div style="color:var(--warn)">Aim for 60 fps. In Picture below, set 60 fps with the MJPG format, a smaller size (1280×720), or a shorter exposure.</div>` : ""}`);
+  if (fs) {
+    step(c.picture ? "done" : "opt", "Picture", c.picture ? "set" : isDevice(c) ? "recommended" : "not for this source", isDevice(c)
+      ? `<div class="muted">Set 60 fps, and a fixed exposure under 16 ms so fast balls don't blur and the rate holds in a dim gym.</div>
+         <details data-open="${h}:pic" ${open("pic")}><summary class="small">Camera settings</summary>${pictureForm(h, c, x, dis)}</details>`
+      : `<div class="muted">A network camera or video file keeps its own picture.</div>`);
+    step(c.colour ? "done" : "opt", "Fuel colour", c.colour ? "custom" : "standard",
+      `<div class="muted">Check what the counter takes as fuel: turn on Show what counts as fuel. Every ball should turn magenta and little else. Most venues work with the standard colours.</div>
+       <details data-open="${h}:col" ${open("col")}><summary class="small">Fuel colour</summary>${colourForm(h, c, dis)}</details>`);
+    step(c.measured ? "done" : hasOutline ? "opt" : "now", "Measure ball", c.measured ? `about ${Math.round(c.measured)} px` : "recommended",
+      (c.measured && !sizing ? "" : `<div class="muted">Put a few balls ${hasOutline ? "near the hub" : "where the camera sees them"}, apart from each other and not moving, and click Measure ball (5 s).
+        It gives you a ruler of ball widths for drawing the outline, and a check on Calibrate. It doesn't set the size the hub counts with.</div>`)
+      + (sizing ? `<div><b>Measuring${x && x.sizing ? ` (${Math.floor(x.sizing.s)} s of 5)` : ""}. Keep the balls still.</b></div>` : "")
+      + `<div class="row" style="margin-top:.3rem"><button class="small ${c.measured ? "ghost" : "primary"}" data-measure="${h}" ${off(x)}>${c.measured ? "Measure again" : "Measure ball"}</button></div>`
+      + (!sizing ? msg(sres) : ""));
+  }
+  if (fs) step(hasOutline ? "done" : "now", "Outline", hasOutline ? (c.exit ? "with an exit line" : "drawn") : "",
+    (hasOutline ? "" : `<div class="muted">Click Draw outline, then click the corners of the hub's opening, where balls drop in, going round. Put the top edge 3–4 balls above the hood.
+      ${c.measured ? "Move the mouse over the picture: the dashed circles under the pointer are 4 ball widths." : "Measure ball first and a ruler of ball widths follows the pointer."} Then Save outline.</div>`)
+    + `<div class="row" style="margin-top:.3rem"><button class="small ${hasOutline ? "ghost" : "primary"}" data-camdraw="${h}" ${off(fs)}>${hasOutline ? "Redraw outline" : "Draw outline"}</button></div>`
+    + (hasOutline && calibrated ? `<div class="muted small">A new outline needs a new Calibrate.</div>` : ""));
+  if (hasOutline) step(c.exit ? "done" : "opt", "Exit line", c.exit ? "on" : "optional, untested",
+    (c.exit ? `<div class="muted">The hub counts the larger of the outline and the exit line, never both. Check it with Test → Check a recording.</div>`
+      : `<div class="muted">Only for a camera aimed right at the chute where balls leave the hub; skip it otherwise. Click Add exit line, click one end of the chute, the other end,
+         then a point on the side balls fall out to. The hub then counts the larger of the outline and the exit line (they see the same balls). Before relying on it, record some
+         hand-counted balls and use Test → Check a recording: keep it only if "what the hub counts now" is closer than "outline alone".</div>`)
+    + `<div class="row" style="margin-top:.3rem"><button class="small ghost" data-exitdraw="${h}" ${off(fs)}>${c.exit ? "Redraw" : "Add exit line"}</button>
+       ${c.exit ? `<button class="small ghost" data-exitoff="${h}" ${off(true)}>Remove</button>` : ""}</div>`);
+  if (hasOutline) step(calibrated ? "done" : "now", "Calibrate", calibrated ? `one ball = ${Math.round(c.ball_area)} px` : "",
+    (calibrated && !drop ? "" : `<div class="muted">Click Calibrate, then drop 20 or more balls into the hub, some one at a time and some in handfuls like robots shoot.
+      Type how many you dropped and click Done. After up to a minute it says how many it counted with the size it found. If it says that's not close, or that Measure disagrees,
+      check the outline covers the whole opening and calibrate again. The hub starts counting once it's calibrated.</div>`)
+    + (drop && drop.n ? `<div><b>Working out the ball size from the test (up to a minute)…</b></div>`
+      : drop ? `<div><b>Recording${x && x.drop ? ` (${x.drop.s} s)` : ""}. Drop balls into the ${h} hub now, then type how many and press Done.</b></div>
+        <div class="row" style="margin-top:.3rem"><input type="number" min="1" max="1000" placeholder="balls" data-dropn="${h}" style="width:6rem"><button class="small primary" data-dropdone="${h}">Done</button><button class="small ghost" data-dropcancel="${h}">Cancel</button></div>`
+      : `<div class="row" style="margin-top:.3rem"><button class="small ${calibrated ? "ghost" : "primary"}" data-dropstart="${h}" ${off(x)}>${calibrated ? "Calibrate again" : "Calibrate"}</button></div>`)
+    + (!drop ? msg(res) : ""));
+  if (calibrated) step(passed ? "done" : "now", "Test it", passed ? "ball test passed" : "",
+    `<div class="muted">${counting ? `Counting: ${x.session_total} so far. ` : ""}Scroll down to <b>Test</b>: run the Ball test (every hub must match your hand count exactly)
+      and check Speed is green. During matches the cameras lock themselves; Setup → Run unlocks them if something needs fixing.</div>`);
+  const now = steps.findIndex((s) => s.state === "now");
+  return `<ol class="camsteps small">${steps.map((s, i) => `<li class="${s.state}${i === now ? " cur" : ""}">
+      <div class="stt">${s.state === "done" ? "✓ " : ""}<b>${s.title}</b>${s.tag ? ` <span class="tag">${esc(s.tag)}</span>` : ""}</div>
+      <div class="sx">${s.body}</div></li>`).join("")}</ol>`;
+}
 function renderCams(force) {
-  const panel = $("#campanel");
-  if (!SET || (!force && panel.contains(document.activeElement) && document.activeElement.tagName === "INPUT")) return;
+  const panel = $("#campanel"), a = document.activeElement;
+  if (!SET) return;
+  if (!force && panel.contains(a) && (a.tagName === "INPUT" || a.tagName === "SELECT")) {
+    // someone is typing or dragging a slider: don't redraw under them, but keep the pictures moving (the magenta view)
+    sides().forEach((h) => { const im = panel.querySelector(`.hubcam[data-hub="${h}"] .camview img`); if (im && camImg[h] && im.src !== camImg[h]) im.src = camImg[h]; });
+    return;
+  }
   const v = (CAM && CAM.vision) || (S() && S().vision) || {};
   const running = Object.values(v).some((x) => x.age <= 5);
   const sc = CAM && CAM.scan, waiting = scanAsked && (!sc || sc.id !== scanAsked);
@@ -1047,58 +1178,35 @@ function renderCams(force) {
     : waiting ? "Looking for cameras (a few seconds)…"
     : sc && sc.error ? `<span style="color:var(--warn)">${esc(sc.error)}</span>`
     : sc && sc.id && !sc.cameras.length && !Object.keys(sc.in_use).length ? `<span style="color:var(--warn)">No cameras found. Plug one in and press Find cameras again.${mac ? " If macOS asked about the camera, allow Terminal (System Settings → Privacy &amp; Security → Camera), then stop Watchtower (Ctrl+C) and run the command again." : ""}</span>`
-    : sc && sc.id ? `${sc.cameras.length} camera${sc.cameras.length === 1 ? "" : "s"} free${Object.keys(sc.in_use).length ? `, ${Object.keys(sc.in_use).length} in use by a hub` : ""}.` : "";
+    : sc && sc.id ? `${sc.cameras.length} camera${sc.cameras.length === 1 ? "" : "s"} free${Object.keys(sc.in_use).length ? `, ${Object.keys(sc.in_use).length} in use by a hub` : ""}. Under the picture that shows the red hub, click Red hub; same for blue.` : "";
   const lk = camLocked(), dis = lk ? `disabled title="${LOCKMSG}"` : "";
   const hubBtns = (src) => sides().map((h) => `<button class="small ${hubCam(h) && hubCam(h).source === src ? "primary" : "ghost"}" data-pick="${h}" data-src="${esc(src)}" ${dis}>${Cap(h)} hub</button>`).join("");
   $("#camlist").innerHTML = sc && sc.id && !waiting ? sc.cameras.map((c) =>
     `<figure class="camcard"><img alt="" src="${camImg["cam:" + c.source] || ""}"><figcaption><b>Camera ${esc(c.source)}</b><span class="muted small">${c.w}×${c.h}</span>${hubBtns(c.source)}</figcaption></figure>`).join("") : "";
-  if (document.activeElement !== $("#camsrc")) $("#camsrcbtns").innerHTML = sides().map((h) => `<button class="small ghost" data-picksrc="${h}" ${dis}>${Cap(h)} hub</button>`).join("");
+  if (a !== $("#camsrc")) $("#camsrcbtns").innerHTML = sides().map((h) => `<button class="small ghost" data-picksrc="${h}" ${dis}>${Cap(h)} hub</button>`).join("");
   $("#hubcams").innerHTML = sides().map((h) => {
     const c = hubCam(h), x = v[h] && v[h].age <= 5 ? v[h] : null, fs = camFrameSize(h);
-    const drop = CAM && CAM.drop[h], res = CAM && CAM.drop_result[h];
-    const sizing = CAM && CAM.size[h], sres = CAM && CAM.size_result[h];
-    if (!c) return `<div class="hubcam ${h}" data-hub="${h}"><b class="t${h}">${Cap(h)} hub</b><div class="muted small" style="margin-top:.3rem">No camera yet. Press <b>Find cameras</b> and choose <b>${Cap(h)} hub</b> under the one that sees this hub.</div></div>`;
-    const d = camDraft[h], hasOutline = c.outline.length > 0, counting = x && x.session_total != null;
-    const steps = [[true, `Camera ${esc(c.source)}${fs ? ` · ${fs[0]}×${fs[1]}` : ""}`],
-      [hasOutline, hasOutline ? "Outline drawn" + (c.exit ? ", with an exit line" : "") : "Draw the outline: click the corners of the hub's opening, where balls drop in, going round. Put its top edge 3–4 balls above the hood. Then Save outline."],
-      [!!c.ball_area, c.ball_area ? `Calibrated (one ball = ${Math.round(c.ball_area)} px${c.measured ? `; Measure: ${Math.round(c.measured)} px` : ""})`
-        : "Calibrate: press Calibrate, drop 20 or more balls into the hub (some one at a time, some in handfuls, like robots do), type how many, press Done." + (c.measured ? ` (Measure: about ${Math.round(c.measured)} px.)` : "")],
-      [counting, counting ? `Counting: ${x.session_total} so far` : "Counting starts once it's calibrated."]];
-    const help = d && d.kind === "outline" ? `${d.pts.length} point${d.pts.length === 1 ? "" : "s"}. Keep clicking round the opening; Save when done.` + (ballPx(h, ...(fs || [1, 1])) ? " The dashed circles are 4 ball widths." : "")
-      : d ? EXIT_HELP[d.pts.length]
-      : drop && drop.n ? "Working out the ball size from the test (up to a minute)…"
-      : drop ? `Recording${x && x.drop ? ` (${x.drop.s} s)` : ""}. Drop balls into the ${h} hub now, then type how many and press Done.`
-      : sizing ? `Measuring${x && x.sizing ? ` (${Math.floor(x.sizing.s)} s of 5)` : ""}. Keep a few balls lying still near the hub, apart from each other.` : "";
-    const buttons = d && d.kind === "outline"
-      ? `<button class="small primary" data-camsave="${h}" ${d.pts.length < 3 ? "disabled" : ""}>Save outline</button><button class="small ghost" data-camundo="${h}">Undo point</button><button class="small ghost" data-camcancel="${h}">Cancel</button>`
-      : d ? `<button class="small primary" data-exitsave="${h}" ${d.pts.length < 3 ? "disabled" : ""}>Save exit line</button><button class="small ghost" data-camundo="${h}">Undo point</button><button class="small ghost" data-camcancel="${h}">Cancel</button>`
-      : drop && !drop.n ? `<input type="number" min="1" max="1000" placeholder="balls" data-dropn="${h}" style="width:6rem"><button class="small primary" data-dropdone="${h}">Done</button><button class="small ghost" data-dropcancel="${h}">Cancel</button>`
-      : drop ? `<button class="small ghost" data-dropcancel="${h}">Cancel</button>`
-      : sizing ? ""
-      : `<button class="small ${hasOutline ? "ghost" : "primary"}" data-camdraw="${h}" ${fs && !lk ? "" : "disabled"} ${dis}>${hasOutline ? "Redraw outline" : "Draw outline"}</button>
-         <button class="small ghost" data-measure="${h}" ${hasOutline && x && !lk ? "" : "disabled"} ${dis} title="5 s of balls lying still near the hub: an estimate for the ruler and to check the drop test">Measure ball</button>
-         <button class="small ${hasOutline && !c.ball_area ? "primary" : "ghost"}" data-dropstart="${h}" ${hasOutline && x && !lk ? "" : "disabled"} ${dis}>${c.ball_area ? "Calibrate again" : "Calibrate"}</button>`;
-    const exitRow = d || drop || sizing || !hasOutline ? "" : `<div class="row small" style="margin-top:.4rem"><span class="muted">Exit line (optional, untested):</span>
-      <button class="small ghost" data-exitdraw="${h}" ${fs && !lk ? "" : "disabled"} ${dis}>${c.exit ? "Redraw" : "Add exit line"}</button>
-      ${c.exit ? `<button class="small ghost" data-exitoff="${h}" ${dis}>Remove</button>` : ""}</div>
-      ${c.exit ? "" : `<div class="muted small">Only for a camera aimed right at the chute below the hub. The hub then counts the larger of the outline and the exit line (they see the same balls), never both. Check it with Test → Check a recording.</div>`}`;
-    const msg = (r) => r ? `<div class="small" style="margin-top:.3rem;color:${r.ok ? "var(--ok)" : "var(--warn)"}">${esc(r.msg)}</div>` : "";
+    if (!c) return `<div class="hubcam ${h}" data-hub="${h}"><b class="t${h}">${Cap(h)} hub</b><div class="muted small" style="margin-top:.3rem">No camera yet. Press <b>Find cameras</b> above and click <b>${Cap(h)} hub</b> under the picture that shows this hub. This card then takes you through the rest, one step at a time.</div></div>`;
+    const d = camDraft[h], fuel = CAM && CAM.frames[h] && CAM.frames[h].fuel;
+    const draw = !d ? "" : `<div class="small"><b>${d.kind === "outline" ? `${d.pts.length} point${d.pts.length === 1 ? "" : "s"}. Keep clicking round the opening; Save when done.` + (ballPx(h, ...(fs || [1, 1])) ? " The dashed circles are 4 ball widths." : "") : EXIT_HELP[d.pts.length]}</b></div>
+      <div class="row" style="margin-top:.3rem">${d.kind === "outline"
+        ? `<button class="small primary" data-camsave="${h}" ${d.pts.length < 3 ? "disabled" : ""}>Save outline</button>`
+        : `<button class="small primary" data-exitsave="${h}" ${d.pts.length < 3 ? "disabled" : ""}>Save exit line</button>`}
+        <button class="small ghost" data-camundo="${h}">Undo point</button><button class="small ghost" data-camcancel="${h}">Cancel</button></div>`;
     return `<div class="hubcam ${h}" data-hub="${h}">
       <div class="row" style="justify-content:space-between"><b class="t${h}">${Cap(h)} hub</b>
-        <span>${x ? (x.error ? `<span class="pill bad">${esc(x.error)}</span>` : `<span class="pill ok">${x.fps} fps</span>`) : `<span class="pill bad">no picture</span>`}
+        <span>${x ? (x.error ? `<span class="pill bad">${esc(x.error)}</span>` : `<span class="pill ${isDevice(c) && x.fps < 55 ? "bad" : "ok"}">${x.fps} fps</span>`) : `<span class="pill bad">no picture</span>`}
         <button class="ghost small" data-camoff="${h}" ${dis}>Remove camera</button></span></div>
-      <div class="camview" style="${fs ? `aspect-ratio:${fs[0]} / ${fs[1]}` : ""}">${fs && camImg[h] ? `<img alt="" src="${camImg[h]}"><canvas></canvas>` : `<div class="camwait">${running ? "Waiting for a picture from camera " + esc(c.source) + "…" : "The hub counter isn't running."}</div>`}</div>
-      ${help ? `<div class="small"><b>${help}</b></div>` : ""}
+      <div class="camview" style="${fs ? `aspect-ratio:${fs[0]} / ${fs[1]}` : ""}">${fs && camImg[h] ? `<img alt="" src="${camImg[h]}"><canvas></canvas>${fuel ? `<span class="fuelbadge">magenta = counts as fuel</span>` : ""}` : `<div class="camwait">${running ? "Waiting for a picture from camera " + esc(c.source) + "…" : "The hub counter isn't running."}</div>`}</div>
+      ${draw}
       ${lk ? `<div class="small" style="color:var(--warn)">${LOCKMSG}</div>` : ""}
-      <div class="row" style="margin-top:.4rem">${buttons}</div>
-      ${exitRow}
-      ${!drop ? msg(res) : ""}${!sizing ? msg(sres) : ""}
-      <ol class="camsteps small">${steps.map(([ok, t]) => `<li class="${ok ? "done" : ""}">${ok ? "✓ " : ""}${t}</li>`).join("")}</ol>
+      ${hubSteps(h, c, x, fs, lk, dis)}
     </div>`;
   }).join("");
   const box = $("#campanel");
   box.querySelectorAll("[data-pick]").forEach((b) => b.onclick = () => pickCam(b.dataset.pick, b.dataset.src));
   box.querySelectorAll("[data-picksrc]").forEach((b) => b.onclick = () => pickCam(b.dataset.picksrc, $("#camsrc").value));
+  box.querySelectorAll("details[data-open]").forEach((el) => el.ontoggle = () => { camOpen[el.dataset.open] = el.open; });
   box.querySelectorAll("[data-camoff]").forEach((b) => b.onclick = () => {
     if (!confirm(`Stop counting the ${b.dataset.camoff} hub with this camera? Its outline is forgotten.`)) return;
     delete camDraft[b.dataset.camoff];
@@ -1113,19 +1221,54 @@ function renderCams(force) {
     // a new outline needs a new drop test: the ball size was fitted to the old one. The exit line and
     // Measure's estimate stay, moved to the size this outline is drawn at.
     const outline = camDraft[h].pts; delete camDraft[h];
-    const exit = c.exit ? (([a, e, o]) => ({ line: [a, e], out: o }))(scalePts([...c.exit.line, c.exit.out], sz, fs)) : null;
+    const exit = c.exit ? (([p, e, o]) => ({ line: [p, e], out: o }))(scalePts([...c.exit.line, c.exit.out], sz, fs)) : null;
     const measured = c.measured ? Math.round(c.measured * (fs[0] * fs[1]) / (sz[0] * sz[1]) * 10) / 10 : null;
     saveSettings({ ["vision.hubs." + h]: { ...c, size: fs, outline, exit, measured, ball_area: null } }, `${Cap(h)} hub outline saved. Now Calibrate.`);
   });
   box.querySelectorAll("[data-exitsave]").forEach((b) => b.onclick = () => {
-    const h = b.dataset.exitsave, c = hubCam(h), [a, e, o] = scalePts(camDraft[h].pts, camFrameSize(h), c.size);
+    const h = b.dataset.exitsave, c = hubCam(h), [p, e, o] = scalePts(camDraft[h].pts, camFrameSize(h), c.size);
     delete camDraft[h];
-    saveSettings({ ["vision.hubs." + h]: { ...c, exit: { line: [a, e], out: o } } }, `${Cap(h)} hub: exit line saved. It counts beside the outline; the hub takes the larger.`);
+    saveSettings({ ["vision.hubs." + h]: { ...c, exit: { line: [p, e], out: o } } }, `${Cap(h)} hub: exit line saved. It counts beside the outline; the hub takes the larger.`);
   });
   box.querySelectorAll("[data-exitoff]").forEach((b) => b.onclick = () =>
     saveSettings({ ["vision.hubs." + b.dataset.exitoff]: { ...hubCam(b.dataset.exitoff), exit: null } }, `${Cap(b.dataset.exitoff)} hub: exit line removed`));
   box.querySelectorAll("[data-measure]").forEach((b) => b.onclick = async () => {
     CAM = await api("/api/vision/want", { measure: b.dataset.measure }); renderCams(true);
+  });
+  // Picture: typed values stay a draft until Save picture
+  box.querySelectorAll("[data-pic]").forEach((el) => {
+    const h = el.dataset.hub, k = el.dataset.pic;
+    el.oninput = el.onchange = () => {
+      const val = el.type === "checkbox" ? el.checked : el.value === "" ? null : el.value;
+      picDraft[h] = { ...(picDraft[h] || hubCam(h).picture || {}), [k]: val };
+      if (el.type === "checkbox" || el.tagName === "SELECT") renderCams(true);
+      else { const s = box.querySelector(`[data-picsave="${h}"]`); if (s && !lk) s.disabled = false; }
+    };
+  });
+  box.querySelectorAll("[data-picsave]").forEach((b) => b.onclick = async () => {
+    const h = b.dataset.picsave; await saveHub(h, { picture: picDraft[h] }, `${Cap(h)} hub: picture saved; the camera reopens with it.`);
+    if (!hubCam(h).picture || JSON.stringify(hubCam(h).picture) !== JSON.stringify(picDraft[h])) delete picDraft[h];
+  });
+  box.querySelectorAll("[data-picown]").forEach((b) => b.onclick = async () => {
+    const h = b.dataset.picown; delete picDraft[h];
+    if (hubCam(h).picture) await saveHub(h, { picture: null }, `${Cap(h)} hub: back to the camera's own picture.`); else renderCams(true);
+  });
+  // Fuel colour: the sliders preview in magenta at once; Save fuel colour makes them count
+  box.querySelectorAll("[data-fuel]").forEach((el) => el.onchange = () => { camFuel[el.dataset.fuel] = el.checked; sendPreview(true); renderCams(true); });
+  box.querySelectorAll("[data-col]").forEach((el) => el.oninput = () => {
+    const h = el.dataset.hub, k = el.dataset.col;
+    colDraft[h] = { ...colourOf(h), [k]: +el.value };
+    box.querySelector(`[data-colv="${h}:${k}"]`).textContent = el.value;
+    const s = box.querySelector(`[data-colsave="${h}"]`); if (s && !lk) s.disabled = sameColour(colDraft[h], hubCam(h).colour || STD_COLOUR);
+    if (!camFuel[h]) { camFuel[h] = true; const t = box.querySelector(`[data-fuel="${h}"]`); if (t) t.checked = true; }
+    sendPreview();
+  });
+  box.querySelectorAll("[data-colstd]").forEach((b) => b.onclick = () => { colDraft[b.dataset.colstd] = { ...STD_COLOUR }; sendPreview(true); renderCams(true); });
+  box.querySelectorAll("[data-colsave]").forEach((b) => b.onclick = async () => {
+    const h = b.dataset.colsave, col = colourOf(h);
+    await saveHub(h, { colour: sameColour(col, STD_COLOUR) ? null : { ...col } }, `${Cap(h)} hub: fuel colour saved.`);
+    if (sameColour(hubCam(h).colour || STD_COLOUR, col)) delete colDraft[h];
+    renderCams(true);
   });
   box.querySelectorAll("[data-dropstart]").forEach((b) => b.onclick = async () => {
     CAM = await api("/api/vision/want", { drop: b.dataset.dropstart }); renderCams(true);
@@ -1221,6 +1364,7 @@ function renderTest() {
        ${cres.rows.map((r) => `<tr${cres.hand && Math.abs(r.error) === best ? ` style="font-weight:700"` : ""}><td>${esc(r.label)}</td><td class="num">${r.count}</td>
          <td class="num">${r.error == null ? "" : r.error === 0 ? "✓" : `${r.error > 0 ? "+" : ""}${r.error} (${r.pct}%)`}</td></tr>`).join("")}</table>`;
   if (!keepRender(box, `
+    <div class="muted small" style="margin-bottom:.6rem">Once each hub's card says it's calibrated, check the counter here before trusting it with a match.</div>
     <div class="tstep"><b>Ball test</b> <span class="muted small">drop balls in by hand, count them, compare. Zero difference passes. Changes nothing.</span>
       <div style="margin-top:.4rem">${bt}</div>${btRes}</div>
     <div class="tstep"><b>Speed</b> <span class="muted small">camera to count sent, against the field feed's spec: typical ≤ 80 ms, worst ≤ 200 ms.</span>

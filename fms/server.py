@@ -47,8 +47,9 @@ feed_status: list = []        # live count feeds to field systems, relayed by vi
 feed_seen = 0.0
 # Setup -> Cameras, in memory only: what /control asks vision for, and the pictures it sends back.
 # drop: hub -> {"id", "n"} (drop test); size: hub -> {"id"} (Measure); record: Test -> Record's id or None;
-# check: Test -> Check a recording {"id", "dir", "name", "hub", "hand"} or None
-vision_want = {"frames_until": 0.0, "scan": 0, "drop": {}, "size": {}, "record": None, "check": None}
+# check: Test -> Check a recording {"id", "dir", "name", "hub", "hand"} or None; preview: hub -> {"colour",
+# "until"} (Fuel colour -> Show what counts as fuel, a colour range not saved yet)
+vision_want = {"frames_until": 0.0, "scan": 0, "drop": {}, "size": {}, "record": None, "check": None, "preview": {}}
 vision_frames: dict = {}      # hub -> {"jpeg": bytes, "w", "h", "source", "t"}
 vision_cams: dict = {"id": 0, "t": 0, "cameras": [], "in_use": {}, "error": None}
 vision_drop: dict = {}        # hub -> {"ok", "msg", "t"} (the last drop test's outcome)
@@ -1336,7 +1337,13 @@ def vision_events(body: dict = Body(...), x_vision_key: str = Header(None)):
     return {"record": rec, "config_rev": store.get("vision_rev") or 0, "now": time.time(),
             "want": {"frames": time.time() < vision_want["frames_until"], "scan": vision_want["scan"],
                      "drop": copy.deepcopy(vision_want["drop"]), "size": copy.deepcopy(vision_want["size"]),
-                     "record": vision_want["record"], "check": copy.deepcopy(vision_want["check"])}}
+                     "record": vision_want["record"], "check": copy.deepcopy(vision_want["check"]),
+                     "preview": _previews()}}
+
+
+def _previews():
+    now = time.time()
+    return {h: p["colour"] for h, p in vision_want["preview"].items() if p["until"] > now}
 
 
 def _at_setup_size(area, size, cur):
@@ -1406,7 +1413,8 @@ def vision_frames_in(body: dict = Body(...), x_vision_key: str = Header(None)):
     for hub, f in body.items():
         if hub in game.ALLIANCES and isinstance(f, dict) and f.get("jpeg"):
             vision_frames[hub] = {"jpeg": base64.b64decode(f["jpeg"]), "w": int(f.get("w") or 0),
-                                  "h": int(f.get("h") or 0), "source": str(f.get("source", "")), "t": time.time()}
+                                  "h": int(f.get("h") or 0), "source": str(f.get("source", "")), "t": time.time(),
+                                  "fuel": bool(f.get("fuel"))}
     return {"ok": True}
 
 
@@ -1426,8 +1434,20 @@ def vision_want_post(body: dict = Body(...), x_fms_token: str = Header(None)):
     """Setup -> Cameras: {"frames": true} (keep pictures coming ~15 s), {"scan": true}, and the drop test:
     {"drop": hub} starts recording, {"drop": hub, "n": balls} ends it (vision fits), {"drop": hub, "cancel": true}.
     {"measure": hub} (5 s of still balls); Setup -> Run: {"unlock": true/false} for the running match;
-    Setup -> Test: {"record": true/false}, {"check": {"dir", "name", "hub", "hand"}} or {"check": false}."""
+    Setup -> Test: {"record": true/false}, {"check": {"dir", "name", "hub", "hand"}} or {"check": false}.
+    {"preview": {hub: colour range or null}}: paint what that range takes as fuel magenta on the hub's
+    pictures for the next 20 s (the page repeats it while the switch is on); nothing is saved."""
     need(x_fms_token)
+    for hub, colour in (body.get("preview") or {}).items():
+        if hub in game.ALLIANCES:
+            if colour is None:
+                vision_want["preview"].pop(hub, None)
+                continue
+            try:
+                vision_want["preview"][hub] = {"colour": settings.fuel_colour(colour) or dict(settings.COLOUR_STANDARD),
+                                               "until": time.time() + 20}
+            except ValueError as e:
+                raise HTTPException(400, str(e))
     if "unlock" in body:
         m = running_match()
         vision_unlock["key"] = m["key"] if m and body["unlock"] else None
@@ -1487,7 +1507,8 @@ def vision_setup(x_fms_token: str = Header(None)):
     """What Setup -> Cameras draws: picture times and sizes (images come from /api/vision/image/...)."""
     need(x_fms_token)
     now = time.time()
-    return {"frames": {h: {k: f[k] for k in ("w", "h", "source", "t")} for h, f in vision_frames.items() if now - f["t"] < 30},
+    return {"frames": {h: {k: f[k] for k in ("w", "h", "source", "t", "fuel")} for h, f in vision_frames.items() if now - f["t"] < 30},
+            "preview": _previews(),
             "scan": {"asked": vision_want["scan"], "id": vision_cams["id"], "t": vision_cams["t"],
                      "error": vision_cams["error"], "in_use": vision_cams["in_use"],
                      "cameras": [{k: c[k] for k in ("source", "w", "h")} for c in vision_cams["cameras"]]},

@@ -142,13 +142,61 @@ def _point(p, what):
     return [round(float(_num(0, 10000)(v)), 1) for v in p]
 
 
+COLOUR_STANDARD = {"hue_lo": 15, "hue_hi": 40, "sat_min": 55, "val_min": 45}   # vision's camprofile.STANDARD_COLOUR
+
+
+def fuel_colour(x):
+    """Setup -> Fuel colour: None (the standard range) or {hue_lo, hue_hi, sat_min, val_min} in OpenCV HSV
+    (hue 0-179, the rest 0-255); a missing key is the standard's."""
+    if x is None:
+        return None
+    if not isinstance(x, dict):
+        raise ValueError("a fuel colour is {hue_lo, hue_hi, sat_min, val_min}")
+    c = {k: int(round(float(_num(0, 255)(x.get(k, d))))) for k, d in COLOUR_STANDARD.items()}
+    if not c["hue_lo"] < c["hue_hi"] <= 179:
+        raise ValueError("the fuel colour's hue runs 0 to 179, the low end below the high end")
+    return c
+
+
+def _picture(x):
+    """Setup -> Picture: None (the camera's own and the vision file's size and fps) or {fps, size, fourcc,
+    auto_exposure, exposure_ms, auto_wb, wb_kelvin, brightness, contrast, saturation, gain}; any None =
+    the camera's own. Applied by vision when it opens a local camera (camprofile.apply_image)."""
+    if x is None:
+        return None
+    if not isinstance(x, dict):
+        raise ValueError("picture settings are {fps, size, exposure_ms, ...}")
+    blank = lambda v: v in (None, "")
+    out = {"fps": None if blank(x.get("fps")) else int(_num(1, 240)(x["fps"]))}
+    size = x.get("size")
+    if isinstance(size, str) and size.strip():
+        size = size.lower().replace("×", "x").split("x")
+    if blank(size) or size == []:
+        out["size"] = None
+    else:
+        if not (isinstance(size, (list, tuple)) and len(size) == 2):
+            raise ValueError("a picture size is width x height, e.g. 1280x720")
+        out["size"] = [int(_num(160, 7680)(v)) for v in size]
+    f = str(x.get("fourcc") or "").strip().upper()
+    if f and not (len(f) == 4 and f.isalnum()):
+        raise ValueError("a video format is four letters, e.g. MJPG or YUYV")
+    out["fourcc"] = f or None
+    for k in ("auto_exposure", "auto_wb"):
+        out[k] = None if x.get(k) is None else bool(x[k])
+    for k, lo, hi in (("exposure_ms", 0.1, 100), ("wb_kelvin", 2000, 8000), ("brightness", -10000, 10000),
+                      ("contrast", -10000, 10000), ("saturation", -10000, 10000), ("gain", -10000, 10000)):
+        out[k] = None if blank(x.get(k)) else round(float(_num(lo, hi)(x[k])), 2)
+    return out if any(v is not None for v in out.values()) else None
+
+
 def _hubcam(x):
     """Setup -> Cameras, one hub: None = vision's config file decides; else {"source": camera index or
     address, "size": [w, h] of the picture the outline was drawn on, "outline": [[x, y], ...] in those
     pixels (or [] = not drawn yet), "exit": None or {"line": [[x, y], [x, y]], "out": [x, y]} (an exit
     line counted beside the outline; out = a point on the side balls leave towards), "ball_area": one
     ball's pixel area at that size from the drop test (None = not calibrated), "measured": Measure's
-    estimate of it (draws the ruler, checks the drop test; never counted with)}."""
+    estimate of it (draws the ruler, checks the drop test; never counted with), "picture": the camera's
+    settings (_picture), "colour": the range of colours that count as fuel (fuel_colour)}."""
     if x is None:
         return None
     if not isinstance(x, dict):
@@ -181,7 +229,8 @@ def _hubcam(x):
         ex = {"line": line, "out": out}
     ball, meas = (None if v in (None, "") else round(float(_num(1, 1e6)(v)), 1)
                   for v in (x.get("ball_area"), x.get("measured")))
-    return {"source": src, "size": [w, h], "outline": pts, "exit": ex, "ball_area": ball, "measured": meas}
+    return {"source": src, "size": [w, h], "outline": pts, "exit": ex, "ball_area": ball, "measured": meas,
+            "picture": _picture(x.get("picture")), "colour": fuel_colour(x.get("colour"))}
 
 
 # key -> validator. Dotted keys are paths into the event.yaml structure.
