@@ -16,6 +16,8 @@ import time
 
 import requests
 
+from . import game
+
 
 def fk(t):
     return f"frc{int(t)}"
@@ -83,14 +85,14 @@ class TBA:
     def _key(d):
         return f"{d['comp_level']}{d['set_number'] if d['comp_level'] != 'qm' else ''}m{d['match_number']}"
 
-    def rankings(self, rows):
+    def rankings(self, rows, tiebreaks=game.TIEBREAKS):
+        cols = [(f"avg_{n}", label) for n, _, label in tiebreaks]
         payload = {
-            "breakdowns": ["Ranking Score", "Avg Match", "Avg Tower", "Avg Fuel"],
+            "breakdowns": ["Ranking Score"] + [label for _, label in cols],
             "rankings": [{
                 "team_key": fk(r["team"]), "rank": r["rank"], "played": r["played"], "dqs": 0,
                 "wins": r["wins"], "losses": r["losses"], "ties": r["ties"],
-                "Ranking Score": r["rs"], "Avg Match": r["avg_score"],
-                "Avg Tower": r["avg_tower"], "Avg Fuel": r["avg_fuel"],
+                "Ranking Score": r["rs"], **{label: r[k] for k, label in cols},
             } for r in rows],
         }
         return self.enqueue("rankings/update", payload, dedupe="rankings")
@@ -156,10 +158,17 @@ class TBA:
 def _flat(b):
     """Only used if tba.send_score_breakdown is on. TBA validates breakdown keys per
     season; test one match first, turn off if TBA rejects it."""
-    d = {"autoFuel": b["auto_fuel"], "teleopFuel": b["teleop_fuel"], "totalFuel": b["total_fuel"],
-         "autoTowerPoints": b["auto_tower_points"], "teleopTowerPoints": b["teleop_tower_points"],
-         "foulPoints": b["foul_points"], "autoPoints": b["auto_points"],
+    d = {"foulPoints": b["foul_points"], "autoPoints": b["auto_points"],
          "teleopPoints": b["teleop_points"], "totalPoints": b["total"], "rp": b["rp"],
          "minorFoulCount": b["fouls_committed"]["minor"],
          "majorFoulCount": b["fouls_committed"]["major"]}
+    if "total_fuel" in b:       # REBUILT
+        d.update({"autoFuel": b["auto_fuel"], "teleopFuel": b["teleop_fuel"], "totalFuel": b["total_fuel"],
+                  "autoTowerPoints": b["auto_tower_points"], "teleopTowerPoints": b["teleop_tower_points"]})
+    else:                       # REEFSCAPE
+        d.update({"autoMobilityPoints": b["leave_points"], "autoCoralPoints": b["auto_coral_points"],
+                  "teleopCoralPoints": b["teleop_coral_points"], "algaePoints": b["algae_points"],
+                  "endGameBargePoints": b["barge_points"], "autoBonusAchieved": b["auto_rp"],
+                  "coralBonusAchieved": b["coral_rp"], "bargeBonusAchieved": b["barge_rp"],
+                  "coopertitionCriteriaMet": bool(b["coop"])})
     return d

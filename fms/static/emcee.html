@@ -30,7 +30,7 @@
 <main class="wrap" id="app" hidden>
   <div class="panel big"><div class="clock num" id="clk">–:––</div><div class="phase" id="ph">–</div></div>
   <div class="row flipbar"><button class="ghost small flip" id="flip">⇄ Flip sides</button></div>
-  <div class="hubs">
+  <div class="hubs" id="hubs">
     <div class="hub red" id="hr"><div class="name tred">Red hub</div><div class="state" id="hrs">–</div></div>
     <div class="hub blue" id="hb"><div class="name tblue">Blue hub</div><div class="state" id="hbs">–</div></div>
   </div>
@@ -62,6 +62,10 @@ FMS.on((s) => {
   $("#rs").textContent = cur && cur.score ? cur.score.red.total : 0;
   $("#bs").textContent = cur && cur.score ? cur.score.blue.total : 0;
   const box = $("#auto");
+  // REEFSCAPE has no hubs and no auto result to call: just the clock and the scores.
+  const reef = s.game_id === "reefscape";
+  $("#hubs").hidden = $("#nx").hidden = box.hidden = reef;
+  if (reef) return;
   if (!cur || !cur.first_inactive) {
     box.innerHTML = `<h3>Auto result</h3><div class="muted">Shows here ${g.score_grace_s}s after auto ends.</div>`;
     return;

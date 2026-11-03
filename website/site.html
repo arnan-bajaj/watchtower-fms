@@ -122,7 +122,7 @@ async function eventsView() {
   <div class="panel"><h2>New event</h2>
     <div class="small muted" style="margin-bottom:.35rem">Game</div>
     <div class="games" role="radiogroup" aria-label="Game">
-      <button disabled role="radio" aria-checked="false" data-game="reefscape" title="REEFSCAPE was the 2025 game; it isn't supported"><b>REEFSCAPE</b><span class="small">2025 · past season</span></button>
+      <button role="radio" aria-checked="false" data-game="reefscape" title="REEFSCAPE (2025): scored by hand, no hub cameras"><b>REEFSCAPE</b><span class="small">2025 · scored by hand</span></button>
       <button class="sel" role="radio" aria-checked="true" data-game="rebuilt"><b>REBUILT</b><span class="small">2026 season</span></button>
       <button disabled role="radio" aria-checked="false" data-game="biocore" title="BIOCORE is next season's game"><b>BIOCORE</b><span class="small">2027 · coming next season</span></button>
     </div>
@@ -134,6 +134,8 @@ async function eventsView() {
     </div>
     <label class="field" style="margin-top:.75rem">Teams (optional now; any separator) <textarea id="ne_teams" style="min-height:4rem" placeholder="254 1678 971 ..."></textarea></label>
     <button class="primary" id="bne" style="margin-top:.6rem">Create event</button></div>`;
+  document.querySelectorAll(".games button:not([disabled])").forEach((b) => b.onclick = () =>
+    document.querySelectorAll(".games button").forEach((x) => { x.classList.toggle("sel", x === b); x.setAttribute("aria-checked", x === b); }));
   $("#bne").onclick = async () => {
     try {
       const e = await api("/api/events", { game: document.querySelector(".games button.sel").dataset.game, name: $("#ne_name").value, date: $("#ne_date").value, utc_offset_hours: $("#ne_utc").value,
@@ -173,10 +175,10 @@ async function eventView(slug) {
 let osTab = /Win/.test(navigator.platform) ? "windows" : "mac";
 function renderOwner(e) {
   const S = e.settings, v = (k) => S[k].value;
-  const c = e.commands;
-  const cmds = osTab === "windows"
+  const c = e.commands, reef = e.game === "reefscape";     // REEFSCAPE: scored by hand, no cameras or field feed
+  const cmds = (osTab === "windows"
     ? [["Start Watchtower", c.windows], ["With fake fuel (rehearsal)", c.windows_mock]]
-    : [["Start Watchtower", c.mac], ["With fake fuel (rehearsal)", c.mac_mock]];
+    : [["Start Watchtower", c.mac], ["With fake fuel (rehearsal)", c.mac_mock]]).slice(0, reef ? 1 : 2);
   const fd = v("field.feeds");
   $("#view").innerHTML = `
   <p><a href="/" data-go>← Your events</a></p>
@@ -199,10 +201,12 @@ function renderOwner(e) {
         <div><span class="small muted">Ref</span><b>${esc(v("server.pins.ref"))}</b></div>
         <div><span class="small muted">Emcee</span><b>${esc(v("server.pins.emcee"))}</b></div></div>
       <p class="small muted">Change them in Watchtower: /control → Setup.</p></div>
-    <div class="panel"><h2>Hub cameras</h2>
+    ${reef ? `<div class="panel"><h2>Scoring</h2>
+      <p class="small muted">REEFSCAPE (2025) is scored by hand: after each match the scorekeeper types each alliance's coral, algae, LEAVE and BARGE results in /control. No cameras.</p></div>`
+    : `<div class="panel"><h2>Hub cameras</h2>
       ${["red", "blue"].map((h) => { const cam = S["vision.hubs." + h] && S["vision.hubs." + h].value, f = e.vision && e.vision[h];
         return `<div class="small"><b>${h}</b>: ${!cam ? "no camera picked" : `camera ${esc(cam.source)}, ${cam.outline && cam.outline.length ? "outline drawn" : "outline not drawn yet"}`}${e.online && f ? ` · ${f} fps` : ""}</div>`; }).join("")}
-      <p class="small muted">Plug USB cameras into the laptop, then in Watchtower open /control → Setup → Cameras: pick each hub's camera and click around the hub's opening. Nothing to install. Counts per ball: red ${esc(v("vision.scale.red"))}, blue ${esc(v("vision.scale.blue"))}.</p></div>
+      <p class="small muted">Plug USB cameras into the laptop, then in Watchtower open /control → Setup → Cameras: pick each hub's camera and click around the hub's opening. Nothing to install. Counts per ball: red ${esc(v("vision.scale.red"))}, blue ${esc(v("vision.scale.blue"))}.</p></div>`}
   </div>
 
   <div class="panel"><h2>Event</h2>
@@ -224,13 +228,13 @@ function renderOwner(e) {
       <label style="margin-top:.6rem"><input type="checkbox" data-k="tba.enabled" ${v("tba.enabled") ? "checked" : ""}> Send results to TBA</label>
       <button class="primary" data-save="tba.auth_id tba.enabled" style="margin-top:.6rem;display:block">Save</button>
       <p class="small muted">Get keys at thebluealliance.com/request/apiwrite (sign in, pick your event). Leave sending off while you rehearse.</p></div>
-    <div class="panel"><h2>Field system (bioarena)</h2>
+    ${reef ? "" : `<div class="panel"><h2>Field system (bioarena)</h2>
       <div class="form">
         <label class="field">Field IP <input id="fhost" value="${esc(fd && fd[0] ? fd[0].host : "")}" placeholder="192.168.1.10"></label>
         <label class="field">UDP port <input id="fport" type="number" value="${esc(fd && fd[0] ? fd[0].port : "")}" placeholder="8411"></label>
       </div>
       <button class="primary" id="bfield" style="margin-top:.6rem">Save</button>
-      <p class="small muted">The hub cameras send every ball to the field so it decides AUTO and lights the hubs. In the field's counter setting, enter the laptop's address${e.lan_urls.length ? ` (<b>${esc(e.lan_urls[0].replace(/^http:\/\/|:\d+$/g, ""))}</b> right now)` : " (shown here once Watchtower runs)"}. Both change per WiFi network.</p></div>
+      <p class="small muted">The hub cameras send every ball to the field so it decides AUTO and lights the hubs. In the field's counter setting, enter the laptop's address${e.lan_urls.length ? ` (<b>${esc(e.lan_urls[0].replace(/^http:\/\/|:\d+$/g, ""))}</b> right now)` : " (shown here once Watchtower runs)"}. Both change per WiFi network.</p></div>`}
   </div>
 
   <div class="panel"><h2>Danger zone</h2>
@@ -251,7 +255,7 @@ function renderOwner(e) {
     if (b.dataset.save.startsWith("tba") && $("#tsec").value) ch["tba.auth_secret"] = $("#tsec").value;
     save(ch);
   });
-  $("#bfield").onclick = () => { const h = $("#fhost").value.trim(); save({ "field.feeds": h ? [{ name: "field", host: h, port: $("#fport").value || 8411 }] : [] }); };
+  if ($("#bfield")) $("#bfield").onclick = () => { const h = $("#fhost").value.trim(); save({ "field.feeds": h ? [{ name: "field", host: h, port: $("#fport").value || 8411 }] : [] }); };
   $("#brot").onclick = async () => { if (confirm("Make a new launch command? The old one stops syncing.")) renderOwner(await api(`/api/events/${e.slug}/rotate`, {})); };
   $("#bdel").onclick = async () => {
     if (prompt(`Type ${e.slug} to delete this event from the website`) !== e.slug) return;

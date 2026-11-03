@@ -71,7 +71,8 @@ document.addEventListener("mousemove", () => {
   document.body.classList.add("mouse");
   clearTimeout(mouseT); mouseT = setTimeout(() => document.body.classList.remove("mouse"), 3000);
 });
-const rows = [["Auto", "auto_points"], ["Fuel", "fuel_points"], ["Tower", "tower_points"], ["Penalty", "foul_points"]];
+const ROWS = { rebuilt: [["Auto", "auto_points"], ["Fuel", "fuel_points"], ["Tower", "tower_points"], ["Penalty", "foul_points"]],
+               reefscape: [["Auto", "auto_points"], ["Coral", "coral_points"], ["Algae", "algae_points"], ["Barge", "barge_points"], ["Penalty", "foul_points"]] };
 let lastPicks = -1;
 function renderSel(s) {
   const sel = s.selection, rank = (t) => sel.order.indexOf(t) + 1;
@@ -104,6 +105,7 @@ FMS.on((s) => {
   $("#bs").textContent = sc ? sc.blue.total : 0;
   if (cur && cur.status === "committed" && sc) {
     const w = sc.winner === "tie" ? "Tie" : (sc.winner === "red" ? "Red" : "Blue") + " wins";
+    const rows = ROWS[s.game_id] || ROWS.rebuilt;
     const col = (a) => `<table>${rows.map(([l, k]) => `<tr><td>${l}</td><td class="r num">${sc[a][k]}</td></tr>`).join("")}
       ${cur.comp_level === "qm" ? `<tr><td>Ranking points</td><td class="r num">${sc[a].rp}</td></tr>` : ""}</table>`;
     $("#foot").innerHTML = `<div class="win">${w}</div><div class="bd">${FMS.sides().map(col).join("")}</div>`;
@@ -115,7 +117,7 @@ everyFrame(() => {
   const cur = FMS.state && FMS.state.current, p = FMS.phase(cur);
   $("#clk").textContent = FMS.mmss(p.clock);
   $("#ph").textContent = p.label;
-  const live = p.active && !["pre", "post", "pause"].includes(p.name);
+  const live = p.active && !["pre", "post", "pause"].includes(p.name) && FMS.state.game_id !== "reefscape";   // no hubs in REEFSCAPE
   for (const a of FMS.sides()) {
     const el = $(a === "red" ? "#rh" : "#bh");
     el.classList.toggle("on", !!(live && p.active[a]));

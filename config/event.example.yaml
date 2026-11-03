@@ -15,6 +15,8 @@ event:
   quals_after_lunch: false      # false: quals should finish by lunch (the preview warns if they don't)
                                 # true: match times skip the lunch break and quals continue until day_end
   day_end: "17:00"              # with quals_after_lunch, the preview warns if quals run past this
+  game: rebuilt                 # rebuilt (2026, hub cameras) | reefscape (2025, scored by hand). For reefscape,
+                                # delete the game: section at the bottom (it holds REBUILT's rules).
 
 # ---------------------------------------------------------------- display
 display:
@@ -42,6 +44,7 @@ tba:
   retry_s: 15
 
 # ---------------------------------------------------------------- REBUILT rules
+# Only for event.game: rebuilt. Any key left out uses fms/config.py GAME_RULES (which also has REEFSCAPE's).
 # VERIFY every number against the 2026 Game Manual (section 6) before the event.
 # Sources disagree on teleop Level 1 (10 vs 15). Everything scores from these values.
 game:

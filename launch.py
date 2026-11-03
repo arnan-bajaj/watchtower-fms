@@ -7,6 +7,8 @@ The website's launch command installs Watchtower and then runs this. Run it agai
   python launch.py EVENT_FOLDER --no-vision  # FMS only (score by hand in review, or vision elsewhere)
   python launch.py EVENT_FOLDER --vision-config my-vision.yaml   # your own vision config instead
 
+A REEFSCAPE (2025) event has no hub counter: the scorekeeper types the scores in /control.
+
 EVENT_FOLDER holds config/event.yaml (written by the website) and data/ (matches, fuel, backups).
 Everything else (teams, TBA keys, PINs, field system, cameras, calibration) is in /control -> Setup.
 No camera is opened until one is picked there. Ctrl+C stops everything this started.
@@ -104,7 +106,10 @@ def main():
     if not up(port):
         stop()
     vcfg = None
-    if args.mock:
+    hand = cfg["event"]["game"] != "rebuilt"
+    if hand:
+        pass                                       # REEFSCAPE: scored by hand, no hub counter
+    elif args.mock:
         vcfg = ev / "config" / "vision.mock.yaml"
         vcfg.write_text(MOCK.format(port=port))
     elif args.vision_config:
@@ -134,7 +139,8 @@ def main():
   Scorekeeper (this computer):  http://localhost:{port}/control
   Phones on the same WiFi:      {urls[0]}   (ref, emcee, display)
   PINs: scorekeeper {pins['control']}  ref {pins['ref']}  emcee {pins['emcee']}   (change them in /control -> Setup)
-  Hub counter: {'fake fuel' if args.mock else 'off' if not vcfg else vcfg.name if args.vision_config
+  Hub counter: {'none (REEFSCAPE is scored by hand in /control)' if hand else 'fake fuel' if args.mock
+                else 'off' if not vcfg else vcfg.name if args.vision_config
                 else 'pick each hub camera in /control -> Setup -> Cameras'}
   Ctrl+C here stops Watchtower. Your matches are saved in {ev / 'data'}.
 """, flush=True)

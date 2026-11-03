@@ -3,7 +3,7 @@ const FMS = (() => {
   let skew = 0, state = null, ws = null, role = null;
   const subs = [];
   const LABEL = { auto: "Auto", transition: "Transition", shift1: "Shift 1", shift2: "Shift 2",
-                  shift3: "Shift 3", shift4: "Shift 4", endgame: "Endgame" };
+                  shift3: "Shift 3", shift4: "Shift 4", teleop: "Teleop", endgame: "Endgame" };
 
   const now = () => Date.now() / 1000 + skew;
   const $ = (s, el = document) => el.querySelector(s);
@@ -52,7 +52,7 @@ const FMS = (() => {
     }
     if (t < ps[1].start) return { name: "pause", label: "Auto over", remaining: ps[1].start - t,
                                   next: ps[1], clock: end - ps[1].start };
-    return { name: "post", label: cur.status === "running" ? "Counting last fuel" : "Match over", remaining: null, clock: 0 };
+    return { name: "post", label: cur.status === "running" && state.game_id !== "reefscape" ? "Counting last fuel" : "Match over", remaining: null, clock: 0 };
   }
 
   const mmss = (s) => {

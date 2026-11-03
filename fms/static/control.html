@@ -91,7 +91,7 @@
         <button id="bteleop" class="ghost">Teleop started</button><button id="breset" class="ghost">Reset match</button>
       </div>
     </div>
-    <div class="panel">
+    <div class="panel" id="offpanel">
       <h2>Start-click correction</h2>
       <div class="offgrid">
         <button class="ghost" data-off="-1">−1 s</button><button class="ghost" data-off="-0.5">−0.5</button>
@@ -148,7 +148,7 @@
         <label class="field">Auto started at <input id="amauto" inputmode="numeric" placeholder="HH:MM:SS"></label>
         <button class="primary" id="bam">Add match</button>
       </div>
-      <div class="hint">Re-adds a qual (e.g. one deleted by mistake) at that number. Put <code>*</code> after a surrogate. Leave <b>Auto started at</b> blank to schedule it to play. If it was already played, enter when auto really started (event-day clock): it opens in review, recounted from the fuel still stored for that time. Then set the hub order, climbs, fouls and any count fixes, and Commit.</div>
+      <div class="hint">Re-adds a qual (e.g. one deleted by mistake) at that number. Put <code>*</code> after a surrogate. Leave <b>Auto started at</b> blank to schedule it to play. If it was already played, enter when auto really started (event-day clock): it opens in review<span data-game="rebuilt">, recounted from the fuel still stored for that time. Then set the hub order, climbs, fouls and any count fixes, and Commit.</span><span data-game="reefscape" hidden>. Then type its scores and fouls, and Commit.</span></div>
     </div>
     <div class="panel">
       <div class="panel-head"><h2>All matches</h2>
@@ -169,7 +169,7 @@
   <!-- RANKINGS -->
   <section data-tab="rank" hidden>
     <div class="panel"><div class="panel-head"><h2>Qualification rankings</h2><button id="brank" class="small">Push rankings to TBA</button></div>
-      <div class="muted small" style="margin-bottom:.75rem">Sort: ranking score (avg RP), then avg match score, avg tower, avg fuel. Recomputed and queued for TBA on every committed qual.</div>
+      <div class="muted small" style="margin-bottom:.75rem" id="ranknote"></div>
       <div class="scroll" id="ranktable"></div></div>
   </section>
 
@@ -207,7 +207,7 @@
         <label class="field" style="margin-top:.75rem">Teams (any separator) <textarea id="se_teams" data-k="event.teams" spellcheck="false" style="min-height:4.5rem" placeholder="254 1678 971 604 ..."></textarea></label>
         <div class="row" style="margin-top:.6rem"><button class="primary" data-save="event">Save event</button><span class="muted small" id="se_teamn"></span></div>
         <div class="muted small" style="margin-top:.4rem">UTC offset on event day: PDT −7, MDT −6, CDT −5, EDT −4. Used for TBA match times. Changes apply at once; no restart.</div></div>
-      <div class="panel"><h2>Field system (bioarena)</h2>
+      <div class="panel" id="fieldpanel"><h2>Field system (bioarena)</h2>
         <div class="muted small">Sends every ball the cameras count straight to the field over UDP, so it decides the AUTO winner and lights the hubs. Leave empty if your field doesn't take counts.</div>
         <div class="form" style="margin-top:.6rem">
           <label class="field">Field IP <input id="sf_host" placeholder="e.g. 192.168.1.10" inputmode="decimal" autocapitalize="off"></label>
@@ -215,7 +215,7 @@
         </div>
         <div class="row" style="margin-top:.6rem"><button class="primary" id="bfield">Save field</button><button class="ghost small" id="bfieldoff">No field</button><button class="ghost small" id="bfieldfile">Use vision's config file</button></div>
         <table class="kv" id="ftable" style="margin-top:.6rem"></table></div>
-      <div class="panel"><h2>Vision &amp; calibration</h2><table class="kv" id="vtable"></table>
+      <div class="panel" id="visionpanel"><h2>Vision &amp; calibration</h2><table class="kv" id="vtable"></table>
         <div id="calib" style="margin-top:.6rem"></div>
         <div class="muted small" style="margin-top:.4rem"><b>Counts per ball</b>: if one ball counts as 8, set 8 and each hub's count is divided by it. Or press <b>Calibrate</b>, drop some balls in that hub, and enter how many. Cameras and outlines: <b>Cameras</b> at the top of Setup.</div></div>
       <div class="panel"><h2>PINs</h2>
@@ -274,6 +274,8 @@ const sides = () => FMS.sides();
 const Cap = (a) => (a === "red" ? "Red" : "Blue");
 const bySide = (f) => sides().map(f).join("");
 const vs = (x) => sides().map((a) => `<span class="t${a}">${x[a]}</span>`).join("–");   // "12–8" in screen order
+// REEFSCAPE (2025) is scored by hand (fms/reefscape.py): no vision, hubs, fuel or field feed.
+const REEF = () => !!S() && S().game_id === "reefscape";
 
 FMS.gate("control").then(() => { $("#app").hidden = false; FMS.connect(); });
 FMS.flipToggle($("#flip"));
@@ -327,7 +329,7 @@ function renderMatch(s) {
   $("#bteleop").disabled = cur.status !== "running";
   $("#breset").disabled = cur.status === "committed" || cur.status === "scheduled";
   $("#offv").textContent = (cur.offset || 0).toFixed(1) + " s";
-  renderAuto(s);
+  if (!REEF()) renderAuto(s);
   const sig = JSON.stringify([sides(), cur.key, cur.status, cur.score, cur.climbs, cur.fouls, cur.video, cur.winner_override, cur.suggested_video]);
   const ae = document.activeElement;
   if ($("#review").contains(ae) && ae.matches("input,select")) { reviewPending = true; return; }
@@ -352,14 +354,34 @@ function renderAuto(s) {
   box.querySelectorAll("[data-fi]").forEach((b) => b.onclick = () => api("/api/match/first_inactive", { key: cur.key, alliance: b.dataset.fi, lock: true }));
 }
 
+// REEFSCAPE count rows: [item, label, points each]; a row with no points is a heading.
+const REEF_LEVELS = ["L1", "L2", "L3", "L4"];
+const REEF_ROWS = (g) => ["auto", "teleop"].flatMap((p) => [[null, p === "auto" ? "Auto" : "Teleop"],
+  ...REEF_LEVELS.map((l) => [`${p}_${l}`, `Coral ${l}${l === "L1" ? " (trough)" : ""}`, g["coral_" + p][l]]),
+  [`${p}_processor`, "Algae in processor", g.algae.processor], [`${p}_net`, "Algae in net", g.algae.net]]);
+const REEF_BARGE = [["none", "No barge"], ["park", "Park"], ["shallow", "Shallow cage"], ["deep", "Deep cage"]];
+function reefTable(g, cell) {
+  return `<table><tr><th></th>${bySide((a) => `<th class="t${a}">${Cap(a)}</th>`)}</tr>` + REEF_ROWS(g).map(([k, label, pts]) => k
+    ? `<tr><td>${label} <span class="muted small">${pts} pt</span></td>${bySide((a) => cell(a, k))}</tr>`
+    : `<tr><td colspan="3"><b>${label}</b></td></tr>`).join("") + `</table>`;
+}
+function reefSums(sc, row) {
+  return row("Leave", "leave_points") + row("Coral", "coral_points") + row("Algae", "algae_points") + row("Barge", "barge_points")
+    + row("Auto points", "auto_points") + row("Teleop points", "teleop_points") + row("Penalty points drawn", "foul_points")
+    + `<tr><td>Coral per level <span class="muted small">L1/L2/L3/L4</span></td>${bySide((a) => `<td class="r num small">${REEF_LEVELS.map((l) => sc[a].coral[l]).join("/")}</td>`)}</tr>
+      <tr><td>Coopertition</td><td colspan="2" class="small">${sc.red.coop ? "met: coral RP needs 3 levels" : "not met"}</td></tr>`;
+}
+const reefBonus = (o) => [["auto_rp", "auto"], ["coral_rp", "coral"], ["barge_rp", "barge"]].filter(([k]) => o[k]).map(([, l]) => l).join(", ") || "–";
+const reefRobot = (r) => `${r.leave ? "Leave · " : ""}${(REEF_BARGE.find(([v]) => v === r.barge) || REEF_BARGE[0])[1]}`;
+
 function renderReview(s) {
-  const cur = s.current, g = s.game, box = $("#review");
-  if (!cur || !cur.score) { box.innerHTML = `<h2>Score review</h2><div class="muted">Start the match to see live counts.</div>`; return; }
+  const cur = s.current, g = s.game, box = $("#review"), reef = REEF();
+  if (!cur || !cur.score) { box.innerHTML = `<h2>Score review</h2><div class="muted">${reef ? "Start the match to enter its scores." : "Start the match to see live counts."}</div>`; return; }
   const sc = cur.score, names = cur.periods.map((p) => p.name);
   const locked = cur.status === "committed";
   const dis = locked ? "disabled" : "";
   const inp = (a, p) => `<input type="number" min="0" data-id="f-${a}-${p}" data-a="${a}" data-p="${p}" value="${sc[a].fuel[p]}" ${dis}>`;
-  const fuelRows = names.map((p) => `<tr><td>${FMS.LABEL[p]}</td>
+  const fuelRows = reef ? "" : names.map((p) => `<tr><td>${FMS.LABEL[p]}</td>
       ${bySide((a) => `<td class="r num muted">${sc[a].vision_fuel[p]}</td><td>${inp(a, p)}</td>`)}</tr>`).join("");
   const climbs = (a) => cur[a].map((t, i) => {
     const r = ((cur.climbs || {})[a] || [])[i] || { auto_l1: false, level: 0 };
@@ -367,22 +389,34 @@ function renderReview(s) {
       <td><label><input type="checkbox" data-id="c-${a}-${i}-a" data-ca="${a}" data-ci="${i}" data-auto ${r.auto_l1 ? "checked" : ""} ${dis}> L1 in auto</label></td>
       <td><select data-id="c-${a}-${i}-l" data-ca="${a}" data-ci="${i}" ${dis}>${[0, 1, 2, 3].map((l) => `<option value="${l}" ${r.level === l ? "selected" : ""}>${l ? "Level " + l : "No climb"}</option>`).join("")}</select></td></tr>`;
   }).join("");
+  const robots = (a) => cur[a].map((t, i) => {
+    const r = sc[a].robots[i];
+    return `<tr><td class="t${a}"><b>${t}</b></td>
+      <td><label><input type="checkbox" data-id="r-${a}-${i}-l" data-ra="${a}" data-ri="${i}" data-leave ${r.leave ? "checked" : ""} ${dis}> Leave</label></td>
+      <td><select data-id="r-${a}-${i}-b" data-ra="${a}" data-ri="${i}" ${dis}>${REEF_BARGE.map(([v, l]) => `<option value="${v}" ${r.barge === v ? "selected" : ""}>${l}</option>`).join("")}</select></td></tr>`;
+  }).join("");
   const sumRow = (label, k) => `<tr><td>${label}</td>${bySide((a) => `<td class="r num">${sc[a][k]}</td>`)}</tr>`;
-  const bonus = (a) => ["energized", "supercharged", "traversal"].filter((k) => sc[a][k]).join(", ") || "–";
+  const bonus = (a) => reef ? reefBonus(sc[a]) : ["energized", "supercharged", "traversal"].filter((k) => sc[a][k]).join(", ") || "–";
   const t0 = cur.periods[0].start;
   const fouls = cur.fouls.length ? cur.fouls.map((f) => `<tr><td class="t${f.committed_by}">${f.committed_by} ${f.kind}</td><td>${f.team || ""}</td>
       <td class="muted small">${FMS.mmss(f.t - t0)} · ${esc(f.ref)}</td><td>${locked ? "" : `<button class="ghost small" data-fdel="${f.id}">Remove</button>`}</td></tr>`).join("")
     : `<tr><td class="muted">No fouls</td></tr>`;
   const playoff = cur.comp_level !== "qm";
+  const counts = reef
+    ? `<div class="scroll">${reefTable(g, (a, k) => `<td><input type="number" min="0" max="999" data-id="n-${a}-${k}" data-a="${a}" data-item="${k}" value="${sc[a].counts[k]}" ${dis}></td>`)}</div>
+        <div class="muted small" style="margin-top:.3rem">Coral counts where it ended up: scored in auto goes in Auto, the rest in Teleop.</div>`
+    : `<div class="scroll"><table><tr><th>Period</th>${bySide((a) => `<th class="r">${Cap(a)} vision</th><th>${Cap(a)} final</th>`)}</tr>${fuelRows}
+        <tr><td class="muted small">Inactive-hub fuel seen</td>${bySide((a) => `<td class="r num muted">${sc[a].uncounted_fuel}</td><td></td>`)}</tr></table></div>
+        <div class="muted small" style="margin-top:.3rem">Type the real count in "final" to override vision for that period. Vision data is never deleted.</div>`;
+  const sums = reef ? reefSums(sc, sumRow)
+    : `${sumRow("Fuel", "total_fuel")}${sumRow("Auto points", "auto_points")}${sumRow("Teleop points", "teleop_points")}
+        ${sumRow("Tower points", "tower_points")}${sumRow("Penalty points drawn", "foul_points")}`;
   box.innerHTML = `
     <div class="panel-head"><h2>Score review · ${cur.key}</h2><span class="pill">${cur.status}</span></div>
     <div class="grid2 review-grid">
-      <div><div class="scroll"><table><tr><th>Period</th>${bySide((a) => `<th class="r">${Cap(a)} vision</th><th>${Cap(a)} final</th>`)}</tr>${fuelRows}
-        <tr><td class="muted small">Inactive-hub fuel seen</td>${bySide((a) => `<td class="r num muted">${sc[a].uncounted_fuel}</td><td></td>`)}</tr></table></div>
-        <div class="muted small" style="margin-top:.3rem">Type the real count in "final" to override vision for that period. Vision data is never deleted.</div></div>
+      <div>${counts}</div>
       <div><table><tr><th></th>${bySide((a) => `<th class="r t${a}">${Cap(a)}</th>`)}</tr>
-        ${sumRow("Fuel", "total_fuel")}${sumRow("Auto points", "auto_points")}${sumRow("Teleop points", "teleop_points")}
-        ${sumRow("Tower points", "tower_points")}${sumRow("Penalty points drawn", "foul_points")}
+        ${sums}
         <tr><td><b>Total</b></td>${bySide((a) => `<td class="r num"><b>${sc[a].total}</b></td>`)}</tr>
         ${playoff ? "" : `<tr><td>Bonus RP</td>${bySide((a) => `<td class="r small">${bonus(a)}</td>`)}</tr>${sumRow("Ranking points", "rp")}`}
         </table>
@@ -392,7 +426,7 @@ function renderReview(s) {
       </div>
     </div>
     <div class="grid2" style="margin-top:1rem">
-      <div><h2>Tower</h2><table>${bySide(climbs)}</table></div>
+      <div>${reef ? `<h2>Leave &amp; barge</h2><table>${bySide(robots)}</table>` : `<h2>Tower</h2><table>${bySide(climbs)}</table>`}</div>
       <div><h2>Fouls</h2><table>${fouls}</table>
         ${locked ? "" : `<div class="row" style="margin-top:.5rem">${bySide((a) => ["minor", "major"].map((k) => `<button class="${a} small" data-fadd="${a}:${k}">${Cap(a)} ${k}</button>`).join(""))}</div>`}</div>
     </div>
@@ -409,10 +443,19 @@ function renderReview(s) {
     box.dataset.focus = nextFocus(el);
     api("/api/match/adjust", { key: cur.key, alliance: el.dataset.a, period: el.dataset.p, total: parseInt(el.value || "0", 10) });
   });
+  box.querySelectorAll("input[data-item]").forEach((el) => el.onchange = () => {
+    box.dataset.focus = nextFocus(el);
+    api("/api/match/count", { key: cur.key, alliance: el.dataset.a, item: el.dataset.item, value: parseInt(el.value || "0", 10) });
+  });
   box.querySelectorAll("[data-ca]").forEach((el) => el.onchange = () => {
     const body = { key: cur.key, alliance: el.dataset.ca, idx: +el.dataset.ci };
     if (el.hasAttribute("data-auto")) body.auto_l1 = el.checked; else body.level = +el.value;
     api("/api/match/climb", body);
+  });
+  box.querySelectorAll("[data-ra]").forEach((el) => el.onchange = () => {
+    const body = { key: cur.key, alliance: el.dataset.ra, idx: +el.dataset.ri };
+    if (el.hasAttribute("data-leave")) body.leave = el.checked; else body.barge = el.value;
+    api("/api/match/robot", body);
   });
   box.querySelectorAll("[data-fdel]").forEach((b) => b.onclick = () => api(`/api/fouls/${b.dataset.fdel}`, { delete: true }));
   box.querySelectorAll("[data-fadd]").forEach((b) => b.onclick = () => {
@@ -439,7 +482,7 @@ function renderReview(s) {
   const br = $("#breopen"); if (br) br.onclick = () => api("/api/match/reopen", { key: cur.key });
 }
 function nextFocus(el) {
-  const all = [...$("#review").querySelectorAll("input[data-p]")];
+  const all = [...$("#review").querySelectorAll("input[data-p], input[data-item]")];
   const i = all.indexOf(el);
   return all[i + 1] ? all[i + 1].dataset.id : "";
 }
@@ -619,28 +662,30 @@ async function loadResult(key) {
   const box = $("#resdetail"), sc = d.score;
   box.hidden = false;
   if (!sc) { box.innerHTML = `<h2>${d.key}</h2><div class="muted">No score.</div>`; return; }
-  const names = d.periods.map((p) => p.name), playoff = d.comp_level !== "qm";
+  const names = d.periods.map((p) => p.name), playoff = d.comp_level !== "qm", reef = REEF();
   const row = (l, k) => `<tr><td>${l}</td>${bySide((a) => `<td class="r num">${sc[a][k]}</td>`)}</tr>`;
-  const fuel = names.map((p) => `<tr><td>${FMS.LABEL[p]}</td>${bySide((a) => `<td class="r num">${sc[a].fuel[p]}${sc[a].fuel[p] !== sc[a].vision_fuel[p] ? ` <span class="muted small">(vision ${sc[a].vision_fuel[p]})</span>` : ""}</td>`)}</tr>`).join("");
+  const fuel = reef ? "" : names.map((p) => `<tr><td>${FMS.LABEL[p]}</td>${bySide((a) => `<td class="r num">${sc[a].fuel[p]}${sc[a].fuel[p] !== sc[a].vision_fuel[p] ? ` <span class="muted small">(vision ${sc[a].vision_fuel[p]})</span>` : ""}</td>`)}</tr>`).join("");
   const climbs = sides().map((a) => d[a].map((t, i) => {
+    if (reef) return `<tr><td class="t${a}"><b>${t}</b></td><td colspan="2">${reefRobot(sc[a].robots[i])}</td></tr>`;
     const r = ((d.climbs || {})[a] || [])[i] || { auto_l1: false, level: 0 };
     return `<tr><td class="t${a}"><b>${t}</b></td><td>${r.auto_l1 ? "L1 in auto" : ""}</td><td>${r.level ? "Level " + r.level : "No climb"}</td></tr>`;
   }).join("")).join("");
   const t0 = d.periods[0].start;
   const fouls = d.fouls.length ? d.fouls.map((f) => `<tr><td class="t${f.committed_by}">${f.committed_by} ${f.kind}</td><td>${f.team || ""}</td><td class="muted small">${FMS.mmss(f.t - t0)} · ${esc(f.ref)}</td></tr>`).join("")
     : `<tr><td class="muted">No fouls</td></tr>`;
-  const bonus = (a) => ["energized", "supercharged", "traversal"].filter((k) => sc[a][k]).join(", ") || "–";
+  const bonus = (a) => reef ? reefBonus(sc[a]) : ["energized", "supercharged", "traversal"].filter((k) => sc[a][k]).join(", ") || "–";
   box.innerHTML = `<div class="row" style="justify-content:space-between"><h2>${d.key} · ${vs({ red: sc.red.total, blue: sc.blue.total })} · winner <span class="t${sc.winner}">${sc.winner}</span></h2>
       <div class="row"><span class="pill">${d.status}</span><button class="ghost small" id="resopen">Open in Match tab</button></div></div>
     <div class="grid2">
-      <div><table><tr><th>Fuel</th>${bySide((a) => `<th class="r t${a}">${Cap(a)}</th>`)}</tr>${fuel}</table>
-        <h2 style="margin-top:1rem">Tower</h2><table>${climbs}</table></div>
+      <div>${reef ? `<div class="scroll">${reefTable(S().game, (a, k) => `<td class="num">${sc[a].counts[k]}</td>`)}</div>`
+        : `<table><tr><th>Fuel</th>${bySide((a) => `<th class="r t${a}">${Cap(a)}</th>`)}</tr>${fuel}</table>`}
+        <h2 style="margin-top:1rem">${reef ? "Leave &amp; barge" : "Tower"}</h2><table>${climbs}</table></div>
       <div><table><tr><th></th>${bySide((a) => `<th class="r t${a}">${Cap(a)}</th>`)}</tr>
-        ${row("Fuel", "total_fuel")}${row("Auto points", "auto_points")}${row("Teleop points", "teleop_points")}
-        ${row("Tower points", "tower_points")}${row("Penalty points drawn", "foul_points")}
+        ${reef ? reefSums(sc, row) : `${row("Fuel", "total_fuel")}${row("Auto points", "auto_points")}${row("Teleop points", "teleop_points")}
+        ${row("Tower points", "tower_points")}${row("Penalty points drawn", "foul_points")}`}
         <tr><td><b>Total</b></td>${bySide((a) => `<td class="r num"><b>${sc[a].total}</b></td>`)}</tr>
         ${playoff ? "" : `<tr><td>Bonus RP</td>${bySide((a) => `<td class="r small">${bonus(a)}</td>`)}</tr>${row("Ranking points", "rp")}`}</table>
-        <div class="muted small" style="margin-top:.4rem">Hub off first: ${d.first_inactive || "–"}${d.fi_coin ? " (coin flip)" : ""} · start offset ${(d.offset || 0).toFixed(1)} s${d.winner_override ? " · winner picked by scorekeeper" : ""}</div>
+        <div class="muted small" style="margin-top:.4rem">${reef ? "" : `Hub off first: ${d.first_inactive || "–"}${d.fi_coin ? " (coin flip)" : ""} · start offset ${(d.offset || 0).toFixed(1)} s`}${d.winner_override ? `${reef ? "" : " · "}winner picked by scorekeeper` : ""}</div>
         <h2 style="margin-top:1rem">Fouls</h2><table>${fouls}</table>
         ${d.video && d.video !== "none" ? `<div style="margin-top:.6rem">Video: <a href="https://youtu.be/${esc(d.video)}" target="_blank" rel="noopener">${esc(d.video)}</a></div>` : ""}</div>
     </div>`;
@@ -653,9 +698,11 @@ async function loadResult(key) {
 // ---- rankings
 $("#brank").onclick = async () => { await api("/api/tba/rankings"); FMS.toast("Rankings queued for TBA"); };
 function renderRank(s) {
-  $("#ranktable").innerHTML = `<table><tr><th>Rank</th><th>Team</th><th class="r">RS</th><th class="r">W-L-T</th><th class="r">Played</th><th class="r">RP</th><th class="r">Avg match</th><th class="r">Avg tower</th><th class="r">Avg fuel</th></tr>
+  const cols = s.rank_cols;      // the game's tiebreakers after RS, in sort order: [row key, label]
+  $("#ranknote").textContent = `Sort: ranking score (avg RP), then ${cols.map(([, l]) => l.toLowerCase()).join(", ")}. Recomputed and queued for TBA on every committed qual.`;
+  $("#ranktable").innerHTML = `<table><tr><th>Rank</th><th>Team</th><th class="r">RS</th><th class="r">W-L-T</th><th class="r">Played</th><th class="r">RP</th>${cols.map(([, l]) => `<th class="r">${l}</th>`).join("")}</tr>
     ${s.rankings.map((r) => `<tr><td>${r.rank}</td><td><b>${r.team}</b></td><td class="r num">${r.rs.toFixed(2)}</td><td class="r num">${r.wins}-${r.losses}-${r.ties}</td>
-      <td class="r num">${r.played}</td><td class="r num">${r.rp}</td><td class="r num">${r.avg_score.toFixed(1)}</td><td class="r num">${r.avg_tower.toFixed(1)}</td><td class="r num">${r.avg_fuel.toFixed(1)}</td></tr>`).join("")}</table>`;
+      <td class="r num">${r.played}</td><td class="r num">${r.rp}</td>${cols.map(([k]) => `<td class="r num">${r[k].toFixed(k === "avg_coop" ? 2 : 1)}</td>`).join("")}</tr>`).join("")}</table>`;
 }
 
 // ---- alliances
@@ -869,7 +916,7 @@ async function camFetch(key, url) {
   } catch {}
 }
 async function pollCams() {
-  if (!setupOpen() || !SET) return;
+  if (!setupOpen() || !SET || REEF()) return;
   try {
     const now = Date.now();
     if (now - lastWant > 5000) { lastWant = now; CAM = await FMS.api("/api/vision/want", { frames: true }); }
@@ -1044,6 +1091,7 @@ function renderSetup(s) {
 }
 
 function renderPills(s) {
+  $("#vpill").hidden = REEF();
   const v = Object.values(s.vision);
   const ok = v.length && v.every((x) => x.age <= 3 && !x.error), idle = ok && v.every((x) => x.idle);
   $("#vpill").className = "pill " + (idle ? "" : ok ? "ok" : "bad");
@@ -1063,6 +1111,9 @@ let first = true;
 FMS.on((s) => {
   $("#evname").textContent = s.event.name;
   if (first) {
+    const reef = REEF();     // the game is fixed for the event: show only its panels
+    ["#campanel", "#fieldpanel", "#visionpanel", "#offpanel", "#autobox"].forEach((id) => $(id).hidden = reef);
+    document.querySelectorAll("[data-game]").forEach((el) => el.hidden = el.dataset.game !== s.game_id);
     $("#sstart").value = s.event.qual_start; $("#scycle").value = s.event.cycle_min; first = false;
     $("#rtcycle").value = s.event.cycle_min;
     $("#slunch").value = s.event.lunch; $("#slunchend").value = s.event.lunch_end; $("#sdayend").value = s.event.day_end;

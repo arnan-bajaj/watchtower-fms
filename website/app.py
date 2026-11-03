@@ -196,7 +196,7 @@ def event_public(ev, owner=False):
            "match_status": (st or {}).get("match_status"), "played": (st or {}).get("played")}
     if owner:
         cfg = full_cfg(ev)
-        out.update(commands=commands(ev), settings=settings.public(cfg, json.loads(ev["settings"])),
+        out.update(commands=commands(ev), settings=settings.public(cfg, json.loads(ev["settings"])), game=cfg["event"]["game"],
                    created=ev["created"], vision=(st or {}).get("vision"), url=f"{SITE}/e/{ev['slug']}")
     return out
 
@@ -207,9 +207,9 @@ def list_events(wt: str = Cookie(None)):
     return {"events": [event_public(e) for e in q("SELECT * FROM events WHERE owner=? AND deleted=0 ORDER BY created DESC", (u["id"],))]}
 
 
-# The game an event is scored for. Only REBUILT (2026) is implemented; REEFSCAPE (2025, past) and
-# BIOCORE (2027, next) are listed, not selectable.
-GAMES = {"rebuilt": True, "reefscape": False, "biocore": False}
+# The game an event is scored for (config.GAME_RULES). REBUILT (2026) and REEFSCAPE (2025, scored by hand)
+# are implemented; BIOCORE (2027) is listed, not selectable.
+GAMES = {"rebuilt": True, "reefscape": True, "biocore": False}
 
 
 @app.post("/api/events")
@@ -217,10 +217,9 @@ def create_event(body: dict = Body(...), wt: str = Cookie(None)):
     u = need_user(wt)
     game = str(body.get("game") or "rebuilt").strip().lower()
     if game not in GAMES:
-        raise HTTPException(400, "Pick a game: REBUILT")
+        raise HTTPException(400, "Pick a game: REBUILT or REEFSCAPE")
     if not GAMES[game]:
-        raise HTTPException(400, f"{game.upper()} is " + ("a past season's game; it isn't supported" if game == "reefscape"
-                                                           else "next season's game; it isn't available yet"))
+        raise HTTPException(400, f"{game.upper()} is next season's game; it isn't available yet")
     if q("SELECT COUNT(*) n FROM events WHERE owner=? AND deleted=0", (u["id"],))[0]["n"] >= MAX_EVENTS:
         raise HTTPException(409, f"An account can have {MAX_EVENTS} events. Delete an old one first.")
     try:

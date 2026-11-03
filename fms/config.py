@@ -20,6 +20,7 @@ DEFAULTS = {
         "lunch_end": "13:00",
         "quals_after_lunch": False,   # True: schedule times skip lunch and quals continue until day_end
         "day_end": "17:00",
+        "game": "rebuilt",        # which game the event plays (GAME_RULES); fixed when the event is made
     },
     "display": {
         "red_side": "right",      # which side of every screen red is drawn on; /control -> Setup overrides it live
@@ -47,7 +48,13 @@ DEFAULTS = {
     "vision": {"scale": {"red": 1, "blue": 1}, "hubs": {"red": None, "blue": None}},
     # Set by the website's launch command (fms/cloud.py): settings backup and status. Empty = local only.
     "cloud": {"url": "", "event": "", "token": ""},
-    "game": {
+}
+
+
+# Every game's rule numbers. event.yaml -> game: overrides any of them. The scoring for each is a pure
+# module: fms/game.py (REBUILT, 2026) and fms/reefscape.py (REEFSCAPE, 2025).
+GAME_RULES = {
+    "rebuilt": {
         "auto_s": 20, "auto_teleop_gap_s": 3, "transition_s": 10, "shift_s": 25,
         "n_shifts": 4, "endgame_s": 30, "score_grace_s": 3,
         "close_auto_margin": 5,
@@ -57,7 +64,21 @@ DEFAULTS = {
         "rp": {"win": 3, "tie": 1, "energized_fuel": 100, "supercharged_fuel": 360,
                "traversal_tower_points": 50},
     },
+    # 2025 Game Manual section 6.4 and the regional RP thresholds (district championships and
+    # Championship raised coral_per_level to 7 and barge_points to 16).
+    "reefscape": {
+        "auto_s": 15, "auto_teleop_gap_s": 3, "teleop_s": 135, "endgame_s": 20, "score_grace_s": 0,
+        "leave": 3,
+        "coral_auto": {"L1": 3, "L2": 4, "L3": 6, "L4": 7},
+        "coral_teleop": {"L1": 2, "L2": 3, "L3": 4, "L4": 5},
+        "algae": {"processor": 6, "net": 4},
+        "barge": {"none": 0, "park": 2, "shallow": 6, "deep": 12},
+        "fouls": {"minor": 2, "major": 6},
+        "rp": {"win": 3, "tie": 1, "auto_coral": 1, "coral_per_level": 5, "coral_levels": 4,
+               "coral_levels_coop": 3, "coop_processor": 2, "barge_points": 14},
+    },
 }
+DEFAULTS["game"] = GAME_RULES["rebuilt"]     # load() swaps in event.game's rules
 
 
 def _merge(base, over):
@@ -75,7 +96,17 @@ def load(path: str | None = None) -> dict:
     p = pathlib.Path(path)
     if not p.exists():
         raise SystemExit(f"{path} not found. Run `python -m fms.init` to create it from config/event.example.yaml.")
-    cfg = _merge(DEFAULTS, yaml.safe_load(p.read_text()) or {})
+    raw = yaml.safe_load(p.read_text()) or {}
+    cfg = _merge(DEFAULTS, raw)
+    gid = str(cfg["event"]["game"] or "rebuilt").strip().lower()
+    if gid not in GAME_RULES:
+        raise SystemExit(f"event.game in {path} must be one of {', '.join(GAME_RULES)} (got {cfg['event']['game']!r}).")
+    cfg["event"]["game"] = gid
+    stray = sorted(set(raw.get("game") or {}) - set(GAME_RULES[gid]))
+    if stray:   # e.g. REBUILT's game: section left in a REEFSCAPE event.yaml: its fouls would win silently
+        raise SystemExit(f"game: in {path} has {', '.join(stray)}, which aren't {gid.upper()} rules (event.game). "
+                         f"Remove them, or the whole game: section to use the defaults in fms/config.py.")
+    cfg["game"] = _merge(GAME_RULES[gid], raw.get("game") or {})
     # secrets from env win over the file
     cfg["tba"]["auth_id"] = os.environ.get("TBA_AUTH_ID", cfg["tba"]["auth_id"])
     cfg["tba"]["auth_secret"] = os.environ.get("TBA_AUTH_SECRET", cfg["tba"]["auth_secret"])

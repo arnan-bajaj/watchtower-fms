@@ -89,9 +89,12 @@ def _mk(level, set_no, num, red_a, blue_a, alliances):
 
 
 # ---------------------------------------------------------------- rankings
-def rankings(teams, qual_matches):
+def rankings(teams, qual_matches, tiebreaks=(("score", "total"), ("tower", "tower_points"), ("fuel", "fuel_points"))):
+    """tiebreaks: the game's TIEBREAKS, (name, breakdown field, ...) after ranking score. Each row gets
+    the sum as <name> and the per-match average as avg_<name>. The default is REBUILT's."""
+    names = [t[0] for t in tiebreaks]
     rows = {t: {"team": t, "played": 0, "wins": 0, "losses": 0, "ties": 0, "rp": 0,
-                "score": 0, "tower": 0, "fuel": 0} for t in teams}
+                **{n: 0 for n in names}} for t in teams}
     for m in qual_matches:
         if m["status"] != "committed" or not m.get("breakdown"):
             continue
@@ -104,9 +107,8 @@ def rankings(teams, qual_matches):
                 r = rows[t]
                 r["played"] += 1
                 r["rp"] += bd[a]["rp"]
-                r["score"] += bd[a]["total"]
-                r["tower"] += bd[a]["tower_points"]
-                r["fuel"] += bd[a]["fuel_points"]
+                for n, field, *_ in tiebreaks:
+                    r[n] += bd[a][field]
                 if bd["winner"] == a:
                     r["wins"] += 1
                 elif bd["winner"] == "tie":
@@ -117,13 +119,12 @@ def rankings(teams, qual_matches):
     for r in rows.values():
         p = r["played"]
         r["rs"] = round(r["rp"] / p, 3) if p else 0.0
-        r["avg_score"] = round(r["score"] / p, 2) if p else 0.0
-        r["avg_tower"] = round(r["tower"] / p, 2) if p else 0.0
-        r["avg_fuel"] = round(r["fuel"] / p, 2) if p else 0.0
+        for n in names:
+            r[f"avg_{n}"] = round(r[n] / p, 2) if p else 0.0
         out.append(r)
-    # Tiebreakers: RS, avg match score, avg tower, avg fuel, then team number
+    # Tiebreakers: RS, then the game's averages in order, then team number
     # (FRC uses a random final tiebreaker; team number keeps it deterministic).
-    out.sort(key=lambda r: (-r["rs"], -r["avg_score"], -r["avg_tower"], -r["avg_fuel"], r["team"]))
+    out.sort(key=lambda r: (-r["rs"], *(-r[f"avg_{n}"] for n in names), r["team"]))
     for i, r in enumerate(out, 1):
         r["rank"] = i
     return out

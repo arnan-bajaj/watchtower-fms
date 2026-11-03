@@ -1,6 +1,6 @@
 # Watchtower FMS: offseason field management with vision scoring
 
-A free, open-source field management system for **FRC offseason events and scrimmages** playing the 2026 game **REBUILT**. It runs on one laptop on the venue WiFi:
+A free, open-source field management system for **FRC offseason events and scrimmages** playing the 2026 game **REBUILT** (or the 2025 game **REEFSCAPE**, scored by hand). It runs on one laptop on the venue WiFi:
 
 - **Two hub cameras count fuel automatically** with a YOLO model you supply (no weights ship with this repo), or the scorekeeper types counts per period with no cameras at all.
 - **Refs log fouls from their phones**, and the **emcee's phone says which hub lights to switch** and when.
@@ -27,8 +27,8 @@ Built for the 10th Street Showdown (October 2026) and shared so other teams can 
 
 **[watchtower.systemoverload.org](https://watchtower.systemoverload.org)**. No clone, no config files.
 
-1. **Sign up and create your event** (game, name, date, teams; all but the game can change later). REBUILT (2026) is the
-   only game; REEFSCAPE (2025, past season) and BIOCORE (2027) are listed but can't be picked.
+1. **Sign up and create your event** (game, name, date, teams; all but the game can change later). Pick REBUILT (2026)
+   or REEFSCAPE (2025, see [REEFSCAPE events](#reefscape-events)); BIOCORE (2027) is listed but can't be picked yet.
 2. **Copy the launch command** from your event's page and paste it into Terminal (Mac/Linux) or
    PowerShell (Windows) on the scorekeeper's laptop:
    ```bash
@@ -132,7 +132,8 @@ Everything lives in SQLite, so a crash or restart loses nothing. Phones get live
 ```
 fms/
   server.py        API, websocket, match engine (start, auto decision, review, commit)
-  game.py          timeline + scoring: pure functions, all values from config
+  game.py          REBUILT timeline + scoring: pure functions, all values from config
+  reefscape.py     REEFSCAPE timeline + scoring (hand-entered counts): pure functions, all values from config
   schedule.py      qual schedule generator + CSV import
   bracket.py       4-alliance double elimination + rankings
   tba.py           TBA trusted API client with persistent outbox
@@ -284,6 +285,7 @@ isn't changed (fix a match in review if needed).
 | | `vision_key` | Shared secret between the FMS and vision. Vision reads it from this file, so you don't copy it anywhere |
 | `tba` | `enabled` | Off while rehearsing (see [TBA](#the-blue-alliance)) |
 | | `send_score_breakdown` | Off by default; totals-only is always accepted |
+| `event` | `game` | `rebuilt` (default) or `reefscape`. Set when the event is made; the `game:` section must then hold only that game's keys (defaults for both are `GAME_RULES` in `fms/config.py`) |
 | `game` | all | Every timing and point value. **Verify against the manual** |
 
 TBA credentials don't go in this file. See [The Blue Alliance](#the-blue-alliance).
@@ -474,6 +476,25 @@ Full-screen scoreboard for a TV, or add it as a **Browser Source** in OBS for th
 - Auto L1 climb: 15. Teleop climb: L1 10, L2 20, L3 30. Minor foul: 5. Major foul: 15. All configurable.
 - RP: win 3, tie 1, plus Energized (≥100 fuel), Supercharged (≥360 fuel), Traversal (≥50 tower points).
 
+### REEFSCAPE events
+
+Pick REEFSCAPE (2025) when you create the event. It has no hubs, so there's no vision: the launch command starts
+only the FMS, and the scorekeeper types the scores in `/control` → Match → Score review after each match.
+
+- **Per alliance:** coral on L1 (trough) to L4 and algae in the processor and net, each split into Auto and Teleop
+  (coral scored in auto goes in Auto, the rest in Teleop). **Per robot:** Leave, and No barge / Park / Shallow cage / Deep cage.
+- Refs log fouls from `/ref` as usual. The emcee page shows only the clock and the scores, and the field display drops the hub indicators.
+- Live scores show only what's been typed so far, so they stay near 0 during the match.
+- Timeline: Auto 15 s → 3 s pause → Teleop 2:15 (the last 20 s labelled Endgame).
+- Points: Leave 3. Coral in auto L1–L4 3/4/6/7, in teleop 2/3/4/5. Processor 6, net 4. Park 2, shallow 6, deep 12.
+  Minor foul 2, major 6.
+- RP: win 3, tie 1. Auto RP: every robot leaves and at least 1 coral is scored in auto. Coral RP: at least 5 coral on
+  each of the 4 levels, or on 3 levels if both alliances put 2+ algae in their processors (Coopertition).
+  Barge RP: 14+ barge points. These are the regional thresholds; district championships and Championship used 7 coral and 16 barge points
+  (set `game: {rp: {coral_per_level: 7, barge_points: 16}}` in event.yaml).
+- Rankings sort by RS, then average Coopertition, average match score, average auto points, average barge points.
+- Not modelled: fouls that award an RP to the other alliance.
+
 ---
 
 ## Rankings, alliance selection, playoffs
@@ -481,6 +502,7 @@ Full-screen scoreboard for a TV, or add it as a **Browser Source** in OBS for th
 **Rankings** (`/control` → Rankings):
 - Recomputed on every committed qual and queued to TBA automatically. **Push rankings to TBA** forces it.
 - Sort order: ranking score (average RP), then average match score, average tower, average fuel, team number.
+  REEFSCAPE: ranking score, then average Coopertition, average match score, average auto, average barge, team number.
 
 **Live alliance selection** (`/control` → Alliances & playoffs):
 - **Start alliance selection** freezes the current rankings. The top 4 become captains, and `/display` switches to a selection screen showing the alliances, who's picking, and the teams still available.
@@ -904,7 +926,7 @@ Re-run `deploy/deploy.sh` to update; launch commands pick up the new download on
 python -m pytest -q
 ```
 
-The tests cover the timeline, grace-window attribution, the auto decision, full match scores (hand-computed), manual adjustments, playoff ties, schedule balance and surrogates, the full double-elimination bracket, live alliance selection (serpentine order, captain promotion, illegal picks), and rankings. `game.score_match` also checks at runtime that two independent totals agree.
+The tests cover the timeline, grace-window attribution, the auto decision, full match scores (hand-computed), manual adjustments, playoff ties, schedule balance and surrogates, the full double-elimination bracket, live alliance selection (serpentine order, captain promotion, illegal picks), and rankings. `tests/test_reefscape.py` does the same for REEFSCAPE (scores, each RP, coopertition, the hand-scoring API). `game.score_match` and `reefscape.score_match` also check at runtime that two independent totals agree.
 
 For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a match on `/control`.
 
@@ -915,7 +937,7 @@ For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a ma
 - **`CLAUDE.md`** holds the project context Claude Code reads every session: architecture, invariants, game values, constraints, and what's not built yet.
 - **`AGENTS.md`** is a link to it, for Codex and other agents.
 - Edit only `CLAUDE.md`.
-- The rule: scoring math lives only in `fms/game.py`, and `python -m pytest -q` must pass after every change.
+- The rule: scoring math lives only in `fms/game.py` (REBUILT) and `fms/reefscape.py` (REEFSCAPE), and `python -m pytest -q` must pass after every change.
 - When a change affects setup or usage, update this README in the same commit.
 
 ---

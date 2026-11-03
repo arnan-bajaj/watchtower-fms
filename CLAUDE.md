@@ -1,4 +1,4 @@
-# CLAUDE.md: Watchtower FMS (FRC 2026 REBUILT)
+# CLAUDE.md: Watchtower FMS (FRC 2026 REBUILT; 2025 REEFSCAPE scored by hand)
 
 Open-source (MIT) field management system for one-day FRC offseason events: quals, live alliance selection,
 then a 4-alliance double-elimination playoff. Runs on one laptop on the event WiFi. First built for the
@@ -47,8 +47,16 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
 - Tests and docs use generic teams and event keys, never a real event's.
 
 ## Invariants: do not break
-- All scoring math lives in `fms/game.py` as pure functions. Every rule number comes from `config/event.yaml`
-  -> `game:`; never hardcode point values. `score_match` asserts two independent totals agree.
+- All scoring math lives in pure functions: `fms/game.py` (REBUILT) and `fms/reefscape.py` (REEFSCAPE). Every rule
+  number comes from `config.GAME_RULES[event.game]` overlaid by `config/event.yaml` -> `game:`; never hardcode point
+  values. Each `score_match` asserts two independent totals agree.
+- `event.game` (`rebuilt` default | `reefscape`) is fixed when the event is made (the website's game picker). The
+  server picks `RULES` (build_periods, period_names, TIEBREAKS) from it once at startup. `config.load` refuses a
+  `game:` key the event's game doesn't have (a REBUILT section left in a REEFSCAPE event.yaml would win silently).
+- REEFSCAPE has no vision, hubs, fuel, `first_inactive` or field feed: launch.py starts no counter, and the REBUILT-only
+  endpoints (`adjust`, `climb`, `first_inactive`) answer 400. Its match `adjust` holds the scorekeeper's counts
+  (`{alliance: {item: n}}`, items `reefscape.ITEMS`, `POST /api/match/count`) and `climbs` holds each robot's
+  `{leave, barge}` (`POST /api/match/robot`). Pages branch on state `game_id`; rankings columns come from `rank_cols`.
 - `python -m pytest -q` must pass after every change. Tests use hand-computed expected values; add a
   hand-computed test for any scoring/timeline change. Zero tolerance for arithmetic errors.
 - Fuel is stored as raw timestamped events and never deleted by scoring. Which period a ball counts toward is
@@ -70,6 +78,9 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
 Auto 20 s -> 3 s gap -> Transition 10 s -> Shifts 1-4 at 25 s each (hubs alternate) -> Endgame 30 s.
 Teleop = 140 s. Fuel landing within `score_grace_s` (3 s) after a hub deactivates still counts.
 Unverified: teleop Level 1 climb (10 vs 15 in different sources), RP thresholds, foul values.
+REEFSCAPE (2025 manual, regional RPs): Auto 15 s -> 3 s -> Teleop 135 s (last 20 s labelled Endgame). Leave 3; coral
+auto 3/4/6/7, teleop 2/3/4/5; processor 6, net 4; park 2, shallow 6, deep 12; fouls 2/6. Coral RP 5 per level on 4
+levels (3 with Coopertition: both alliances 2+ processor algae); Barge RP 14; Auto RP all robots leave + 1 auto coral.
 
 ## Run
 Website flow (what other teams do): create an event at watchtower.systemoverload.org, run its launch command.
@@ -138,6 +149,7 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
   clearing TBA rankings.
 
 ## Not implemented yet
+REEFSCAPE fouls that award an RP to the opponent; REEFSCAPE DCMP/CMP RP thresholds are config only (7 coral, 16 barge).
 Yellow/red cards and DQs, playoff backup robots, FRC's exact ranking/playoff tiebreakers,
 TBA `score_breakdown` (off by default; TBA validates per-season keys), alliance counts other than 4.
 

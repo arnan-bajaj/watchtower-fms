@@ -43,7 +43,8 @@ def test_signup_login_and_ownership(site):
     assert a.post("/api/events", json={"name": ""}).status_code == 400
     assert json.loads(site.event_row("spring-scrimmage")["base"])["event"]["game"] == "rebuilt"   # the default
     assert a.post("/api/events", json={"name": "Next Year", "game": "biocore"}).status_code == 400   # not yet
-    assert a.post("/api/events", json={"name": "Last Year", "game": "reefscape"}).status_code == 400   # past season
+    r = a.post("/api/events", json={"name": "Last Year", "game": "REEFSCAPE"}).json()           # scored by hand
+    assert r["game"] == "reefscape" and json.loads(site.event_row(r["slug"])["base"])["event"]["game"] == "reefscape"
     assert a.post("/api/events", json={"name": "Odd", "game": "chess"}).status_code == 400
 
     b = _user(site, "b@team.org")
@@ -66,6 +67,7 @@ def test_launch_script_event_yaml_and_sync(site):
     assert c.get("/api/link/fall-fest/event.yaml", headers={"X-Watchtower-Token": "bad"}).status_code == 404
     ev = yaml.safe_load(c.get("/api/link/fall-fest/event.yaml", headers={"X-Watchtower-Token": tok}).text)
     assert ev["cloud"] == {"url": "https://wt.example", "event": "fall-fest", "token": tok}
+    assert ev["event"]["game"] == "rebuilt" and "game" not in ev     # the FMS takes the rules from GAME_RULES
     assert ev["event"]["teams"] == [101, 102, 103, 104, 105, 106] and ev["tba"]["enabled"] is False
     from fms import config
     config.validate(config._merge(config.DEFAULTS, ev))                     # the FMS will start on it

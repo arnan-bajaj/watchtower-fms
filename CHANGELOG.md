@@ -3,6 +3,16 @@
 Versions are git tags. v0.x were alphas built toward our first scrimmage; v1 is the build that ran the
 10th Street Showdown (2026-10-10); v2 is the website revamp.
 
+## v2.1.0: REEFSCAPE
+
+- **REEFSCAPE (2025) can be picked** when you create an event. It's scored by hand: after each match the
+  scorekeeper types each alliance's coral (L1 to L4) and algae (processor, net), split into auto and teleop, plus
+  each robot's Leave and Barge result. Auto, Coral (with Coopertition) and Barge RPs are computed from them, and
+  rankings use REEFSCAPE's tiebreakers. Refs, emcee, field display, TBA and playoffs work as for REBUILT.
+- A REEFSCAPE event starts no hub counter, and /control hides cameras, calibration, the field link and the
+  start-click correction.
+- `event.game` in event.yaml selects the rules; a `game:` key from the other game stops startup with a message.
+
 ## v2.0.0 (2026-11-01): the website
 
 Watchtower is now a website plus one launch command; there is nothing to clone or configure.

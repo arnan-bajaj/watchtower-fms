@@ -14,6 +14,9 @@ import random
 from dataclasses import dataclass, field
 
 ALLIANCES = ("red", "blue")
+# Rankings after RS: (name, breakdown field averaged, TBA column). bracket.rankings sorts by these in order.
+TIEBREAKS = (("score", "total", "Avg Match"), ("tower", "tower_points", "Avg Tower"),
+             ("fuel", "fuel_points", "Avg Fuel"))
 
 
 def other(a: str) -> str:

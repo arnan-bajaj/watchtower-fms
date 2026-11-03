@@ -21,7 +21,7 @@ from fastapi import Body, FastAPI, Header, HTTPException, WebSocket, WebSocketDi
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import bracket, cloud, config, game, schedule, settings
+from . import bracket, cloud, config, game, reefscape, schedule, settings
 from .store import Store
 from .tba import TBA
 
@@ -31,6 +31,9 @@ if os.environ.get("FMS_PORT"):   # launch.py --port; before BASE so live setting
 BASE = copy.deepcopy(CFG)      # event.yaml as loaded; Setup's live settings go on top (fms/settings.py)
 G = CFG["game"]
 GRACE = G["score_grace_s"]
+# The event's game is fixed when it's made (event.game). REEFSCAPE is scored by hand: no vision, no hubs.
+REEF = CFG["event"]["game"] == "reefscape"
+RULES = reefscape if REEF else game        # build_periods, period_names, TIEBREAKS
 STATIC = pathlib.Path(__file__).parent / "static"
 store = Store(CFG["server"]["db"])
 settings.apply_in_place(CFG, settings.overlay(BASE, store.get("settings") or {}))
@@ -81,19 +84,32 @@ def current():
 def periods_of(m):
     if not m or m.get("auto_start") is None:
         return None
-    return game.build_periods(G, m["auto_start"], m.get("teleop_start"),
-                              m.get("first_inactive"), m.get("offset") or 0.0)
+    return RULES.build_periods(G, m["auto_start"], m.get("teleop_start"),
+                               m.get("first_inactive"), m.get("offset") or 0.0)
 
 
 def compute(m):
     ps = periods_of(m)
     if not ps:
         return None, None
-    events = store.fuel_between(ps[0].start, ps[-1].end + GRACE)
     playoff = m["comp_level"] != "qm"
+    wo = m.get("winner_override") if playoff else None
+    if REEF:
+        bd = reefscape.score_match(G, m.get("adjust"), m.get("climbs"), store.fouls(m["key"]),
+                                   sizes={a: len(m[a]) for a in game.ALLIANCES}, playoff=playoff, winner_override=wo)
+        return ps, bd
+    events = store.fuel_between(ps[0].start, ps[-1].end + GRACE)
     bd = game.score_match(G, ps, events, m.get("adjust"), m.get("climbs"), store.fouls(m["key"]),
-                          playoff=playoff, winner_override=m.get("winner_override") if playoff else None)
+                          playoff=playoff, winner_override=wo)
     return ps, bd
+
+
+def ranks():
+    return bracket.rankings(CFG["event"]["teams"], store.matches("qm"), RULES.TIEBREAKS)
+
+
+def push_ranks():
+    tba.rankings(ranks(), RULES.TIEBREAKS)
 
 
 def suggested_video(m):
@@ -140,9 +156,11 @@ def build_state():
         "event": {k: CFG["event"][k] for k in ("name", "teams", "tba_event_key", "lunch", "lunch_end",
                                                     "quals_after_lunch", "day_end", "qual_start", "cycle_min")},
         "game": G,
+        "game_id": CFG["event"]["game"],
+        "rank_cols": [[f"avg_{n}", label] for n, _, label in RULES.TIEBREAKS],
         "current": match_public(m, True) if m else None,
         "matches": [match_public(x) for x in ms],
-        "rankings": bracket.rankings(CFG["event"]["teams"], store.matches("qm")),
+        "rankings": ranks(),
         "alliances": store.get("alliances"),
         "champion": bracket.champion({x["key"]: x for x in ms}),
         "vision": {h: {**v, "age": round(time.time() - v["seen"], 1)} for h, v in vision_status.items()},
@@ -221,14 +239,14 @@ async def tick():
         m = current()
         if m and m["status"] == "running":
             ps = periods_of(m)
-            if m.get("first_inactive") is None and now >= ps[0].end + GRACE:
+            if not REEF and m.get("first_inactive") is None and now >= ps[0].end + GRACE:
                 _, bd = compute(m)
                 fi, coin = game.decide_first_inactive(bd["red"]["auto_fuel"], bd["blue"]["auto_fuel"])
                 store.update_match(m["key"], first_inactive=fi, fi_coin=int(coin))
                 push = True
             # With a fed field (e.g. bioarena), its hub lights ARE the auto result: adopt them
             # once per match, as soon as a shift shows them. Later manual overrides still stick.
-            fi = field_first_inactive() if now >= ps[0].end else None
+            fi = field_first_inactive() if now >= ps[0].end and not REEF else None
             if fi and (m["key"], m["auto_start"]) not in _field_applied:
                 _field_applied.add((m["key"], m["auto_start"]))
                 m = store.match(m["key"])
@@ -574,7 +592,7 @@ async def schedule_add(body: dict = Body(...), x_fms_token: str = Header(None)):
     if a0 is not None:
         if a0 > time.time():
             raise HTTPException(400, "Auto start is in the future (check the time and event.date)")
-        span = (lambda ps: ps[-1].end - ps[0].start)(game.build_periods(G, a0))
+        span = (lambda ps: ps[-1].end - ps[0].start)(RULES.build_periods(G, a0))
         clash = [x["key"] for x in store.matches() if x.get("auto_start") is not None
                  and abs(x["auto_start"] + (x.get("offset") or 0) - a0) < span]
         if clash:  # the same fuel would count in both matches
@@ -611,7 +629,7 @@ async def schedule_delete(body: dict = Body(...), x_fms_token: str = Header(None
                    next((x for x in ms if x["status"] == "scheduled"), None))
         store.set("current", nxt["key"]) if nxt else store.delete("current")
     tba.delete_matches([m["key"]])
-    tba.rankings(bracket.rankings(CFG["event"]["teams"], store.matches("qm")))
+    push_ranks()
     mark_dirty()
     return {"ok": True}
 
@@ -708,6 +726,7 @@ async def offset(body: dict = Body(...), x_fms_token: str = Header(None)):
 @app.post("/api/match/first_inactive")
 async def first_inactive(body: dict = Body(...), x_fms_token: str = Header(None)):
     role = need(x_fms_token, "emcee")
+    _rebuilt_only()
     m = _get(body.get("key"))
     _editable(m)
     a = body.get("alliance") or m.get("first_inactive")
@@ -725,6 +744,7 @@ async def adjust(body: dict = Body(...), x_fms_token: str = Header(None)):
     """Send {"total": n} to set the final count for a period (server computes the delta),
     or {"delta": n} to nudge it."""
     need(x_fms_token)
+    _rebuilt_only()
     m = _get(body.get("key"))
     _editable(m)
     a, p = body["alliance"], body["period"]
@@ -747,6 +767,7 @@ async def adjust(body: dict = Body(...), x_fms_token: str = Header(None)):
 @app.post("/api/match/climb")
 async def climb(body: dict = Body(...), x_fms_token: str = Header(None)):
     need(x_fms_token)
+    _rebuilt_only()
     m = _get(body.get("key"))
     _editable(m)
     a, i = body["alliance"], int(body["idx"])
@@ -756,6 +777,71 @@ async def climb(body: dict = Body(...), x_fms_token: str = Header(None)):
     if lvl not in (0, 1, 2, 3):
         raise HTTPException(400, "level must be 0-3")
     robots[i] = {"auto_l1": bool(body.get("auto_l1", robots[i]["auto_l1"])), "level": lvl}
+    c[a] = robots
+    store.update_match(m["key"], climbs=c)
+    mark_dirty()
+    return {"ok": True}
+
+
+def _rebuilt_only():
+    if REEF:
+        raise HTTPException(400, "Not part of REEFSCAPE (this event's game)")
+
+
+def _reef_only():
+    if not REEF:
+        raise HTTPException(400, "Only for REEFSCAPE events")
+
+
+@app.post("/api/match/count")
+async def count(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """REEFSCAPE: {"alliance", "item" (reefscape.ITEMS), "value": n} sets one count the scorekeeper typed."""
+    need(x_fms_token)
+    _reef_only()
+    m = _get(body.get("key"))
+    _editable(m)
+    a, item = body.get("alliance"), body.get("item")
+    if a not in game.ALLIANCES or item not in reefscape.ITEMS:
+        raise HTTPException(400, "bad alliance/item")
+    try:
+        n = int(body.get("value") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Enter a whole number")
+    if not 0 <= n <= 999:
+        raise HTTPException(400, "Counts are 0 to 999")
+    c = m.get("adjust") or {}
+    c.setdefault(a, {})[item] = n
+    store.update_match(m["key"], adjust=c)
+    mark_dirty()
+    return {"ok": True}
+
+
+@app.post("/api/match/robot")
+async def robot(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """REEFSCAPE: {"alliance", "idx", "leave": bool, "barge": none|park|shallow|deep} for one robot."""
+    need(x_fms_token)
+    _reef_only()
+    m = _get(body.get("key"))
+    _editable(m)
+    a = body.get("alliance")
+    if a not in game.ALLIANCES:
+        raise HTTPException(400, "bad alliance")
+    n = len(m[a])
+    try:
+        i = int(body["idx"])
+    except (KeyError, TypeError, ValueError):
+        i = -1
+    if not 0 <= i < n:
+        raise HTTPException(400, f"idx must be 0-{n - 1}")
+    c = m.get("climbs") or {}
+    robots = [{**reefscape.blank_robot(), **r} for r in (c.get(a) or [])[:n]]
+    robots += [reefscape.blank_robot() for _ in range(n - len(robots))]
+    if "leave" in body:
+        robots[i]["leave"] = bool(body["leave"])
+    if "barge" in body:
+        if body["barge"] not in reefscape.BARGE:
+            raise HTTPException(400, "barge must be " + ", ".join(reefscape.BARGE))
+        robots[i]["barge"] = body["barge"]
     c[a] = robots
     store.update_match(m["key"], climbs=c)
     mark_dirty()
@@ -814,7 +900,7 @@ async def commit(body: dict = Body(...), x_fms_token: str = Header(None)):
     m = store.match(m["key"])
     tba.one_match(m, bd, time_utc(m))
     if m["comp_level"] == "qm":
-        tba.rankings(bracket.rankings(CFG["event"]["teams"], store.matches("qm")))
+        push_ranks()
     vid = m.get("video") or suggested_video(m)
     if vid and vid != "none":
         store.update_match(m["key"], video=vid)
@@ -932,7 +1018,7 @@ async def selection_start(x_fms_token: str = Header(None)):
     need(x_fms_token)
     if _playoffs_started():
         raise HTTPException(409, "Playoffs already started; alliances are locked")
-    order = [r["team"] for r in bracket.rankings(CFG["event"]["teams"], store.matches("qm"))]
+    order = [r["team"] for r in ranks()]
     try:
         bracket.selection(order, [])
     except ValueError as e:
@@ -1052,7 +1138,7 @@ def push_all(x_fms_token: str = Header(None)):
     ms = store.matches()
     if ms:
         tba.matches([tba.match(m, m.get("breakdown"), time_utc(m)) for m in ms])
-    tba.rankings(bracket.rankings(CFG["event"]["teams"], store.matches("qm")))
+    push_ranks()
     if store.get("alliances"):
         tba.alliances(store.get("alliances"))
     return {"ok": True}
@@ -1061,7 +1147,7 @@ def push_all(x_fms_token: str = Header(None)):
 @app.post("/api/tba/rankings")
 def push_rankings(x_fms_token: str = Header(None)):
     need(x_fms_token)
-    tba.rankings(bracket.rankings(CFG["event"]["teams"], store.matches("qm")))
+    push_ranks()
     return {"ok": True}
 
 
@@ -1074,7 +1160,7 @@ def tba_delete_match(body: dict = Body(...), x_fms_token: str = Header(None)):
     m = _get(body.get("key"))
     tba.delete_matches([m["key"]])
     if body.get("refresh_rankings", True):
-        tba.rankings(bracket.rankings(CFG["event"]["teams"], store.matches("qm")))
+        push_ranks()
     mark_dirty()
     return {"ok": True}
 
@@ -1120,10 +1206,17 @@ async def webcast(body: dict = Body(...), x_fms_token: str = Header(None)):
 def export():
     buf = io.StringIO()
     wr = csv.writer(buf)
-    names = game.period_names(G)
     head = ["match", "status", "red1", "red2", "red3", "blue1", "blue2", "blue3", "red", "blue"]
+    if REEF:
+        cols = [*reefscape.ITEMS, "leave_points", "barge_points", "foul_points", "rp"]
+        per = lambda b: [b["counts"][k] for k in reefscape.ITEMS] + [b["leave_points"], b["barge_points"],
+                                                                       b["foul_points"], b["rp"]]
+    else:
+        names = game.period_names(G)
+        cols = [*names, "tower", "fouls_drawn", "rp"]
+        per = lambda b: [b["fuel"][n] for n in names] + [b["tower_points"], b["foul_points"], b["rp"]]
     for a in ("red", "blue"):
-        head += [f"{a}_{n}" for n in names] + [f"{a}_tower", f"{a}_fouls_drawn", f"{a}_rp"]
+        head += [f"{a}_{c}" for c in cols]
     head.append("surrogates")       # last, so existing column positions don't move
     wr.writerow(head)
     for m in store.matches():
@@ -1131,11 +1224,7 @@ def export():
         row = [m["key"], m["status"], *m["red"], *m["blue"],
                bd["red"]["total"] if bd else "", bd["blue"]["total"] if bd else ""]
         for a in ("red", "blue"):
-            if bd:
-                row += [bd[a]["fuel"][n] for n in names] + [bd[a]["tower_points"],
-                                                            bd[a]["foul_points"], bd[a]["rp"]]
-            else:
-                row += [""] * (len(names) + 3)
+            row += per(bd[a]) if bd else [""] * len(cols)
         row.append(" ".join(str(t) for t in m.get("surrogates") or []))
         wr.writerow(row)
     return PlainTextResponse(buf.getvalue(), media_type="text/csv")
