@@ -181,3 +181,45 @@ def test_check_a_recording_recounts_it_with_the_hub_setup(tmp_path):
     w.setup = {**w.setup, "ball_area": None}
     with pytest.raises(ValueError, match="calibrate"):
         s._check({"id": 4, "dir": "test", "name": rec.name, "hub": "red", "hand": 5})
+
+
+PIC = {"fps": 60, "size": [1280, 720], "fourcc": "MJPG", "auto_exposure": False, "exposure_ms": 8,
+       "auto_wb": None, "wb_kelvin": None, "brightness": None, "contrast": None, "saturation": None, "gain": None}
+
+
+def test_picture_and_fuel_colour_reach_the_camera_and_counter():
+    hub = {"source": "0", "size": [1280, 720], "outline": BOX, "ball_area": 700, "picture": PIC,
+           "colour": {"hue_lo": 20, "hue_hi": 35, "sat_min": 80, "val_min": 60}}
+    cfg = hubsetup.merge({**BASE, "fps": 30}, hub)
+    assert (cfg["fps"], cfg["width"], cfg["height"]) == (60, 1280, 720)
+    assert cfg["image"] == {"fourcc": "MJPG", "auto_exposure": False, "exposure_ms": 8}    # None = the camera's own
+    assert cfg["colour"] == hub["colour"]
+    # a picture change reopens the camera; an outline or colour change only rebuilds the counter
+    key = hubsetup.camera_key(cfg)
+    assert hubsetup.camera_key(hubsetup.merge(BASE, {**hub, "outline": BOX[:3], "colour": None})) == key
+    assert hubsetup.camera_key(hubsetup.merge(BASE, {**hub, "picture": {**PIC, "exposure_ms": 12}})) != key
+    plain = hubsetup.merge(BASE, {**hub, "picture": None, "colour": None})
+    assert "image" not in plain and "colour" not in plain and plain["width"] == 1920   # the file's defaults
+
+
+def test_fuel_colour_decides_what_counts_and_shows_magenta():
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+    import run_vision
+    from counters import load_counter
+    hub = {"source": "0", "size": [1280, 720], "outline": BOX, "ball_area": 700}
+    ball = (0, 220, 255)                     # BGR yellow: hue 26
+    counts = {}
+    for name, colour in (("standard", None), ("too orange", {"hue_lo": 0, "hue_hi": 14, "sat_min": 55, "val_min": 45})):
+        c = load_counter(hubsetup.fit(hubsetup.merge({"counter": "colour", "hub": "red"}, {**hub, "colour": colour}), 1280, 720))
+        t = 0.0
+        for b in range(4):
+            n, t = _fall(c, 560 + 30 * b, 120, 400, t, cv2, np)
+        counts[name] = c.total
+    assert counts == {"standard": 4, "too orange": 0}
+    f = np.full((720, 1280, 3), 40, np.uint8)
+    cv2.circle(f, (300, 300), 15, ball, -1)
+    assert run_vision.fuel_view(f, None) is f                        # no preview: the picture as it is
+    v = run_vision.fuel_view(f, {"hue_lo": 15, "hue_hi": 40, "sat_min": 55, "val_min": 45})
+    assert tuple(v[300, 300]) == (255, 0, 255) and tuple(v[100, 100]) == (40, 40, 40)
+    assert tuple(f[300, 300]) == ball                                # the counted frame is untouched

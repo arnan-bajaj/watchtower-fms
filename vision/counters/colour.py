@@ -6,14 +6,29 @@ only a cams.json `setup:` gives it both. Setup stores the two side by side (hubs
 a hub with both gets both zones, and its HubTally takes the larger of the two counts, never their
 sum: they count the same balls going in and coming out. status() adds the exits-against-outline
 cross-check (HubTally.check) to the line /control shows.
+
+`colour` ({hue_lo, hue_hi, sat_min, val_min}, OpenCV HSV, Setup -> Fuel colour) is the range of colours
+that count as fuel; without it, the standard range the counter has always used (camprofile.gate).
 """
 from __future__ import annotations
 
+from hubcounter.camprofile import gate
 from hubcounter.fms_counter import ColourCounter
 
 
 class Colour(ColourCounter):
     NAME = "colour"
+    OPTIONS = {**ColourCounter.OPTIONS,
+               "colour": "what counts as fuel: {hue_lo, hue_hi, sat_min, val_min} (OpenCV HSV; standard 15, 40, 55, 45)"}
+
+    def __init__(self, cfg: dict):
+        self.gate = gate(cfg.get("colour"))
+        super().__init__(cfg)
+
+    def _build(self, frame) -> None:
+        super()._build(frame)
+        for eye in self.eyes:
+            eye.lo, eye.hi = self.gate
 
     def _zone_specs(self, cfg: dict) -> list:
         if cfg.get("outline") and cfg.get("line") and cfg.get("out") and not cfg.get("setup"):

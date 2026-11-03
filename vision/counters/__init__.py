@@ -54,7 +54,7 @@ BUILTIN = {
 
 # Keys the runner itself reads from a hub's config; never "unknown" to a plugin.
 RUNNER_KEYS = {"counter", "hub", "source", "enabled", "fps", "width", "height", "loop",
-               "roi", "weights", "plugins", "plugin_paths", "setup_size"}
+               "roi", "weights", "plugins", "plugin_paths", "setup_size", "image"}
 
 
 _PATH_PLUGINS: dict = {}           # short names read from plugin_paths' pyproject.toml

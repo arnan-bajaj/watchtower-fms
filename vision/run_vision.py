@@ -23,7 +23,8 @@ The same reply says what Setup -> Cameras wants: pictures from each hub camera (
 second while the page is open), a scan for cameras, or a hub's drop test: record every frame's
 yellow blobs near its outline while someone drops balls in, then fit the one-ball size to the
 number dropped (dropfit.py) and send it back. Also from there: Measure (5 s of still balls near the
-outline: an estimate for the ruler, never the ball size), Test -> Record (every hub camera into
+outline, or anywhere before one is drawn: an estimate for the ruler, never the ball size), the fuel
+colour preview (what the colour range takes as fuel painted magenta on Setup's pictures), Test -> Record (every hub camera into
 `test_dir`, default `recordings`), and Test -> Check a recording (re-count one of those files, or a
 match recording, with the hub's current setup against a hand count). Each hub reports its
 capture-to-sent latency against the field feed's spec (hubcount.latency_summary).
@@ -44,6 +45,7 @@ import requests
 import dropfit
 import hubsetup
 import vconfig
+from hubcounter import camprofile
 from hubcounter import hubcount as HC
 from count_feed import CountFeed, targets
 from scaler import Scaler
@@ -89,6 +91,21 @@ def scan_cameras(in_use, n=SCAN_MAX):
     return found
 
 
+def fuel_view(frame, colour):
+    """Setup -> Fuel colour -> Show what counts as fuel: the picture with every pixel in the colour range
+    painted magenta (the old Hub Counter page's overlay). The frame itself if no preview is on."""
+    if not colour:
+        return frame
+    try:
+        lo, hi = camprofile.gate(colour)
+    except ValueError:
+        return frame
+    h, w = frame.shape[:2]
+    out = frame.copy()
+    out[HC.yellow_mask(frame, (0, 0, w, h), lo, hi) > 0] = (255, 0, 255)
+    return out
+
+
 class Sender(threading.Thread):
     def __init__(self, url, key, period=0.25, feeds=()):
         super().__init__(daemon=True)
@@ -113,6 +130,7 @@ class Sender(threading.Thread):
         self.scan_seen = None               # last Find cameras id started
         self.dirs = {}                      # "match" / "test" -> folder of recordings (Test -> Check)
         self.test_record = None             # Test -> Record: the recording's id while it runs
+        self.preview = {}                   # hub -> Fuel colour range to paint magenta on its pictures
         self.check_seen = None              # last Check a recording id started
         self.check_prog = None              # {"id", "frames", "frac"} while a recording is re-counted
         self.checked = None                 # its result, to send
@@ -189,6 +207,7 @@ class Sender(threading.Thread):
             w.drop_req = drops.get(h)           # {"id", "n"}: recording until n arrives; None: no test
             w.size_req = sizes.get(h)           # {"id"}: Measure
         self.test_record = want.get("record") or None
+        self.preview = want.get("preview") or {}
         chk = want.get("check")
         if chk and chk.get("id") != self.check_seen:
             self.check_seen = chk["id"]
@@ -403,7 +422,8 @@ class HubWorker(threading.Thread):
         self.drop_req = None                    # Setup's drop test, from the Sender: {"id", "n"} or None
         self.drop = None                        # the drop test recording: {"id", "frames", "poly", "box", "t0"}
         self.drop_done = set()                  # drop test ids already answered
-        self.cap, self.cap_src = None, None
+        self.cap, self.cap_src, self.cap_key = None, None, None
+        self.ignored = []                       # picture settings this camera's driver didn't take
         self.cfg = hubsetup.merge(self.base, self.setup)
 
     def reconfigure(self, setup):
@@ -415,22 +435,32 @@ class HubWorker(threading.Thread):
         if src in ("", "none"):
             return None
         cap = cv2.VideoCapture(int(src) if src.isdigit() else src)
+        image = cfg.get("image") if src.isdigit() else None   # a file or stream has its picture baked in
+        if image:
+            camprofile.set_fourcc(cap, image.get("fourcc"))     # first: 60 fps modes are often MJPG only
         if cfg.get("width"):
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg["width"])
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg["height"])
         if cfg.get("fps"):
             cap.set(cv2.CAP_PROP_FPS, cfg["fps"])
+        self.ignored = []
+        if image:
+            try:
+                res = camprofile.apply_image(cap, image, name=f"{self.hub} camera {src}")
+                self.ignored = [k for k, v in res.items() if v == "ignored"]
+            except ValueError as e:
+                print(f"{self.hub}: picture settings not applied: {e}")
         return cap
 
     def run(self):
         while not STOP.is_set():
             self.changed.clear()
             self.cfg = cfg = hubsetup.merge(self.base, self.setup)
-            src = str(cfg.get("source", "")).strip()
-            if src != self.cap_src:             # same camera: keep it open (no flicker, no re-prompt)
+            src, key = str(cfg.get("source", "")).strip(), hubsetup.camera_key(cfg)
+            if key != self.cap_key:             # same camera and picture: keep it open (no flicker, no re-prompt)
                 if self.cap is not None:
                     self.cap.release()
-                self.cap_src, self.cap = src, self.open(cfg)
+                self.cap_src, self.cap_key, self.cap = src, key, self.open(cfg)
             self.count(cfg)
         if self.cap is not None:
             self.cap.release()
@@ -507,8 +537,9 @@ class HubWorker(threading.Thread):
                 self.tester.update(self.sender.test_record, frame, t + self.sender.offset, fps_nominal)
             if self.sender.want_frames and time.time() - t_snap >= 1.0:
                 t_snap = time.time()
+                pic = fuel_view(frame, self.sender.preview.get(self.hub))
                 with self.sender.lock:
-                    self.sender.frames[self.hub] = {"source": src, **snapshot(frame)}
+                    self.sender.frames[self.hub] = {"source": src, "fuel": pic is not frame, **snapshot(pic)}
             if self.recorder and counter is not None:
                 self.recorder.update(self.sender.record, frame, t + self.sender.offset, fps_nominal)
             n_frames += 1
@@ -516,6 +547,8 @@ class HubWorker(threading.Thread):
                 fps = n_frames / (time.time() - t_fps)
                 n_frames, t_fps = 0, time.time()
                 st = {"fps": round(fps, 1), "counter": name, "source": src, "size": [w, h]}
+                if self.ignored:
+                    st["ignored"] = self.ignored
                 if counter is not None:
                     sc = self.sender.scalers[self.hub]
                     st.update(session_total=counter.total, counted=sc.out, scale=sc.scale,
@@ -558,9 +591,9 @@ class HubWorker(threading.Thread):
                 self.drop_done.add(req["id"])
                 self.sender.measured[self.hub] = {"id": req["id"], "error": "Draw the hub's outline first."}
                 return
-            from hubcounter import hubcount as HC
+            lo, hi = camprofile.gate((fitted or {}).get("colour"))        # the hub's fuel colour, as it counts
             box = dropfit.record_box(poly, w, h)
-            self.drop = {"id": req["id"], "frames": [], "poly": poly, "eye": HC.ZoneEye(box), "t0": time.time()}
+            self.drop = {"id": req["id"], "frames": [], "poly": poly, "eye": HC.ZoneEye(box, lo=lo, hi=hi), "t0": time.time()}
             print(f"[calibrate] {self.hub}: recording the drop test")
         d = self.drop
         if req.get("n"):
@@ -572,20 +605,19 @@ class HubWorker(threading.Thread):
 
     def size_step(self, frame, fitted, w, h):
         """Setup -> Measure: for MEASURE_S seconds, the areas of lone round blobs near the outline (the old
-        page's Measure, hubcount.measure), then their median as an estimate. Counting carries on."""
+        page's Measure, hubcount.measure), or anywhere in the picture before an outline is drawn (so its
+        ruler can help draw the first one), then their median as an estimate. Counting carries on."""
         req = self.size_req
         if not req or req["id"] in self.size_done:
             self.sizing = None
             return
         if self.sizing is None or self.sizing["id"] != req["id"]:
             poly = [tuple(p) for p in (fitted or {}).get("outline") or []]
-            if not poly:
-                self.size_done.add(req["id"])
-                self.sender.sized[self.hub] = {"id": req["id"], "error": "Draw the hub's outline first: balls are measured near it."}
-                return
-            self.sizing = {"id": req["id"], "box": dropfit.record_box(poly, w, h), "areas": [], "frames": 0, "t0": time.time()}
+            box = dropfit.record_box(poly, w, h) if poly else (0, 0, w, h)
+            self.sizing = {"id": req["id"], "box": box, "areas": [], "frames": 0, "t0": time.time(),
+                           "gate": camprofile.gate((fitted or {}).get("colour"))}
         sz = self.sizing
-        sz["areas"] += HC.isolated_ball_areas(frame, sz["box"])
+        sz["areas"] += HC.isolated_ball_areas(frame, sz["box"], *sz["gate"])
         sz["frames"] += 1
         if time.time() - sz["t0"] >= dropfit.MEASURE_S:
             self.size_done.add(sz["id"])

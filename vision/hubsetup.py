@@ -3,13 +3,18 @@ counter runs on. The ball size comes from the drop test (dropfit.py); Measure's 
 only draws the ruler and cross-checks it, so it never reaches the counter.
 
 /control stores each hub as the live setting `vision.hubs.<hub>` = {source, size, outline, exit,
-ball_area, measured} (fms/settings.py); `exit` is None or {"line": [[x, y], [x, y]], "out": [x, y]}.
+ball_area, measured, picture, colour} (fms/settings.py); `exit` is None or {"line": [[x, y], [x, y]],
+"out": [x, y]}; `picture` is None or the camera's {fps, size, fourcc, auto_exposure, exposure_ms,
+auto_wb, wb_kelvin, brightness, contrast, saturation, gain} (camprofile's `image`, applied when the
+camera opens; null values = the camera's own); `colour` is None (standard) or the fuel colour range.
 Vision fetches it with the rest of /api/vision/config. None keeps the vision config file's hub.
 No cv2 here, so tests can import it.
 """
 from __future__ import annotations
 
 DRAWN = ("outline", "roi", "line", "setup")   # any of these gives the colour counter a zone
+IMAGE = ("fourcc", "auto_exposure", "exposure_ms", "auto_wb", "wb_kelvin",   # camprofile.IMAGE_KEYS
+         "brightness", "contrast", "saturation", "gain")
 SCALED = ("outline", "line")                   # point lists drawn at `setup_size`
 COLOUR = ("colour", "tbavid-colour")
 
@@ -23,6 +28,16 @@ def merge(base: dict, setup) -> dict:
     cfg["source"] = str(setup["source"])
     for k in (*DRAWN, "out", "ball_area"):
         cfg.pop(k, None)
+    pic = setup.get("picture") or {}
+    if pic.get("fps"):
+        cfg["fps"] = pic["fps"]
+    if pic.get("size"):
+        cfg["width"], cfg["height"] = pic["size"]
+    image = {k: pic[k] for k in IMAGE if pic.get(k) is not None}
+    if image:
+        cfg["image"] = image
+    if setup.get("colour"):
+        cfg["colour"] = dict(setup["colour"])
     if setup.get("outline"):
         cfg["outline"] = [list(p) for p in setup["outline"]]
         cfg["setup_size"] = list(setup.get("size") or [0, 0])
@@ -65,3 +80,9 @@ def waiting(cfg: dict):
         if cfg.get("outline") and not cfg.get("ball_area"):
             return "calibrate this hub (drop test) in Setup → Cameras"
     return None
+
+
+def camera_key(cfg: dict):
+    """What the camera is opened with: a change reopens it (the rest only rebuilds the counter)."""
+    return (str(cfg.get("source", "")).strip(), cfg.get("width"), cfg.get("height"), cfg.get("fps"),
+            tuple(sorted((cfg.get("image") or {}).items())))
