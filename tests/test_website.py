@@ -97,3 +97,35 @@ def test_launch_script_event_yaml_and_sync(site):
     assert a.delete("/api/events/fall-fest").status_code == 200
     assert a.get("/api/events").json()["events"] == []
     assert a.post("/api/events", json={"name": "Fall Fest"}).json()["slug"] == "fall-fest"   # name free again
+
+
+def test_visit_counter_sources_and_admin_only(site, monkeypatch):
+    monkeypatch.setattr(site, "ADMINS", {"boss@team.org"})
+    ua = {"user-agent": "Mozilla/5.0 Safari"}
+    cd = TestClient(site.app, base_url="https://testserver", headers=ua)
+    assert cd.get("/?cd").status_code == 200                                  # visitor 1: the ?cd flag
+    cd.get("/")                                                               # same browser again (cookie)
+    cd.get("/e/spring")
+    ref = TestClient(site.app, base_url="https://testserver", headers={**ua, "referer": "https://www.chiefdelphi.com/t/123"})
+    ref.get("/")                                                              # visitor 2: CD referrer, no flag
+    TestClient(site.app, base_url="https://testserver", headers={**ua, "referer": "https://google.com/search"}).get("/")
+    TestClient(site.app, base_url="https://testserver", headers={**ua, "referer": "https://wt.example/e/x"}).get("/")  # own site
+    TestClient(site.app, base_url="https://testserver").get("/")             # visitor 5: direct
+    for bot in ("Discourse Forum Onebox v3.4", "Googlebot/2.1", "curl/8.4", ""):
+        TestClient(site.app, base_url="https://testserver", headers={"user-agent": bot}).get("/?cd")   # not counted
+    assert cd.post("/api/signup", json={"email": "c@team.org", "password": "longenough"}).status_code == 200
+
+    assert cd.get("/api/admin/stats").status_code == 404                     # not an admin
+    assert TestClient(site.app, base_url="https://testserver").get("/api/admin/stats").status_code == 404
+    boss = _user(site, "boss@team.org")
+    assert boss.get("/api/me").json()["user"]["admin"] is True and cd.get("/api/me").json()["user"]["admin"] is False
+    boss.headers.update(ua)
+    boss.get("/?cd")                                                          # the admin's own visit isn't counted
+    s = boss.get("/api/admin/stats").json()
+    # 5 browsers; loads: 3 (cd) + 1 + 1 + 1 + 1 = 7
+    assert s["visitors"] == 5 and s["views"] == 7
+    assert s["sources"] == [{"src": "cd", "v": 2}, {"src": "direct", "v": 2}, {"src": "google.com", "v": 1}]
+    assert len(s["days"]) == 1 and s["days"][0]["v"] == 5 and s["days"][0]["cd"] == 2 and s["days"][0]["n"] == 7
+    assert {"path": "/e/spring", "n": 1, "v": 1} in s["paths"] and {"path": "/", "n": 6, "v": 5} in s["paths"]
+    # c@ signed up from the ?cd browser; boss@ signed up with no visit cookie
+    assert s["signups"] == 2 and s["signups_by_source"] == [{"src": "before counter", "n": 1}, {"src": "cd", "n": 1}]

@@ -12,7 +12,8 @@ launch command; the FMS then runs on THEIR laptop. No desktop app (user's decisi
   The FMS never imports vision code or the model. Vision never contains scoring rules.
 - `website/` The website on the Oracle server (141.148.162.105, host `blue-banner`, shared with other
   services: never touch their units or Caddy blocks). Accounts, events, launch scripts, the starting
-  event.yaml, a synced copy of settings + status. It NEVER runs matches; it imports only `fms.settings`/`fms.config`.
+  event.yaml, a synced copy of settings + status, and a private visit counter (`/admin`, emails in `WT_ADMINS`,
+  set in the server's `site.env`, never in git; `?cd` tags Chief Delphi links). It NEVER runs matches; it imports only `fms.settings`/`fms.config`.
   Deploy: `deploy/deploy.sh ubuntu@141.148.162.105` (systemd `watchtower-site`, port 8070, Caddy block between
   `# >>> watchtower-site` markers). `launch.py` runs one event folder (`~/Watchtower/events/<slug>`) on a laptop:
   the FMS plus vision on a generated `config/vision.cameras.yaml` (counter `colour`, hubs empty until
