@@ -255,6 +255,7 @@ starting point; a Setup value wins over it, and **Use event.yaml** puts one back
 | **Event** | name, date, UTC offset, TBA event key, first match, cycle, teams |
 | **The Blue Alliance** | Auth ID, secret (never shown again after saving), Send to TBA on/off |
 | **Field system (bioarena)** | the field's IP and UDP port; shows this laptop's IP to enter in the field's counter setting |
+| **Field control (bioarena)** | the field's address, web port and key, and an on/off switch; shows this laptop's IP to enter on the field. See [Running the field from Watchtower](#running-the-field-from-watchtower-bioarena) |
 | **Cameras** | per hub: camera (USB index, or a network camera / video file), the outline drawn on its live picture (and optionally an exit line), Measure, and the drop-test calibration; then **Run** (live counts, the lock during a match) and **Test** (ball test, speed, recording, re-counting a recording) ([Hub cameras from Setup](#hub-cameras-from-setup)) |
 | **Vision & calibration** | per hub: status, counts per ball, and a **Calibrate** button (for counters other than the built-in colour one) |
 | **PINs** | Control, ref, emcee, scorer (REEFSCAPE); **Random new PINs**. A changed PIN logs out every device using it |
@@ -878,6 +879,33 @@ show it.
 `zone` counter counts on the `min_hits`-th frame inside the ROI, so keep `min_hits` low (2) and
 fps high. Check `age_ms` on the field's match panel (bioarena turns it amber above 250 ms).
 
+### Running the field from Watchtower (bioarena)
+
+With a bioarena that has **Watchtower Remote Control**, `/control` runs the field: one Start, one clock. Off by
+default on both sides. Physical e-stops are the safety system: these controls go over the network and can't replace them.
+
+**On the field:** Arena → Settings → Field → Watchtower Remote Control. Enter this laptop's IP (Setup shows it; it
+changes per network), leave Key blank and save to get one, and tick **Allow Watchtower to start matches** if Start
+should work from here. Without that tick Watchtower can do everything else, and follows a match started on the field.
+
+**In Watchtower:** `/control` → Setup → Field control. Enter the field's address, web port (8080) and key, tick
+**Field control on**, save. These settings stay on this laptop: they're never synced to the website.
+
+**Each match:** in the Match tab's Field panel, press **Load lineup**, wait for robots or bypass stations, then **Start
+match**. Start says why when it can't run. It's refused until the field has this match's lineup, the field's auto, pause
+and teleop lengths equal the event's (bioarena's `config.yaml`), and the field itself is ready.
+
+| | |
+|---|---|
+| Match clock | starts when the field reaches Auto, so the start-click correction shouldn't be needed |
+| Started on the field's page | Watchtower follows if the field's lineup is the current match's |
+| Abort (either side) | the match goes to review and the clock stops; **Reset match** replays it |
+| Auto result | read from the field's hub lights, with or without vision |
+| E-stop and bypass | setting one works any time; clearing one or removing a bypass only between matches |
+| Link lost mid-match | the field finishes the match by itself; use the field's e-stops |
+
+If the field is down, untick **Field control on** and Start goes back to starting only Watchtower's clock.
+
 ## The Blue Alliance
 
 ### Getting access
@@ -1031,6 +1059,7 @@ For an end-to-end check, run `./run.sh ../config/vision.mock.yaml` and play a ma
 - [ ] Both hub cameras mounted; in Setup → Cameras each outline redrawn if a camera moved, and a drop test run per hub
 - [ ] Vision pill green in `/control`
 - [ ] If a field system (e.g. bioarena) lights the hubs: its IP in `feeds:`, this Mac's current IP in its counter settings, mode set to Counted, **field** pill green in `/control` and the counter `ONLINE` on the field's panel
+- [ ] If Watchtower runs the field: this Mac's current IP in the field's Watchtower Remote Control settings, **field control** pill green in `/control`, Load lineup works
 - [ ] `rm data/fms.sqlite3*` done, `tba.enabled: true`, `source tba_secrets.sh`
 - [ ] Server started; schedule generated, saved and sent to TBA
 - [ ] OBS live → **Stream went live now** clicked

@@ -73,6 +73,26 @@
   .slider input { flex: 1; min-width: 0; } .slider b { width: 2.2rem; text-align: right; flex: none; }
   .switchrow { display: flex; gap: .45rem; align-items: center; margin: .45rem 0 .2rem; }
   .fuelbadge { position: absolute; left: .4rem; top: .4rem; background: rgba(0,0,0,.7); color: #ff7dff; font-size: .75rem; font-weight: 700; padding: .1rem .45rem; border-radius: 99px; pointer-events: none; }
+  /* Match -> Field (fms/field.py) */
+  button.abort { background: var(--red); border-color: var(--red); color: #fff; font-weight: 800; }
+  .fchead { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-bottom: .55rem; } .fchead h2 { margin: 0; }
+  #fcwhy { font-size: .9rem; font-weight: 600; color: var(--warn); margin-bottom: .55rem; overflow-wrap: anywhere; }
+  #fcwhy.ok { color: var(--ok); }
+  .fcgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+  .fccol { display: grid; gap: .5rem; min-width: 0; }
+  .fcst { border: 1px solid var(--line); border-radius: var(--r-md); padding: .45rem .5rem; min-width: 0; }
+  .fcst.red { background: var(--red-soft); border-color: var(--red-line); } .fcst.blue { background: var(--blue-soft); border-color: var(--blue-line); }
+  .fcst.stopped { outline: 3px solid var(--red); outline-offset: -1px; }
+  .fctop { display: flex; align-items: baseline; gap: .35rem; } .fctop b { font-size: 1.15rem; } .fctop .fcbat { margin-left: auto; font-size: .8rem; }
+  .fclights { display: flex; flex-wrap: wrap; gap: .2rem; margin: .25rem 0; }
+  .fclights i { font-style: normal; font-size: .68rem; font-weight: 700; padding: 0 .3rem; border-radius: 5px; background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+  .fclights i.on { background: var(--ok); color: #fff; border-color: var(--ok); }
+  .fcnote { font-size: .75rem; font-weight: 650; color: var(--warn); min-height: 1em; overflow-wrap: anywhere; }
+  .fcbtns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .3rem; margin-top: .25rem; }
+  .fcbtns button { min-height: 40px; padding: .2rem .1rem; font-size: .76rem; white-space: nowrap; overflow: hidden; }
+  .fcbtns button.estop { background: var(--red); border-color: var(--red); color: #fff; font-weight: 800; }
+  .fcbtns button.sel { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .fcrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .5rem; align-items: end; margin-top: .6rem; }
   /* Setup -> Run / Test */
   .runhubs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
   .runhub { border-radius: var(--r-md); padding: .6rem .7rem; color: #fff; min-width: 0; overflow-wrap: anywhere; }
@@ -85,7 +105,7 @@
 </head><body>
 <div class="bar">
   <span><span class="conn"></span> <b id="evname">FMS</b> <span id="curkey" class="small"></span></span>
-  <span class="row small"><span id="vpill" class="pill">vision</span><span id="tpill" class="pill">TBA</span><span id="fpill" class="pill" hidden>field</span></span>
+  <span class="row small"><span id="vpill" class="pill">vision</span><span id="tpill" class="pill">TBA</span><span id="fpill" class="pill" hidden>field</span><span id="fcpill" class="pill" hidden>field control</span></span>
 </div>
 <main class="wrap" id="app" hidden>
   <div class="tabs" id="tabs">
@@ -108,8 +128,20 @@
       </div>
       <div class="actions">
         <button id="bstart" class="primary">Start match</button>
-        <button id="bteleop" class="ghost">Teleop started</button><button id="breset" class="ghost">Reset match</button>
+        <button id="bteleop" class="ghost">Teleop started</button><button id="babort" class="abort" hidden>Abort match</button><button id="breset" class="ghost">Reset match</button>
       </div>
+    </div>
+    <div class="panel" id="fieldctl" hidden>
+      <div class="fchead"><h2>Field</h2><span id="fcstate" class="pill">–</span><span id="fclineup" class="pill">–</span></div>
+      <div id="fcwhy" role="status"></div>
+      <div class="fcgrid" id="fcstations"></div>
+      <div class="fcrow">
+        <button id="fcload" class="primary">Load lineup</button>
+        <button id="fcempty" class="ghost">Bypass empty</button>
+        <button id="fcclear" class="ghost">Clear field e-stop</button>
+        <label class="field" id="fcautof">Auto winner <select id="fcauto" aria-label="Auto winner"><option value="counted">Counted</option><option value="random">Random</option><option value="red">Red</option><option value="blue">Blue</option></select></label>
+      </div>
+      <div class="hint">Physical e-stops are the safety system. These buttons go over the network and can't replace them.</div>
     </div>
     <div class="panel" id="offpanel">
       <h2>Start-click correction</h2>
@@ -234,6 +266,17 @@
         <label class="field" style="margin-top:.75rem">Teams (any separator) <textarea id="se_teams" data-k="event.teams" spellcheck="false" style="min-height:4.5rem" placeholder="254 1678 971 604 ..."></textarea></label>
         <div class="row" style="margin-top:.6rem"><button class="primary" data-save="event">Save event</button><span class="muted small" id="se_teamn"></span></div>
         <div class="muted small" style="margin-top:.4rem">UTC offset on event day: PDT −7, MDT −6, CDT −5, EDT −4. Used for TBA match times. Changes apply at once; no restart.</div></div>
+      <div class="panel" id="fieldctlsetup"><h2>Field control (bioarena)</h2>
+        <div class="muted small">Runs the field from the Match tab: Start starts the field, and the match clock follows it. On the field, open Settings → Watchtower Remote Control, enter this computer's address (below), and copy its key here. These settings stay on this computer.</div>
+        <div class="form" style="margin-top:.6rem">
+          <label class="field">Field address <input id="sc_host" data-k="field.control.host" placeholder="e.g. 192.168.1.10" autocapitalize="off"></label>
+          <label class="field">Web port <input id="sc_port" data-k="field.control.port" type="number" min="1" max="65535"></label>
+          <label class="field">Key <input id="sc_key" type="password" autocomplete="off"></label>
+        </div>
+        <label class="row" style="margin-top:.6rem"><input id="sc_on" data-k="field.control.enabled" type="checkbox"> Field control on</label>
+        <div class="row" style="margin-top:.6rem"><button class="primary" data-save="fieldctl">Save field control</button></div>
+        <div class="muted small" style="margin-top:.4rem">Turn it off to run matches without the field (Start then only starts the clock here).</div>
+        <table class="kv" id="fctable" style="margin-top:.6rem"></table></div>
       <div class="panel" id="fieldpanel"><h2>Field system (bioarena)</h2>
         <div class="muted small">Sends every ball the cameras count straight to the field over UDP, so it decides the AUTO winner and lights the hubs. Leave empty if your field doesn't take counts.</div>
         <div class="form" style="margin-top:.6rem">
@@ -320,7 +363,11 @@ $("#tabs").onclick = (e) => {
 // ---- match controls
 const curKey = () => S() && S().current && S().current.key;
 $("#msel").onchange = (e) => api("/api/match/select", { key: e.target.value });
-$("#bstart").onclick = () => api("/api/match/start", { key: curKey() });
+$("#bstart").onclick = () => {
+  if (S().field.enabled && !confirm(`Start ${curKey()}? Robots will enable.\n\nIs the field clear?`)) return;
+  api("/api/match/start", { key: curKey() });
+};
+$("#babort").onclick = () => api("/api/field/abort");
 $("#bteleop").onclick = () => api("/api/match/teleop", { key: curKey() });
 $("#breset").onclick = () => {
   if (!confirm(`Reset ${curKey()}? Timing, adjustments and climbs are cleared.`)) return;
@@ -366,6 +413,74 @@ function renderMatch(s) {
 $("#review").addEventListener("focusout", () => setTimeout(() => {
   if (reviewPending && S()) { reviewPending = false; lastReviewSig = ""; renderMatch(S()); }
 }, 50));
+
+// ---- field control (fms/field.py). The station cards are built once and only updated: re-creating a
+// button while the status ticks would lose a tap on E-stop.
+const FC_STATE = { pre: "Ready", starting: "Starting", warmup: "Warmup", auto: "Auto", pause: "Pause", teleop: "Teleop", post: "Match over" };
+const FC_STATIONS = { red: ["R1", "R2", "R3"], blue: ["B1", "B2", "B3"] };
+const FC_LIGHTS = [["ds", "DS"], ["radio", "Radio"], ["rio", "RIO"], ["robot", "Robot"]];
+let fcOrder = "";
+function buildStations() {
+  $("#fcstations").innerHTML = sides().map((a) => `<div class="fccol">${FC_STATIONS[a].map((st) => `
+    <div class="fcst ${a}" data-st="${st}">
+      <div class="fctop"><b class="num" data-f="team">–</b><span class="muted small">${st}</span><span class="fcbat num" data-f="bat"></span></div>
+      <div class="fclights">${FC_LIGHTS.map(([k, l]) => `<i data-l="${k}">${l}</i>`).join("")}</div>
+      <div class="fcnote" data-f="note"></div>
+      <div class="fcbtns"><button class="ghost" data-act="bypass">Bypass</button><button class="estop" data-act="estop">E-stop</button></div>
+    </div>`).join("")}</div>`).join("");
+}
+$("#fcstations").onclick = (e) => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const name = b.closest("[data-st]").dataset.st, st = S().field.stations[name];
+  if (b.dataset.act === "estop") {
+    if (st.estop && !confirm(`Clear the e-stop on ${name}${st.team ? " (" + st.team + ")" : ""}?`)) return;
+    api("/api/field/station", { station: name, action: st.estop ? "clear_estop" : "estop" });
+  } else api("/api/field/station", { station: name, action: st.bypass ? "unbypass" : "bypass" });
+};
+$("#fcload").onclick = () => api("/api/field/lineup", { key: curKey() }).then(() => FMS.toast("Lineup is on the field"));
+$("#fcempty").onclick = () => api("/api/field/bypass_empty");
+$("#fcclear").onclick = () => confirm("Clear the field e-stop? This also clears every station's e-stop.") && api("/api/field/clear_estop");
+$("#fcauto").onchange = (e) => api("/api/field/auto_winner", { mode: e.target.value }).catch(() => {});
+function renderField(s) {
+  const f = s.field, cur = s.current;
+  $("#fieldctl").hidden = !f.enabled;
+  $("#babort").hidden = !f.enabled;
+  $("#bteleop").hidden = f.enabled;                     // the field decides when teleop starts
+  if (!f.enabled) return;
+  const inMatch = !!f.link && !["pre", "post"].includes(f.state);
+  $("#babort").disabled = !inMatch;
+  if (f.blocked) $("#bstart").disabled = true;
+  if (fcOrder !== sides().join()) { fcOrder = sides().join(); buildStations(); }
+  $("#fcstate").className = "pill " + (f.link ? "ok" : "bad");
+  $("#fcstate").textContent = f.link ? `${FC_STATE[f.state] || f.state}${inMatch && f.time != null ? " · " + f.time + " s" : ""}` : "Not connected";
+  $("#fclineup").hidden = !f.link || !cur;
+  $("#fclineup").className = "pill " + (f.lineup_ok ? "ok" : "bad");
+  $("#fclineup").textContent = f.lineup_ok ? `${cur ? cur.key : ""} loaded` : "lineup not loaded";
+  const why = f.aborted ? "The field aborted this match. Press Reset match to replay it."
+    : f.blocked || (f.link ? (f.state === "pre" && cur && cur.status === "scheduled" ? "Ready to start." : "") : f.error || "Not connected.");
+  $("#fcwhy").textContent = why;
+  $("#fcwhy").className = why === "Ready to start." ? "ok" : "";
+  $("#fcload").disabled = !f.link || f.state !== "pre" || !cur || cur.status !== "scheduled";
+  $("#fcempty").disabled = !f.link || inMatch;
+  $("#fcclear").disabled = !f.link || inMatch || !f.estop;
+  $("#fcautof").hidden = REEF();
+  $("#fcauto").disabled = !f.link || inMatch;
+  if (f.auto_winner && document.activeElement !== $("#fcauto")) $("#fcauto").value = f.auto_winner;
+  Object.values(FC_STATIONS).flat().forEach((name) => {
+    const el = $(`[data-st="${name}"]`), st = f.stations ? f.stations[name] : null;
+    el.classList.toggle("stopped", !!st && st.estop);
+    $("[data-f=team]", el).textContent = st && st.team ? st.team : "–";
+    $("[data-f=bat]", el).textContent = st && st.robot ? st.battery.toFixed(1) + " V" : "";
+    FC_LIGHTS.forEach(([k]) => $(`[data-l=${k}]`, el).classList.toggle("on", !!st && st[k]));
+    $("[data-f=note]", el).textContent = !st ? "" : st.fault ? "Wiring fault" : st.estop ? "E-STOPPED" : st.astop ? "A-stop" : st.wrong ? "Wrong station" : st.bypass ? "Bypassed" : "";
+    const bypass = $("[data-act=bypass]", el), stop = $("[data-act=estop]", el);
+    bypass.classList.toggle("sel", !!st && st.bypass);
+    bypass.textContent = st && st.bypass ? "Bypassed" : "Bypass";
+    bypass.disabled = !st || (inMatch && st.bypass);         // bypassing mid-match disables a robot; undoing it would enable one
+    stop.textContent = st && st.estop ? "Clear" : "E-stop";
+    stop.disabled = !st || (st.estop && inMatch);
+  });
+}
 
 function renderAuto(s) {
   const cur = s.current, g = s.game, box = $("#autobox");
@@ -504,6 +619,7 @@ function renderReview(s) {
   $("#vid").onchange = saveVid;
   $("#bvid").onclick = saveVid;
   const bc = $("#bcommit"); if (bc) bc.onclick = async () => {
+    if (S().field.aborted && !confirm(`The field aborted ${cur.key}. Commit this score anyway?\n\nTo replay it, Cancel and press Reset match.`)) return;
     const j = await api("/api/match/commit", { key: cur.key });
     FMS.toast(`${cur.key} committed${j.next ? ". Next: " + j.next : ""}`);
   };
@@ -856,6 +972,7 @@ function fillSettings() {
     else el.value = Array.isArray(v) ? v.join(" ") : (v ?? "");
   });
   $("#st_secret").value = ""; $("#st_secret").placeholder = sv("tba.auth_secret") ? "saved (type to replace)" : "not set";
+  $("#sc_key").value = ""; $("#sc_key").placeholder = sv("field.control.key") ? "saved (type to replace)" : "not set";
   const teams = sv("event.teams") || [];
   $("#se_teamn").textContent = `${teams.length} teams` + (teams.length < 6 ? " (schedules need 6+)" : teams.length < 12 ? " (alliance selection needs 12+)" : "");
   const fd = sv("field.feeds");
@@ -870,7 +987,8 @@ async function saveSettings(changes, msg) {
 }
 const SAVE_GROUPS = { event: ["event.name", "event.date", "event.utc_offset_hours", "event.tba_event_key", "event.qual_start", "event.cycle_min", "event.teams"],
                       pins: ["server.pins.control", "server.pins.ref", "server.pins.emcee", "server.pins.scorer"],
-                      tba: ["tba.auth_id", "tba.enabled"] };
+                      tba: ["tba.auth_id", "tba.enabled"],
+                      fieldctl: ["field.control.host", "field.control.port", "field.control.enabled"] };
 document.querySelectorAll("[data-save]").forEach((b) => b.onclick = () => {
   const g = b.dataset.save, changes = {};
   SAVE_GROUPS[g].forEach((k) => {
@@ -878,6 +996,7 @@ document.querySelectorAll("[data-save]").forEach((b) => b.onclick = () => {
     changes[k] = el.type === "checkbox" ? el.checked : el.value;
   });
   if (g === "tba" && $("#st_secret").value) changes["tba.auth_secret"] = $("#st_secret").value;
+  if (g === "fieldctl" && $("#sc_key").value) changes["field.control.key"] = $("#sc_key").value;
   if (g === "pins") {
     const mine = changes["server.pins.control"] !== sv("server.pins.control");
     saveSettings(changes, "PINs saved").then(() => { if (mine) location.reload(); });
@@ -1406,6 +1525,10 @@ function renderSetup(s) {
   const base = local && LAN.length ? LAN[0] : location.origin;
   $("#urls").innerHTML = ["ref", ...(REEF() ? ["score"] : []), "emcee", "display", "overlay", "control"].map((p) => `<tr><td>${p}</td><td><a href="/${p}">${esc(base)}/${p}</a></td></tr>`).join("")
     + (CLOUD && CLOUD.url ? `<tr><td>website</td><td>${CLOUD.linked ? `<span class="pill ok">synced</span>` : `<span class="pill bad">${esc(CLOUD.error || "not synced yet")}</span>`} <span class="small muted">${esc(CLOUD.url)}</span></td></tr>` : "");
+  const fc = s.field, here = LAN.length ? new URL(LAN[0]).hostname : "unknown";
+  $("#fctable").innerHTML = `<tr><td>This computer</td><td>${esc(here)}</td></tr>` + (!fc.enabled ? `<tr><td>Status</td><td>off</td></tr>`
+    : `<tr><td>Field</td><td>${esc(fc.dest)}</td></tr><tr><td>Link</td><td>${fc.link ? `<span class="pill ok">connected</span>` : `<span class="pill bad">${esc(fc.error || "connecting")}</span>`}</td></tr>`
+      + (fc.link ? `<tr><td>Remote start</td><td>${fc.remote_start ? "allowed" : "not allowed by the field"}</td></tr><tr><td>Access point</td><td>${esc(fc.access_point)}</td></tr><tr><td>Switch</td><td>${esc(fc.switch)}</td></tr>` + (REEF() ? "" : `<tr><td>Hub counter</td><td>${esc(fc.hub_counter)}</td></tr>`) : ""));
   const fd = s.feeds || [], cfgFeeds = sv("field.feeds");
   $("#ftable").innerHTML = (cfgFeeds === null ? `<tr><td>Set by</td><td>vision's config file (feeds:)</td></tr>` : "")
     + fd.map((f) => `<tr><td>${esc(f.dest)}</td><td>${f.link ? `<span class="pill ok">answering</span> ${esc(f.shift || f.match_state || "")}` : `<span class="pill bad">${esc(f.error || "no answer")}</span>`}</td></tr>`).join("")
@@ -1446,6 +1569,10 @@ function renderPills(s) {
   $("#fpill").className = "pill " + (fup === fd.length ? "ok" : "bad");
   $("#fpill").textContent = fd.length === 1 ? (fup ? "field ok" : "field down") : `field ${fup}/${fd.length}`;
   $("#fpill").title = fd.map((f) => `${f.name} ${f.dest}: ${f.link ? f.shift || f.match_state || "linked" : f.error || "no reply"}`).join("\n");
+  $("#fcpill").hidden = !s.field.enabled;
+  $("#fcpill").className = "pill " + (s.field.link ? "ok" : "bad");
+  $("#fcpill").textContent = s.field.link ? "field control" : "field control down";
+  $("#fcpill").title = s.field.error || "";
   const t = s.tba;
   $("#tpill").className = "pill " + (!t.configured ? "" : (t.pending || t.dead) ? "bad" : "ok");
   $("#tpill").textContent = !t.configured ? "TBA off" : `TBA ${t.pending || 0} queued${t.dead ? ", " + t.dead + " failed" : ""}`;
@@ -1466,7 +1593,7 @@ FMS.on((s) => {
     $("#mpt").value = suggestMpt(s);
   }
   if (preview && lastPreviewSides !== sides().join()) renderPreview();
-  renderPills(s); renderMatch(s); renderAll(s); renderResults(s); renderRank(s); renderAlli(s); renderLiveSel(s); renderSetup(s);
+  renderPills(s); renderMatch(s); renderField(s); renderAll(s); renderResults(s); renderRank(s); renderAlli(s); renderLiveSel(s); renderSetup(s);
 });
 everyFrame(() => {
   const cur = S() && S().current, p = FMS.phase(cur);

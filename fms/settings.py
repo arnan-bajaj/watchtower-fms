@@ -114,6 +114,10 @@ def _host(x):
     return x
 
 
+def _host_or_blank(x):
+    return _host(x) if str(x if x is not None else "").strip() else ""
+
+
 def _feeds(x):
     """None = vision uses its own config file's feeds; [] = off; else [{name, host, port}]."""
     if x is None:
@@ -255,12 +259,19 @@ FIELDS = {
     "server.pins.emcee": _pin,
     "server.pins.scorer": _pin_or_off,
     "field.feeds": _feeds,
+    "field.control.enabled": _bool,
+    "field.control.host": _host_or_blank,
+    "field.control.port": _num(1, 65535),
+    "field.control.key": _str(200),
     "vision.scale.red": _num(0.05, 100),
     "vision.scale.blue": _num(0.05, 100),
     "vision.hubs.red": _hubcam,
     "vision.hubs.blue": _hubcam,
 }
-SECRET = {"tba.auth_secret"}       # never sent to a browser; Setup shows only whether it's set
+SECRET = {"tba.auth_secret", "field.control.key"}   # never sent to a browser; Setup shows only whether it's set
+# Stay on the laptop running the match: never sent to the website, and never taken from it. The website
+# must have no way to point this FMS at a field, or to learn a field's key.
+LOCAL = ("field.control.",)
 
 
 def get_path(d, key):
@@ -304,6 +315,11 @@ def merge(a: dict, b: dict) -> dict:
         if k in FIELDS and isinstance(e, dict) and "t" in e and (k not in out or e["t"] >= out[k]["t"]):
             out[k] = e
     return out
+
+
+def shareable(entries: dict) -> dict:
+    """The entries that may go to, or come from, the website (fms/cloud.py)."""
+    return {k: e for k, e in (entries or {}).items() if not k.startswith(LOCAL)}
 
 
 def overlay(base: dict, entries: dict) -> dict:

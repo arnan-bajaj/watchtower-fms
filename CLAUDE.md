@@ -135,6 +135,17 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
   run end to end). Only Counted mode uses the counts; in Random/Red/Blue the emcee locks `first_inactive`
   to what bioarena's lights showed.
 
+## Field control (`fms/field.py`)
+- `/control` runs a bioarena field over bioarena's `GET /remote_control/websocket` (`X-Remote-Key`, one allowed source IP; set up in
+  its Settings -> Field, protocol in its docs/watchtower-remote-control.md). Off unless `field.control.enabled` and a host are set;
+  then Start goes through the field. Never copy bioarena code here: its licence bars redistributing modified copies and this repo is MIT.
+- `field.control.*` are `settings.LOCAL`: never sent to the website or taken from it (`settings.shareable`). The key is `SECRET`.
+- The field's clock is the match: `on_field_state` starts the timeline when the field reaches Auto (also for a start on bioarena's own
+  page, if its lineup is the current match's) and sends a running match to `review` with kv `field_aborted` if the field leaves it early.
+- Start is refused (`field_problem`) unless the field's lineup is the match's, its (auto, pause, teleop) equal `expected_timing()`,
+  remote starts are allowed, and the field can start. `FieldLink.public` hand-picks fields: bioarena's messages carry WPA keys and
+  `state.field` goes to every page. Station cards are built once and updated in place: re-creating a button loses a tap on E-stop.
+
 ## Event constraints
 - Everyone (refs, scorers, emcee, Control) is on the venue WiFi; no hotspot. Some networks isolate clients;
   test phone -> Mac reachability at the venue. The Mac's IP changes per network.

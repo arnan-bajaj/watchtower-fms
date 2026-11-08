@@ -3,6 +3,16 @@
 Versions are git tags. v0.x were alphas built toward our first scrimmage; v1 is the build that ran the
 10th Street Showdown (2026-10-10); v2 is the website revamp.
 
+## v2.6.0: run a bioarena field from /control
+
+- **Field control** (Setup → Field control, plus a setting on the field): Start starts the field, and Watchtower's
+  match clock begins when the field actually reaches Auto, so there's no start click to correct.
+- A start or abort on the field's own page is followed too. An aborted match stops the clock and goes to review.
+- **Field panel** on the Match tab: load a match's lineup, each station's connection lights and battery, bypass,
+  e-stop, auto winner mode, and the field's own reason when it can't start.
+- Start is refused if the field's lineup or match lengths don't match the event.
+- The hub lights set the auto result directly, with or without vision running.
+
 ## v2.5.0: camera picture, fuel colour, and the setup guide on the page
 
 - **Picture** per hub: frame rate, size, video format, exposure, white balance, brightness, contrast,

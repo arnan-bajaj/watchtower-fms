@@ -42,6 +42,8 @@ const FMS = (() => {
     if (!cur || !cur.periods) return { name: "idle", label: cur ? "Ready" : "No match", remaining: null };
     const ps = cur.periods;
     const end = ps[ps.length - 1].end;
+    // Only an abort ends a match before its time: stop the clock instead of counting down to nothing.
+    if (cur.status !== "running" && t < end) return { name: "post", label: state.field.aborted ? "Aborted" : "Match over", remaining: null, clock: 0 };
     if (t < ps[0].start) return { name: "pre", label: "Starting", remaining: ps[0].start - t };
     for (let i = 0; i < ps.length; i++) {
       const p = ps[i];

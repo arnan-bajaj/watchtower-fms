@@ -21,7 +21,7 @@ from fastapi import Body, FastAPI, Header, HTTPException, WebSocket, WebSocketDi
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import bracket, cloud, config, game, reefscape, schedule, settings
+from . import bracket, cloud, config, field, game, reefscape, schedule, settings
 from .store import Store
 from .tba import TBA
 
@@ -59,6 +59,7 @@ vision_check: dict = {"progress": None, "result": None}
 vision_unlock = {"key": None}  # the running match whose cameras Control unlocked (Setup -> Run)
 LOCKED = "Cameras are locked while a match runs. Unlock them in Setup → Run first."
 _field_applied: set = set()   # (match key, auto_start) whose auto result came from a field's lights
+_field_starting = {"key": None}  # the match Start just asked the field to run (fms/field.py)
 _dirty = threading.Event()  # set from any thread; tick loop broadcasts
 
 
@@ -173,6 +174,7 @@ def build_state():
         "champion": bracket.champion({x["key"]: x for x in ms}),
         "vision": {h: {**v, "age": round(time.time() - v["seen"], 1)} for h, v in vision_status.items()},
         "feeds": feeds_public(),
+        "field": field_view(m),
         "tba": {"configured": tba.configured, "key": tba.key, **store.outbox_stats()},
         "webcast": store.get("webcast") or {},
         "selection": selection_public(),
@@ -223,7 +225,8 @@ def field_first_inactive():
         fi = _feed_link(f) and game.first_inactive_from_hubs(r.get("shift"), r.get("hub_active"))
         if fi:
             return fi
-    return None
+    hubs = field_link.hubs()   # field control sees the lights directly, with or without vision
+    return game.first_inactive_from_hubs(*hubs) if hubs else None
 
 
 def feeds_public():
@@ -236,6 +239,75 @@ def feeds_public():
                     "first_inactive": game.first_inactive_from_hubs(r.get("shift"), r.get("hub_active"))
                     if _feed_link(f) else None})
     return out
+
+
+# ------------------------------------------------------------------ field control (fms/field.py)
+def expected_timing():
+    """(auto, pause, teleop) seconds this event's game runs; the field has to run the same."""
+    ps = RULES.build_periods(G, 0.0)
+    return ps[0].end, ps[1].start - ps[0].end, ps[-1].end - ps[1].start
+
+
+def field_problem(m, v):
+    """Why Start can't run match m on the field right now (shown by Start), or None. v = field_link.public()."""
+    if not v["link"]:
+        return (f"The field isn't connected: {v['error']}." if v["error"] else "The field isn't connected.") \
+            + " Fix that, or turn field control off in Setup to run without it."
+    if v["state"] in field.IN_MATCH:
+        return "The field is running a match."
+    if v["state"] != "pre":
+        return "The field is clearing the last match. This takes a few seconds."
+    if v["lineup"] != field.lineup(m["red"], m["blue"]):
+        return f"The field has a different lineup. Press Load lineup for {m['key']}."
+    got, want = field_link.timing(), expected_timing()
+    if got != want:
+        return f"Match lengths differ: the field runs {got} and this event {want} (auto, pause, teleop seconds). " \
+               "Fix the field's config.yaml, or scores land in the wrong periods."
+    if not v["remote_start"]:
+        return f"This field doesn't allow remote starts ({field.SETTINGS_HINT}). Start it there and Watchtower will follow."
+    return v["start_problem"] or None
+
+
+def field_view(m):
+    v = field_link.public()
+    v["aborted"] = bool(m) and m["key"] in (store.get("field_aborted") or {})
+    if v["enabled"] and m:
+        v["lineup_ok"] = v.get("lineup") == field.lineup(m["red"], m["blue"])
+        v["blocked"] = field_problem(m, v) if m["status"] == "scheduled" else None
+    return v
+
+
+def begin_match(key, t):
+    store.update_match(key, auto_start=t, status="running", offset=0.0,
+                       first_inactive=None, fi_locked=0, fi_coin=0)
+    store.set("current", key)
+    store.set("display", "match")
+    mark_dirty()
+
+
+def on_field_state(old, new):
+    """The field moved to a new match state (link thread). Its clock is the match, so this is where a
+    field-run match's timeline starts and where an abort lands, whoever told the field."""
+    now = time.time()
+    if new == "auto":
+        key, _field_starting["key"] = _field_starting["key"], None
+        m = store.match(key) if key else current()      # no key: started from the field's own page
+        if m and m["status"] == "scheduled" and field.lineup(m["red"], m["blue"]) == field_link.lineup():
+            begin_match(m["key"], now)
+        else:
+            print(f"[field] started a match Watchtower can't follow (current: {m and m['key']}, "
+                  f"status {m and m['status']}, field lineup {field_link.lineup()})")
+    elif new == "post" and old in field.IN_MATCH:
+        _field_starting["key"] = None
+        m = running_match()
+        if m and now < periods_of(m)[-1].end - 1:       # the field's timer ends a match within ms of our own end
+            print(f"[field] {m['key']} aborted by the field at {now - m['auto_start']:.1f} s")
+            store.set("field_aborted", {**(store.get("field_aborted") or {}), m["key"]: now})
+            store.update_match(m["key"], status="review")
+    mark_dirty()
+
+
+field_link = field.FieldLink(on_field_state)
 
 
 async def tick():
@@ -282,11 +354,14 @@ def mark_dirty():
 @asynccontextmanager
 async def lifespan(app):
     threading.Thread(target=tba.run_forever, daemon=True).start()
+    field_link.configure(CFG["field"]["control"])
+    threading.Thread(target=field_link.run_forever, daemon=True).start()
     if CFG["cloud"]["url"] and CFG["cloud"]["token"]:
         threading.Thread(target=cloud.run_forever, args=(sync_cloud,), daemon=True).start()
     task = asyncio.create_task(tick())
     yield
     task.cancel()
+    field_link.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -371,11 +446,12 @@ def apply_settings(entries):
     """Store and run on new settings entries. ValueError (nothing changed) if the result is invalid."""
     new = settings.overlay(BASE, entries)
     settings.check(new)
-    vision_before = copy.deepcopy((CFG["field"], CFG["vision"]))
+    vision_before = copy.deepcopy((CFG["field"]["feeds"], CFG["vision"]))
     store.set("settings", entries)
     settings.apply_in_place(CFG, new)
-    if (CFG["field"], CFG["vision"]) != vision_before:
+    if (CFG["field"]["feeds"], CFG["vision"]) != vision_before:
         store.set("vision_rev", (store.get("vision_rev") or 0) + 1)
+    field_link.configure(CFG["field"]["control"])
     mark_dirty()
 
 
@@ -404,6 +480,8 @@ def post_settings(body: dict = Body(...), x_fms_token: str = Header(None)):
     need(x_fms_token)
     if any(str(k).startswith("vision.hubs.") for k in body.get("changes") or {}) and cams_locked():
         raise HTTPException(409, LOCKED)
+    if any(str(k).startswith("field.control.") for k in body.get("changes") or {}) and field_link.in_match():
+        raise HTTPException(409, "The field is running a match. Change field control after it ends.")
     try:
         changes = settings.clean(body.get("changes") or {})
         apply_settings(settings.merge(settings_entries(), settings.stamp(changes, time.time())))
@@ -420,10 +498,10 @@ def sync_cloud():
               "played": sum(1 for x in store.matches() if x["status"] == "committed"),
               "lan_urls": cloud.lan_urls(CFG["server"]["port"]),
               "vision": {h: v.get("fps") for h, v in vision_status.items() if time.time() - v["seen"] < 5}}
-    theirs = cloud.exchange(CFG["cloud"], settings_entries(), status)
+    theirs = cloud.exchange(CFG["cloud"], settings.shareable(settings_entries()), status)
     if theirs is None:
         return
-    merged = settings.merge(settings_entries(), theirs)
+    merged = settings.merge(settings_entries(), settings.shareable(theirs))
     if merged != settings_entries():
         try:
             apply_settings(merged)
@@ -708,7 +786,7 @@ async def select(body: dict = Body(...), x_fms_token: str = Header(None)):
 
 
 @app.post("/api/match/start")
-async def start(body: dict = Body(default={}), x_fms_token: str = Header(None)):
+def start(body: dict = Body(default={}), x_fms_token: str = Header(None)):
     need(x_fms_token)
     now = time.time()
     m = _get(body.get("key"))
@@ -716,11 +794,18 @@ async def start(body: dict = Body(default={}), x_fms_token: str = Header(None)):
         raise HTTPException(409, f"{m['key']} is {m['status']}. Reset it to restart.")
     if any(x["status"] == "running" for x in store.matches()):
         raise HTTPException(409, "Another match is running")
-    store.update_match(m["key"], auto_start=now, status="running", offset=0.0,
-                       first_inactive=None, fi_locked=0, fi_coin=0)
-    store.set("current", m["key"])
-    store.set("display", "match")
-    mark_dirty()
+    if field_link.enabled:
+        problem = field_problem(m, field_link.public())
+        if problem:
+            raise HTTPException(409, problem)
+        _field_starting["key"] = m["key"]
+        try:
+            field_link.start(field.lineup(m["red"], m["blue"]))
+        except field.FieldError as e:
+            _field_starting["key"] = None
+            raise HTTPException(409, str(e))
+        return {"ok": True, "field": True}              # the timeline starts when the field reaches Auto
+    begin_match(m["key"], now)
     return {"ok": True, "auto_start": now}
 
 
@@ -931,6 +1016,11 @@ async def reset(body: dict = Body(...), x_fms_token: str = Header(None)):
     need(x_fms_token)
     m = _get(body.get("key"))
     _editable(m)
+    if m["status"] == "running" and field_link.in_match():
+        raise HTTPException(409, "The field is still running this match. Abort it first.")
+    aborted = store.get("field_aborted") or {}
+    if aborted.pop(m["key"], None) is not None:
+        store.set("field_aborted", aborted)
     store.update_match(m["key"], status="scheduled", auto_start=None, teleop_start=None, offset=0.0,
                        first_inactive=None, fi_locked=0, fi_coin=0, adjust={}, climbs={},
                        winner_override=None, breakdown=None)
@@ -980,6 +1070,64 @@ async def reopen(body: dict = Body(...), x_fms_token: str = Header(None)):
     store.set("current", m["key"])
     mark_dirty()
     return {"ok": True}
+
+
+def _on_field(fn, *args):
+    """Run one field command; what the field says is the operator's error message."""
+    try:
+        fn(*args)
+    except field.FieldError as e:
+        raise HTTPException(409, str(e))
+    mark_dirty()
+    return {"ok": True}
+
+
+@app.post("/api/field/lineup")
+def field_lineup(body: dict = Body(default={}), x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    m = _get(body.get("key"))
+    return _on_field(field_link.load_lineup, field.lineup(m["red"], m["blue"]), m["key"])
+
+
+@app.post("/api/field/abort")
+def field_abort(x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    return _on_field(field_link.abort)
+
+
+@app.post("/api/field/station")
+def field_station(body: dict = Body(...), x_fms_token: str = Header(None)):
+    """{"station": "R1", "action": "estop" | "clear_estop" | "bypass" | "unbypass"}"""
+    need(x_fms_token)
+    st, act = body.get("station"), body.get("action")
+    if st not in field.STATIONS:
+        raise HTTPException(400, "bad station")
+    if act in ("estop", "clear_estop"):
+        return _on_field(field_link.set_estop, st, act == "estop")
+    if act in ("bypass", "unbypass"):
+        return _on_field(field_link.set_bypass, st, act == "bypass")
+    raise HTTPException(400, "bad action")
+
+
+@app.post("/api/field/bypass_empty")
+def field_bypass_empty(x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    return _on_field(field_link.bypass_empty)
+
+
+@app.post("/api/field/clear_estop")
+def field_clear_estop(x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    return _on_field(field_link.clear_field_estop)
+
+
+@app.post("/api/field/auto_winner")
+def field_auto_winner(body: dict = Body(...), x_fms_token: str = Header(None)):
+    need(x_fms_token)
+    _rebuilt_only()
+    if body.get("mode") not in field.AUTO_WINNERS:
+        raise HTTPException(400, f"mode must be one of {', '.join(field.AUTO_WINNERS)}")
+    return _on_field(field_link.set_auto_winner, body["mode"])
 
 
 @app.get("/api/match/{key}")

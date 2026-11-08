@@ -1,4 +1,5 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
+websockets>=15               # field control
 pyyaml>=6
 requests>=2.31
