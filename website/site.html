@@ -69,10 +69,11 @@ let ME = null, timer = null;
 async function route() {
   clearInterval(timer);
   ME = (await api("/api/me")).user;
-  $("#who").innerHTML = ME ? `<span class="small muted">${esc(ME.email)}</span><button class="ghost small" id="bout">Log out</button>` : "";
+  $("#who").innerHTML = ME ? `${ME.admin ? `<a class="small" href="/admin" data-go>Stats</a>` : ""}<span class="small muted">${esc(ME.email)}</span><button class="ghost small" id="bout">Log out</button>` : "";
   if (ME) $("#bout").onclick = async () => { await api("/api/logout", {}); go("/"); };
   const m = location.pathname.match(/^\/e\/([a-z0-9-]+)/);
   if (m) return eventView(m[1]);
+  if (location.pathname === "/admin" && ME && ME.admin) return statsView();
   return ME ? eventsView() : landing();
 }
 
@@ -110,6 +111,28 @@ function landing() {
   };
   const li = async () => { try { await api("/api/login", { email: $("#li_email").value, password: $("#li_pw").value }); go(location.pathname); } catch (e) { toast(e.message, true); } };
   $("#bli").onclick = li; $("#li_pw").onkeydown = (e) => { if (e.key === "Enter") li(); };
+}
+
+// ---------------------------------------------------------------- visit stats (admins only)
+async function statsView() {
+  const s = await api("/api/admin/stats");
+  const cd = (s.sources.find((r) => r.src === "cd") || { v: 0 }).v;
+  const tbl = (head, rows) => `<div class="scroll"><table><tr>${head.map((h, i) => `<th${i ? ' class="r"' : ""}>${h}</th>`).join("")}</tr>
+    ${rows.map((r) => `<tr>${r.map((c, i) => `<td${i ? ' class="r"' : ""}>${esc(c)}</td>`).join("")}</tr>`).join("") || `<tr><td class="muted" colspan="${head.length}">Nothing yet</td></tr>`}</table></div>`;
+  $("#view").innerHTML = `
+  <div class="panel"><h2>Visitors</h2>
+    <div class="pins"><div><b>${s.visitors}</b><span class="small muted">visitors</span></div>
+      <div><b>${cd}</b><span class="small muted">from Chief Delphi</span></div>
+      <div><b>${s.views}</b><span class="small muted">page loads</span></div>
+      <div><b>${s.signups}</b><span class="small muted">accounts</span></div></div>
+    <p class="small muted">A visitor is one browser (cookie). Source is where that browser first came from: <b>cd</b> = a link with
+      <code>?cd</code> or a chiefdelphi.com referrer. Bots, link previews and your own visits aren't counted. Days are UTC.</p></div>
+  <div class="grid2">
+    <div class="panel"><h2>First source</h2>${tbl(["Source", "Visitors"], s.sources.map((r) => [r.src, r.v]))}</div>
+    <div class="panel"><h2>Sign-ups by source</h2>${tbl(["Source", "Accounts"], s.signups_by_source.map((r) => [r.src, r.n]))}</div>
+  </div>
+  <div class="panel"><h2>By day</h2>${tbl(["Day", "Visitors", "From CD", "Loads"], s.days.map((r) => [r.day, r.v, r.cd, r.n]))}</div>
+  <div class="panel"><h2>Pages</h2>${tbl(["Page", "Visitors", "Loads"], s.paths.map((r) => [r.path, r.v, r.n]))}</div>`;
 }
 
 // ---------------------------------------------------------------- my events

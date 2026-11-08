@@ -1018,7 +1018,11 @@ status. It never runs matches. `deploy/deploy.sh user@server` puts it on an Ubun
   then reloaded). Other sites on the server are left alone.
 
 Environment (`/srv/watchtower/site.env` overrides): `WT_SITE_URL` (the address in launch commands),
-`WT_SIGNUP_CODE` (set it to require an invite code), `WT_MAX_EVENTS` (per account, default 10).
+`WT_SIGNUP_CODE` (set it to require an invite code), `WT_MAX_EVENTS` (per account, default 10),
+`WT_ADMINS` (comma-separated account emails that see the visit counter at `/admin`).
+The site counts page loads of `/` and `/e/<slug>` per browser (a random `wv` cookie; no IPs stored; bots, link
+previews and admins skipped). Add `?cd` (e.g. `https://watchtower.systemoverload.org/?cd`) to a link you post so
+its visitors show as source `cd`; a chiefdelphi.com referrer counts as `cd` too, other referrers by host.
 Re-run `deploy/deploy.sh` to update; launch commands pick up the new download on their next run.
 
 ## Testing

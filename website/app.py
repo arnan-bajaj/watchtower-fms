@@ -35,6 +35,7 @@ DATA = pathlib.Path(os.environ.get("WT_DATA", "data/website"))
 DIST = pathlib.Path(os.environ.get("WT_DIST", "dist"))           # watchtower.tar.gz + version (deploy/build.sh)
 SIGNUP_CODE = os.environ.get("WT_SIGNUP_CODE", "")                # set: sign-up needs this code
 MAX_EVENTS = int(os.environ.get("WT_MAX_EVENTS", "10"))           # per account
+ADMINS = {e.strip().lower() for e in os.environ.get("WT_ADMINS", "").split(",") if e.strip()}  # see /admin
 SESSION_DAYS = 30
 RESERVED = {"api", "run", "download", "static", "new", "login", "signup", "events", "admin"}
 
@@ -50,6 +51,10 @@ CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, user_id INTEGER NOT NU
 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, owner INTEGER NOT NULL,
   token TEXT UNIQUE NOT NULL, base TEXT NOT NULL, settings TEXT NOT NULL DEFAULT '{}',
   status TEXT, last_seen REAL, created REAL, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS visits (t REAL NOT NULL, day TEXT NOT NULL, visitor TEXT NOT NULL, src TEXT NOT NULL,
+  path TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS visits_visitor ON visits(visitor, t);
+CREATE TABLE IF NOT EXISTS signup_visitor (user_id INTEGER PRIMARY KEY, visitor TEXT NOT NULL);
 """)
 
 
@@ -131,6 +136,8 @@ def signup(request: Request, response: Response, body: dict = Body(...)):
                 (email, pw_hash(pw), str(body.get("team", ""))[:20], time.time()))
     except sqlite3.IntegrityError:
         raise HTTPException(409, "That email already has an account. Log in instead.")
+    if VISITOR_RE.match(request.cookies.get("wv") or ""):
+        x("INSERT INTO signup_visitor VALUES(?,?)", (cur.lastrowid, request.cookies["wv"]))
     start_session(response, cur.lastrowid)
     return {"ok": True}
 
@@ -156,7 +163,65 @@ def logout(response: Response, wt: str = Cookie(None)):
 @app.get("/api/me")
 def me(wt: str = Cookie(None)):
     u = user_of(wt)
-    return {"user": {"email": u["email"], "team": u["team"]} if u else None, "signup_code": bool(SIGNUP_CODE)}
+    return {"user": {"email": u["email"], "team": u["team"], "admin": u["email"] in ADMINS} if u else None,
+            "signup_code": bool(SIGNUP_CODE)}
+
+
+# ------------------------------------------------------------------ visit counter (admins only, /admin)
+# One row per page load of / or /e/<slug>. A visitor is a random first-party cookie (no IPs stored).
+# Source: "cd" for ?cd or a chiefdelphi.com referrer, else the referrer's host, else "direct".
+BOT_RE = re.compile(r"bot|crawl|spider|slurp|preview|onebox|discourse|facebookexternalhit|embed|curl|wget|"
+                    r"python|httpx|go-http|headless|monitor|uptime", re.I)
+VISITOR_RE = re.compile(r"^[A-Za-z0-9_-]{16,40}$")
+
+
+def visit_source(request: Request):
+    if "cd" in request.query_params:
+        return "cd"
+    m = re.match(r"^https?://([^/:?#]+)", request.headers.get("referer", ""))
+    host = m[1].lower().removeprefix("www.") if m else ""
+    if not host or host == SITE.split("://")[-1].split("/")[0].split(":")[0]:
+        return "direct"
+    return "cd" if host == "chiefdelphi.com" or host.endswith(".chiefdelphi.com") else host[:60]
+
+
+def count_visit(request: Request, resp: Response):
+    ua = request.headers.get("user-agent", "")
+    if not ua or BOT_RE.search(ua):
+        return
+    u = user_of(request.cookies.get("wt"))
+    if u and u["email"] in ADMINS:
+        return                                      # don't count yourself
+    vid = request.cookies.get("wv") or ""
+    if not VISITOR_RE.match(vid):
+        vid = secrets.token_urlsafe(16)
+    resp.set_cookie("wv", vid, max_age=400 * 86400, httponly=True, samesite="lax", secure=SITE.startswith("https"))
+    now = time.time()
+    x("INSERT INTO visits VALUES(?,?,?,?,?)",
+      (now, time.strftime("%Y-%m-%d", time.gmtime(now)), vid, visit_source(request), request.url.path[:80]))
+
+
+@app.get("/api/admin/stats")
+def admin_stats(wt: str = Cookie(None)):
+    u = user_of(wt)
+    if not u or u["email"] not in ADMINS:
+        raise HTTPException(404, "Not found")
+    first = "SELECT visitor, src, MIN(t) AS t FROM visits GROUP BY visitor"      # each visitor's first source
+    tot = q("SELECT COUNT(*) n, COUNT(DISTINCT visitor) v FROM visits")[0]
+    days = q("SELECT day, COUNT(DISTINCT visitor) v, COUNT(*) n, COUNT(DISTINCT CASE WHEN src='cd' THEN visitor END) cd "
+             "FROM visits GROUP BY day ORDER BY day DESC LIMIT 30")
+    return {
+        "visitors": tot["v"], "views": tot["n"],
+        "sources": [dict(r) for r in q(f"SELECT src, COUNT(*) v FROM ({first}) GROUP BY src ORDER BY v DESC, src")],
+        "days": [dict(r) for r in days],
+        "paths": [dict(r) for r in q("SELECT path, COUNT(*) n, COUNT(DISTINCT visitor) v FROM visits "
+                                     "GROUP BY path ORDER BY v DESC, path LIMIT 15")],
+        "signups": q("SELECT COUNT(*) n FROM users")[0]["n"],
+        "signups_by_source": [dict(r) for r in q(
+            f"SELECT COALESCE(f.src, 'before counter') src, COUNT(*) n FROM users u "
+            f"LEFT JOIN signup_visitor s ON s.user_id=u.id LEFT JOIN ({first}) f ON f.visitor=s.visitor "
+            f"GROUP BY 1 ORDER BY n DESC, 1")],
+    }
 
 
 # ------------------------------------------------------------------ events
@@ -350,17 +415,25 @@ def tarball():
 
 
 # ------------------------------------------------------------------ pages
-def site_page():
-    return FileResponse(ROOT / "site.html", headers={"Cache-Control": "no-store"})
+def site_page(request: Request = None):
+    resp = FileResponse(ROOT / "site.html", headers={"Cache-Control": "no-store"})
+    if request is not None:
+        count_visit(request, resp)
+    return resp
 
 
 @app.get("/")
-def home():
-    return site_page()
+def home(request: Request):
+    return site_page(request)
 
 
 @app.get("/e/{slug}")
-def event_page(slug: str):
+def event_page(slug: str, request: Request):
+    return site_page(request)
+
+
+@app.get("/admin")
+def admin_page():
     return site_page()
 
 
