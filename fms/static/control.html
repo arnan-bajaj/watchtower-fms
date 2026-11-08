@@ -101,6 +101,7 @@
   .runhub .d { font-size: .8rem; opacity: .92; }
   .tstep + .tstep { border-top: 1px solid var(--line); margin-top: .7rem; padding-top: .7rem; }
   #testbox select { min-width: 0; }
+  #mpred { opacity: .45; font-variant-numeric: tabular-nums; cursor: default; }
 </style>
 </head><body>
 <div class="bar">
@@ -118,7 +119,7 @@
     <div class="panel">
       <div class="matchbar">
         <select id="msel" aria-label="Match"></select>
-        <div class="row"><span id="mstatus" class="pill">–</span><span id="msched" class="muted small"></span>
+        <div class="row"><span id="mstatus" class="pill">–</span><span id="msched" class="muted small"></span><span id="mpred" class="small"></span>
           <button class="ghost small flip" id="flip" title="Mirror this device only">⇄ Flip sides</button></div>
       </div>
       <div class="board">
@@ -315,6 +316,13 @@
         <div class="row" style="margin-top:.6rem"><button id="bpushall">Push everything</button><button class="ghost" id="bretry">Retry failed</button></div>
         <div class="row" style="margin-top:.6rem"><button class="ghost danger" id="btbadelall">Take all matches and rankings off TBA</button></div>
         <div class="muted small" style="margin-top:.3rem">Removes the schedule and every result from the TBA event page. Nothing here is deleted. <b>Send schedule to TBA</b> puts it back. To remove one match, use the TBA column in Schedule → All matches.</div></div>
+      <div class="panel"><h2>Match13</h2>
+        <div class="muted small">A prediction for the current match, in small grey text after its time on the Match tab. Only this page shows it: never the field TV, the overlay or the phones. Hover over it for the details. Needs internet; without it, nothing shows.</div>
+        <div class="form" style="margin-top:.6rem">
+          <label class="field">API key <input id="sm_key" type="password" autocomplete="off" spellcheck="false"></label>
+        </div>
+        <div class="row" style="margin-top:.6rem"><button class="primary" id="bm13">Save key</button><button class="ghost small" id="bm13off">Remove key</button></div>
+        <div class="muted small" style="margin-top:.3rem">Make a key at match13.com → your account page. It stays on this computer. Match13 is an independent stats site; it predicts from the season's results, not anything at this event.</div></div>
       <div class="panel"><h2>Match videos</h2>
         <div class="muted small">Match videos are links into your YouTube livestream at the right timestamp. Click the button the moment the stream goes live.</div>
         <div class="row" style="margin-top:.6rem"><input id="vod" placeholder="YouTube video ID of the livestream"><button id="bvod">Save</button></div>
@@ -386,7 +394,7 @@ function renderMatch(s) {
   $("#curkey").textContent = cur ? cur.key : "";
   FMS.placeSides({ red: $(".board .side.red"), blue: $(".board .side.blue") });
   if (!cur) {
-    ["#rteams", "#bteams", "#msched"].forEach((id) => $(id).textContent = "");
+    ["#rteams", "#bteams", "#msched", "#mpred"].forEach((id) => $(id).textContent = "");
     $("#rscore").textContent = $("#bscore").textContent = 0; $("#mstatus").textContent = "–";
     $("#bstart").disabled = $("#bteleop").disabled = $("#breset").disabled = true;
     $("#autobox").innerHTML = ""; $("#review").innerHTML = `<h2>Score review</h2><div class="muted">No match selected. Save a schedule first.</div>`;
@@ -394,6 +402,7 @@ function renderMatch(s) {
   }
   $("#mstatus").textContent = cur.status;
   $("#msched").textContent = cur.scheduled ? "scheduled " + cur.scheduled : "";
+  renderPred(cur);
   const sur = new Set(cur.surrogates || []);
   const tl = (ts) => ts.map((t) => t + (sur.has(t) ? "*" : "")).join(" · ");
   $("#rteams").textContent = tl(cur.red) + (cur.red_alliance ? `  (A${cur.red_alliance})` : "");
@@ -410,6 +419,37 @@ function renderMatch(s) {
   if ($("#review").contains(ae) && ae.matches("input,select")) { reviewPending = true; return; }
   if (sig !== lastReviewSig) { lastReviewSig = sig; renderReview(s); }
 }
+// ---- Match13 prediction (fms/match13.py, Setup → Match13). Asked for by this page alone, so it never reaches
+// another screen. Kept quiet on purpose: grey text after the match time, the details in its tooltip.
+let PRED = null, predSig = "", predAt = 0;
+const pct = (x) => Math.round(x * 100) + "%";
+async function renderPred(cur) {
+  const sig = [cur.key, cur.red, cur.blue].join("|");
+  if (sig !== predSig || Date.now() - predAt > 300e3) {
+    predSig = sig; predAt = Date.now();
+    if (!PRED || PRED.key !== cur.key) PRED = null;
+    FMS.api("/api/predict?key=" + encodeURIComponent(cur.key), undefined, "GET")
+      .then((j) => { if (predSig === sig) { PRED = { ...j, key: cur.key }; drawPred(); } })
+      .catch(() => {});
+  }
+  drawPred();
+}
+function drawPred() {
+  const el = $("#mpred"), p = PRED;
+  if (!p || !p.enabled || p.key !== curKey()) { el.textContent = ""; el.title = ""; return; }
+  if (!p.source) { el.textContent = "· m13 –"; el.title = p.error || ""; return; }
+  const fav = p.win >= 0.5 ? "red" : "blue", ch = p.win >= 0.5 ? p.win : 1 - p.win;
+  el.textContent = `· ${p.source === "match13" ? "m13" : "xP"} ${sides().map((a) => Math.round(p[a])).join("–")} ${pct(ch)}`;
+  const lines = [p.source === "match13" ? "Match13's forecast for this match." : "From each team's Match13 season rating (xP): Match13 doesn't forecast this match.",
+                 `Red ${p.red.toFixed(1)}, blue ${p.blue.toFixed(1)}. ${Cap(fav)} wins ${pct(ch)}.`];
+  if (p.rp) lines.push(`Ranking point chances: red ${p.rp.red.map((x) => x == null ? "–" : pct(x)).join(" / ")}, blue ${p.rp.blue.map((x) => x == null ? "–" : pct(x)).join(" / ")}.`);
+  if (p.missing && p.missing.length) lines.push(`No rating for ${p.missing.join(", ")} (counted as 0).`);
+  el.title = lines.join("\n");
+}
+const savePred = (changes, msg) => saveSettings(changes, msg).then(() => { predSig = ""; PRED = null; if (S() && S().current) renderPred(S().current); });
+$("#bm13").onclick = () => { if ($("#sm_key").value.trim()) savePred({ "match13.key": $("#sm_key").value.trim() }, "Match13 key saved"); };
+$("#bm13off").onclick = () => savePred({ "match13.key": "" }, "Match13 key removed");
+
 $("#review").addEventListener("focusout", () => setTimeout(() => {
   if (reviewPending && S()) { reviewPending = false; lastReviewSig = ""; renderMatch(S()); }
 }, 50));
@@ -973,6 +1013,7 @@ function fillSettings() {
   });
   $("#st_secret").value = ""; $("#st_secret").placeholder = sv("tba.auth_secret") ? "saved (type to replace)" : "not set";
   $("#sc_key").value = ""; $("#sc_key").placeholder = sv("field.control.key") ? "saved (type to replace)" : "not set";
+  $("#sm_key").value = ""; $("#sm_key").placeholder = sv("match13.key") ? "saved (type to replace)" : "not set";
   const teams = sv("event.teams") || [];
   $("#se_teamn").textContent = `${teams.length} teams` + (teams.length < 6 ? " (schedules need 6+)" : teams.length < 12 ? " (alliance selection needs 12+)" : "");
   const fd = sv("field.feeds");

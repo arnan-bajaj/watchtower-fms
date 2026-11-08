@@ -44,6 +44,12 @@ tba:
   send_score_breakdown: false   # TBA validates breakdown keys per season; totals-only is safe
   retry_s: 15
 
+# ---------------------------------------------------------------- Match13 predictions
+# An API key from match13.com (your account page) shows match predictions in /control only.
+# Or set it in /control -> Setup -> Match13. Blank = off.
+match13:
+  key: ""
+
 # ---------------------------------------------------------------- REBUILT rules
 # Only for event.game: rebuilt. Any key left out uses fms/config.py GAME_RULES (which also has REEFSCAPE's).
 # VERIFY every number against the 2026 Game Manual (section 6) before the event.

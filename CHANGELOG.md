@@ -3,6 +3,13 @@
 Versions are git tags. v0.x were alphas built toward our first scrimmage; v1 is the build that ran the
 10th Street Showdown (2026-10-10); v2 is the website revamp.
 
+## v2.7.0: Match13 predictions in /control
+
+- **Match13** (Setup → Match13, an API key from match13.com): the Match tab shows a prediction for the current
+  match in small grey text after its time; hover for the details. Match13's own forecast when it has the match
+  on TBA's schedule with the same teams, otherwise one from each team's season rating.
+- Only Control sees it: never the field TV, the overlay or the phones. The key stays on the laptop.
+
 ## v2.6.0: run a bioarena field from /control
 
 - **Field control** (Setup → Field control, plus a setting on the field): Start starts the field, and Watchtower's

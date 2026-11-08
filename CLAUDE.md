@@ -136,6 +136,14 @@ pattern-kill `fms.server`/`run_vision.py` (it can hit the user's live processes)
   run end to end). Only Counted mode uses the counts; in Random/Red/Blue the emcee locks `first_inactive`
   to what bioarena's lights showed.
 
+## Match13 predictions (`fms/match13.py`)
+- `/control` shows a quiet prediction for the current match (grey text after its time; details in the tooltip) from
+  `GET /api/predict` (Control only). Never put it in `build_state`: every page gets that, the field TV and overlay too.
+- Server-side HTTPS only (Match13 sends no CORS; the key stays off browsers). `match13.key` is `SECRET` and `LOCAL`.
+  Match13's forecast when it holds `<tba_event_key>_<match key>` with the same six teams and the key's year is the
+  game's season (`SEASON`); else summed team `xp`/`xVar` (normal approximation). Rate limit 60/min: ratings cached
+  an hour, failures pause asking. Their terms bar gambling-style apps: keep it a Control-only aid.
+
 ## Field control (`fms/field.py`)
 - `/control` runs a bioarena field over bioarena's `GET /remote_control/websocket` (`X-Remote-Key`, one allowed source IP; set up in
   its Settings -> Field, protocol in its docs/watchtower-remote-control.md). Off unless `field.control.enabled` and a host are set;

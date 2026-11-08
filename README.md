@@ -138,6 +138,7 @@ fms/
   schedule.py      qual schedule generator + CSV import
   bracket.py       4-alliance double elimination + rankings
   tba.py           TBA trusted API client with persistent outbox
+  match13.py       Match13 predictions for /control (read only, server-side)
   store.py         SQLite persistence
   config.py        config loader, defaults, PIN checks
   settings.py      live settings (/control -> Setup) on top of event.yaml; newest-wins merge
@@ -254,6 +255,7 @@ starting point; a Setup value wins over it, and **Use event.yaml** puts one back
 |---|---|
 | **Event** | name, date, UTC offset, TBA event key, first match, cycle, teams |
 | **The Blue Alliance** | Auth ID, secret (never shown again after saving), Send to TBA on/off |
+| **Match13** | API key for match predictions in the Match tab ([Match predictions](#match-predictions-match13)); stays on this laptop |
 | **Field system (bioarena)** | the field's IP and UDP port; shows this laptop's IP to enter in the field's counter setting |
 | **Field control (bioarena)** | the field's address, web port and key, and an on/off switch; shows this laptop's IP to enter on the field. See [Running the field from Watchtower](#running-the-field-from-watchtower-bioarena) |
 | **Cameras** | per hub: camera (USB index, or a network camera / video file), the outline drawn on its live picture (and optionally an exit line), Measure, and the drop-test calibration; then **Run** (live counts, the lock during a match) and **Test** (ball test, speed, recording, re-counting a recording) ([Hub cameras from Setup](#hub-cameras-from-setup)) |
@@ -421,6 +423,24 @@ The schedule locks once any qual match has started.
    - If the margin is within `close_auto_margin` (5), you get a warning. Get the head ref's call.
    - **Red off first / Blue off first** overrides the result and locks it.
 4. The match goes to **review** automatically when it ends: 2:43 of match time plus 3 s grace.
+
+### Match predictions (Match13)
+
+With a [Match13](https://www.match13.com) API key in Setup → Match13 (make one on your match13.com account page),
+the Match tab shows a prediction for the current match in small grey text after its time, e.g. `· m13 94–37 98%`:
+each alliance's expected score in screen order, then the favourite's chance to win. Hover over it for which
+alliance is which, ranking point chances and any team without a rating.
+
+- `m13`: Match13's own forecast. Used when the TBA event key is set, its year is the game's season, and Match13
+  holds the match with the same six teams (it reads TBA, so the schedule has to be on TBA).
+- `xP`: otherwise, from each team's Match13 season rating. An alliance's score is the sum of its teams' `xp` and
+  the win chance comes from their summed variance (`xVar`). Match13's own model does more than this, so treat it as rough.
+- REEFSCAPE events use teams' 2025 ratings.
+
+Only `/control` asks for it (`GET /api/predict`, Control PIN): the field TV, overlay and phones never see one.
+The key is a secret: Setup only shows whether it's set, and it's never synced to the website. Needs internet;
+without it the line shows `m13 –` and hovering says why. Match13 allows 60 requests a minute per account, so
+team ratings are kept for an hour.
 
 ### Field sides (which alliance is on the left)
 

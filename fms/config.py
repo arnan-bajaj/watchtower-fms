@@ -48,6 +48,9 @@ DEFAULTS = {
     # Counts per real ball, per hub (calibration in /control -> Setup). Vision divides by it.
     # hubs: Setup -> Cameras (camera, outline, ball size per hub); None = vision's config file.
     "vision": {"scale": {"red": 1, "blue": 1}, "hubs": {"red": None, "blue": None}},
+    # Match13 API key (match13.com -> your account page) for match predictions in /control (fms/match13.py).
+    # Blank = no predictions. Setup -> Match13 sets it; it stays on this laptop.
+    "match13": {"key": ""},
     # Set by the website's launch command (fms/cloud.py): settings backup and status. Empty = local only.
     "cloud": {"url": "", "event": "", "token": ""},
 }

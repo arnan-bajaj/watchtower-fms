@@ -21,7 +21,7 @@ from fastapi import Body, FastAPI, Header, HTTPException, WebSocket, WebSocketDi
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import bracket, cloud, config, field, game, reefscape, schedule, settings
+from . import bracket, cloud, config, field, game, match13, reefscape, schedule, settings
 from .store import Store
 from .tba import TBA
 
@@ -308,6 +308,7 @@ def on_field_state(old, new):
 
 
 field_link = field.FieldLink(on_field_state)
+m13 = match13.Match13(CFG, CFG["event"]["game"])
 
 
 async def tick():
@@ -1128,6 +1129,19 @@ def field_auto_winner(body: dict = Body(...), x_fms_token: str = Header(None)):
     if body.get("mode") not in field.AUTO_WINNERS:
         raise HTTPException(400, f"mode must be one of {', '.join(field.AUTO_WINNERS)}")
     return _on_field(field_link.set_auto_winner, body["mode"])
+
+
+@app.get("/api/predict")
+def predict(key: str = None, x_fms_token: str = Header(None)):
+    """Match13's prediction for a match (fms/match13.py). Control only, and never in the state, which every
+    page (the field TV and overlay too) gets."""
+    need(x_fms_token)
+    if not m13.enabled:
+        return {"enabled": False}
+    m = store.match(key) if key else current()
+    if not m:
+        raise HTTPException(404, "No such match")
+    return {"enabled": True, **m13.predict(m, CFG["event"]["tba_event_key"])}
 
 
 @app.get("/api/match/{key}")

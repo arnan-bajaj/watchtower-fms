@@ -263,15 +263,16 @@ FIELDS = {
     "field.control.host": _host_or_blank,
     "field.control.port": _num(1, 65535),
     "field.control.key": _str(200),
+    "match13.key": _str(200),
     "vision.scale.red": _num(0.05, 100),
     "vision.scale.blue": _num(0.05, 100),
     "vision.hubs.red": _hubcam,
     "vision.hubs.blue": _hubcam,
 }
-SECRET = {"tba.auth_secret", "field.control.key"}   # never sent to a browser; Setup shows only whether it's set
+SECRET = {"tba.auth_secret", "field.control.key", "match13.key"}   # never sent to a browser; Setup shows only whether it's set
 # Stay on the laptop running the match: never sent to the website, and never taken from it. The website
-# must have no way to point this FMS at a field, or to learn a field's key.
-LOCAL = ("field.control.",)
+# must have no way to point this FMS at a field, or to learn a field's key; nor to hold a team's own Match13 key.
+LOCAL = ("field.control.", "match13.")
 
 
 def get_path(d, key):
